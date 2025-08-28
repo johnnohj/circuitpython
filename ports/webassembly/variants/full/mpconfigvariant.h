@@ -1,0 +1,2 @@
+#define MICROPY_VARIANT_ENABLE_JS_HOOK (1)
+#define MICROPY_VFS (1)
