@@ -49,6 +49,11 @@
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 #endif
 
+// Enable top-level await for JavaScript async integration
+#ifndef MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT
+#define MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT (1)
+#endif
+
 // Enable garbage collection (required for finalizers)
 #define MICROPY_ENABLE_GC (1)
 #define MICROPY_ENABLE_FINALISER (1)

@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+
+// Wrapper to call the built-in runCLI function with proper initialization
+async function main() {
+    // Import the built module
+    const circuitPython = await import('./build-standard/circuitpython.mjs');
+    // if ( !circuitPython ) {
+    //     circuitPython
+    // }
+    // Pre-load/initialize CircuitPython so it's ready
+    // await circuitPython.loadCircuitPython();
+    // Debug: Check TTY status
+    console.log('stdin.isTTY:', process.stdin.isTTY);
+    console.log('setRawMode available:', typeof process.stdin.setRawMode);
+
+    // Now call runCLI - it should have everything it needs
+    if ( circuitPython ) {
+        circuitPython.runCLI()
+    }
+}
+
+main().catch(console.error);

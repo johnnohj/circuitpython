@@ -32,7 +32,7 @@ require("inspect")      # Code introspection, helpful for interactive developmen
 # require("time")       # CircuitPython has enhanced time module built-in
 
 # I/O operations compatible with WebAssembly
-require("io")           # Stream operations
+# require("io")           # Stream operations - likely built-in
 
 # Data processing and manipulation
 require("copy")         # Deep/shallow copying of objects

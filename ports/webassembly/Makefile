@@ -32,11 +32,22 @@ QSTR_DEFS = qstrdefsport.h
 # Include py core make definitions.
 include $(TOP)/py/py.mk
 include $(TOP)/extmod/extmod.mk
+# Add WebAssembly-specific extmod additions
+include extmod-wasm.mk
 
 # Remove problematic libc sources for bare variant to prevent duplicates
 ifeq ($(VARIANT),bare)
 SRC_EXTMOD_C := $(filter-out shared/libc/abort_.c shared/libc/printf.c, $(SRC_EXTMOD_C))
 endif
+
+# Deduplicate source files to prevent duplicate symbol errors
+# This handles cases where sources are included from multiple makefiles
+SRC_C := $(sort $(SRC_C))
+SRC_EXTMOD_C := $(sort $(SRC_EXTMOD_C))
+SRC_SHARED_C := $(sort $(SRC_SHARED_C))
+SRC_SUPERVISOR_C := $(sort $(SRC_SUPERVISOR_C))
+SRC_LIB_C := $(sort $(SRC_LIB_C))
+SRC_THIRDPARTY_C := $(sort $(SRC_THIRDPARTY_C))
 
 # CIRCUITPY: Following unix port approach - no automatic feature generation
 
@@ -118,7 +129,6 @@ JSFLAGS += -s EXPORTED_FUNCTIONS="\
 	_free,\
 	_malloc,\
 	_mp_js_init,\
-	_mp_js_init_with_heap,\
 	_mp_js_repl_init,\
 	_mp_js_repl_process_char,\
 	_mp_hal_get_interrupt_char,\
@@ -129,7 +139,7 @@ JSFLAGS += -s EXPORTED_RUNTIME_METHODS="\
 	FS$(EXPORTED_RUNTIME_METHODS_EXTRA)"
 JSFLAGS += --js-library library.js
 JSFLAGS += -s SUPPORT_LONGJMP=emscripten
-JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createMicroPythonModule
+JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
 
 ################################################################################
 # Source files and libraries.
@@ -139,6 +149,7 @@ SRC_SHARED = $(addprefix shared/,\
 	runtime/interrupt_char.c \
 	runtime/stdout_helpers.c \
 	runtime/pyexec.c \
+	runtime/sys_stdio_mphal.c \
 	readline/readline.c \
 	timeutils/timeutils.c \
 	)
@@ -166,19 +177,26 @@ SRC_C += \
 	proxy_c.c \
 	webassembly_stubs.c \
 	board.c \
+	fatfs_port.c \
 	$(SRC_SUPERVISOR_WEBASM) \
 
 # List of sources for qstr extraction.
 SRC_QSTR += $(SRC_C) $(SRC_SHARED)
 
+# CircuitPython WASM JS api
 SRC_JS += \
-	api.js \
+	coreApi.js \
+	nodeApi.js \
+	workerApi.js \
 	objpyproxy.js \
 	proxy_js.js \
 
 OBJ += $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_SHARED:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+
+# Deduplicate object files to prevent duplicate symbol linker errors
+OBJ := $(sort $(OBJ))
 
 # CIRCUITPY: Add translation dependency
 $(BUILD)/supervisor/shared/translate/translate.o: $(HEADER_BUILD)/qstrdefs.generated.h $(HEADER_BUILD)/compressed_translations.generated.h
@@ -197,10 +215,10 @@ min: $(BUILD)/circuitpython.min.mjs
 
 all: $(BUILD)/circuitpython.mjs
 
-$(BUILD)/circuitpython.mjs: $(OBJ) library.js $(SRC_JS)
+$(BUILD)/circuitpython.mjs: $(OBJ) library.js
 	$(ECHO) "LINK $@"
 	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ) $(JSFLAGS)
-	$(Q)cat $(SRC_JS) >> $@
+	$(Q)test -n "$(SRC_JS)" && cat $(SRC_JS) >> $@ || true
 
 # Keep the micropython.mjs target for backward compatibility
 $(BUILD)/micropython.mjs: $(BUILD)/circuitpython.mjs

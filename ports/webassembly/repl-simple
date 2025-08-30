@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+
+// Simple CircuitPython REPL that works without TTY (for testing)
+async function startSimpleREPL() {
+    // Import the built module
+    const circuitPython = await import('./build-standard/circuitpython.mjs');
+    
+    // Initialize CircuitPython
+    const cp = await circuitPython.loadCircuitPython({
+        stdout: (line) => process.stdout.write(line),
+        stderr: (line) => process.stderr.write(line),
+        linebuffer: true
+    });
+    
+    // Initialize REPL
+    cp.replInit();
+    
+    console.log('CircuitPython 10.0.0-beta.2 on webassembly');
+    console.log('Type "help()", "copyright()", "credits()" or "license()" for more information.');
+    console.log('Enter Python code (Ctrl+C to exit):');
+    
+    // Line-based input for non-TTY environments
+    process.stdin.setEncoding('utf8');
+    process.stdin.resume();
+    
+    process.stdout.write('>>> ');
+    
+    process.stdin.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        
+        for (const line of lines) {
+            if (line.trim() === '') continue;
+            
+            // Process each character through the REPL
+            for (let i = 0; i < line.length; i++) {
+                cp.replProcessCharWithAsyncify(line.charCodeAt(i)).then((result) => {
+                    if (result) process.exit(0);
+                });
+            }
+            // Add newline
+            cp.replProcessCharWithAsyncify(10).then((result) => {
+                if (result) process.exit(0);
+            });
+        }
+        
+        process.stdout.write('>>> ');
+    });
+}
+
+startSimpleREPL().catch(console.error);

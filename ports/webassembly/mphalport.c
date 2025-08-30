@@ -77,3 +77,9 @@ extern int mp_interrupt_char;
 int mp_hal_get_interrupt_char(void) {
     return mp_interrupt_char;
 }
+
+// WebAssembly stub for stdio polling
+// In WebAssembly there's no blocking stdin, so always return 0
+uintptr_t mp_hal_stdio_poll(uintptr_t poll_flags) {
+    return 0;
+}

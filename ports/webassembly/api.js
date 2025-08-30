@@ -25,16 +25,16 @@
  */
 
 // Options:
-// - pystack: size in words of the MicroPython Python stack.
-// - heapsize: size in bytes of the MicroPython GC heap.
-// - url: location to load `micropython.mjs`.
+// - pystack: size in words of the CircuitPython Python stack.
+// - heapsize: size in bytes of the CircuitPython GC heap.
+// - url: location to load `circuitpython.mjs`.
 // - stdin: function to return input characters.
 // - stdout: function that takes one argument, and is passed lines of stdout
 //   output as they are produced.  By default this is handled by Emscripten
 //   and in a browser goes to console, in node goes to process.stdout.write.
 // - stderr: same behaviour as stdout but for error output.
 // - linebuffer: whether to buffer line-by-line to stdout/stderr.
-export async function loadMicroPython(options) {
+export async function loadCircuitPython(options) {
     const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer } =
         Object.assign(
             { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true },
@@ -85,7 +85,7 @@ export async function loadMicroPython(options) {
             Module.stderr = (c) => stderr(new Uint8Array([c]));
         }
     }
-    Module = await _createMicroPythonModule(Module);
+    Module = await _createCircuitPythonModule(Module);
     globalThis.Module = Module;
     proxy_js_init();
     const pyimport = (name) => {
@@ -189,7 +189,7 @@ export async function loadMicroPython(options) {
     };
 }
 
-globalThis.loadMicroPython = loadMicroPython;
+globalThis.loadCircutPython = loadCircuitPython;
 
 async function runCLI() {
     const fs = await import("fs");
@@ -220,18 +220,18 @@ async function runCLI() {
         repl = false;
     }
 
-    const mp = await loadMicroPython({
+    const cp = await loadCircuitPython({
         heapsize: heap_size,
         stdout: (data) => process.stdout.write(data),
         linebuffer: false,
     });
 
     if (repl) {
-        mp.replInit();
+        cp.replInit();
         process.stdin.setRawMode(true);
         process.stdin.on("data", (data) => {
             for (let i = 0; i < data.length; i++) {
-                mp.replProcessCharWithAsyncify(data[i]).then((result) => {
+                cp.replProcessCharWithAsyncify(data[i]).then((result) => {
                     if (result) {
                         process.exit();
                     }
@@ -243,14 +243,14 @@ async function runCLI() {
         // a simple `asyncio.run` hook that starts the main task.  This is primarily to
         // support running the standard asyncio tests.
         if (contents.endsWith("asyncio.run(main())\n")) {
-            const asyncio = mp.pyimport("asyncio");
+            const asyncio = cp.pyimport("asyncio");
             asyncio.run = async (task) => {
                 await asyncio.create_task(task);
             };
         }
 
         try {
-            mp.runPython(contents);
+            cp.runPython(contents);
         } catch (error) {
             if (error.name === "PythonError") {
                 if (error.type === "SystemExit") {
@@ -273,7 +273,7 @@ if (
     typeof process.versions === "object" &&
     typeof process.versions.node === "string"
 ) {
-    // Check if this module is run from the command line via `node micropython.mjs`.
+    // Check if this module is run from the command line via `node circuitpython.mjs`.
     //
     // See https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line/66309132#66309132
     //
