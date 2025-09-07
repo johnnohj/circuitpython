@@ -450,7 +450,7 @@ static int pyexec_friendly_repl_process_char(int c) {
         } else if (c == CHAR_CTRL_D) {
             // end of input
             mp_hal_stdout_tx_str("\r\n");
-            int ret = parse_compile_execute(MP_STATE_VM(repl_line), MP_PARSE_FILE_INPUT, EXEC_FLAG_ALLOW_DEBUGGING | EXEC_FLAG_IS_REPL | EXEC_FLAG_SOURCE_IS_VSTR);
+            int ret = parse_compile_execute(MP_STATE_VM(repl_line), MP_PARSE_FILE_INPUT, EXEC_FLAG_ALLOW_DEBUGGING | EXEC_FLAG_IS_REPL | EXEC_FLAG_SOURCE_IS_VSTR, NULL);
             if (ret & PYEXEC_FORCED_EXIT) {
                 return ret;
             }
@@ -539,7 +539,7 @@ static int pyexec_friendly_repl_process_char(int c) {
         }
 
     exec:;
-        int ret = parse_compile_execute(MP_STATE_VM(repl_line), MP_PARSE_SINGLE_INPUT, EXEC_FLAG_ALLOW_DEBUGGING | EXEC_FLAG_IS_REPL | EXEC_FLAG_SOURCE_IS_VSTR);
+        int ret = parse_compile_execute(MP_STATE_VM(repl_line), MP_PARSE_SINGLE_INPUT, EXEC_FLAG_ALLOW_DEBUGGING | EXEC_FLAG_IS_REPL | EXEC_FLAG_SOURCE_IS_VSTR, NULL);
         if (ret & PYEXEC_FORCED_EXIT) {
             return ret;
         }

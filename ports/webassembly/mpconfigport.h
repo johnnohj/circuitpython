@@ -3,9 +3,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2022 Damien P. George
- * Copyright (c) 2017, 2018 Rami Ali
- * Copyright (c) 2023 CircuitPython WebAssembly Contributors
+ * Copyright (c) 2013, 2014 Damien P. George
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,90 +24,78 @@
  * THE SOFTWARE.
  */
 
-#ifndef MICROPY_INCLUDED_WEBASSEMBLY_MPCONFIGPORT_H
-#define MICROPY_INCLUDED_WEBASSEMBLY_MPCONFIGPORT_H
+// CIRCUITPY-CHANGE
+#pragma once
 
 // Options to control how MicroPython is built for this port, overriding
-// defaults in py/mpconfig.h.
+// defaults in py/mpconfig.h. This file is mostly about configuring the
+// features to work on Unix-like systems, see mpconfigvariant.h (and
+// mpconfigvariant_common.h) for feature enabling.
 
-// CIRCUITPY-CHANGE: GCC version check disabled for Emscripten via Makefile
-// Emscripten reports __GNUC__ = 4 but is actually based on modern Clang
-
-// For standard integer types
-#include <stdint.h>
-
-// Platform definition
-#define MICROPY_PY_SYS_PLATFORM     "webassembly"
+// For size_t and ssize_t
+#include <unistd.h>
 
 // Variant-specific definitions.
 #include "mpconfigvariant.h"
 
-// WebAssembly specific overrides
-#ifndef MICROPY_CONFIG_ROM_LEVEL
-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
-#endif
+// CIRCUITPY-CHANGE
+#define CIRCUITPY_MICROPYTHON_ADVANCED (1)
+#define MICROPY_PY_ASYNC_AWAIT (1)
+#define MICROPY_PY_UCTYPES (0)
 
-// Enable top-level await for JavaScript async integration
+// CIRCUITPY-CHANGE: Enable async/await support
 #ifndef MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT
 #define MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT (1)
 #endif
 
-// Enable garbage collection (required for finalizers)
-#define MICROPY_ENABLE_GC (1)
-#define MICROPY_ENABLE_FINALISER (1)
+// CIRCUITPY-CHANGE: Force MP_PLAT_PRINT_STRN to work correctly
+extern void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len);
+#define MP_PLAT_PRINT_STRN(str, len) mp_hal_stdout_tx_strn_cooked(str, len)
 
-// Enable floating point support
-#ifndef MICROPY_FLOAT_IMPL
-#define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_DOUBLE)
+#ifndef MICROPY_CONFIG_ROM_LEVEL
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 #endif
 
-// Disable micropython module debug features to avoid unused variable warnings
-#define MICROPY_PY_MICROPYTHON_STACK_USE (0)
-
-// Long integer implementation - use MPZ for compatibility with frozen content
-#ifndef MICROPY_LONGINT_IMPL
-#define MICROPY_LONGINT_IMPL (MICROPY_LONGINT_IMPL_MPZ)
+#ifndef MICROPY_PY_SYS_PLATFORM
+#if defined(__APPLE__) && defined(__MACH__)
+    #define MICROPY_PY_SYS_PLATFORM  "darwin"
+#elif defined(__EMSCRIPTEN__)
+    #define MICROPY_PY_SYS_PLATFORM  "emscripten"
+#else
+    #define MICROPY_PY_SYS_PLATFORM  "linux"
+#endif
 #endif
 
-// Basic filesystem configuration for WebAssembly
-#ifndef INTERNAL_FLASH_FILESYSTEM
-#define INTERNAL_FLASH_FILESYSTEM    (0)
+#ifndef MICROPY_PY_SYS_PATH_DEFAULT
+#define MICROPY_PY_SYS_PATH_DEFAULT ".frozen:~/.micropython/lib:/usr/lib/micropython"
 #endif
 
-// Enable JavaScript integration modules
-#ifndef MICROPY_PY_JS
-#define MICROPY_PY_JS (MICROPY_CONFIG_ROM_LEVEL_AT_LEAST_EXTRA_FEATURES)
+// CIRCUITPY-CHANGE: WebAssembly/Emscripten board and MCU identification
+#ifndef MICROPY_HW_BOARD_NAME
+#define MICROPY_HW_BOARD_NAME "WebAssembly"
 #endif
 
-#ifndef MICROPY_PY_JSFFI
-#define MICROPY_PY_JSFFI (MICROPY_CONFIG_ROM_LEVEL_AT_LEAST_EXTRA_FEATURES)
+#ifndef MICROPY_HW_MCU_NAME
+#define MICROPY_HW_MCU_NAME "Emscripten"
 #endif
 
-// Random seed function
-#ifndef MICROPY_PY_RANDOM_SEED_INIT_FUNC
-#define MICROPY_PY_RANDOM_SEED_INIT_FUNC (mp_js_random_u32())
-uint32_t mp_js_random_u32(void);
-#endif
+#define MP_STATE_PORT MP_STATE_VM
 
-// VM hook configuration
-#ifndef MICROPY_VARIANT_ENABLE_JS_HOOK
-#define MICROPY_VARIANT_ENABLE_JS_HOOK (0)
+// Configure which emitter to use for this target.
+#if !defined(MICROPY_EMIT_X64) && defined(__x86_64__)
+    #define MICROPY_EMIT_X64        (1)
 #endif
-
-#if MICROPY_VARIANT_ENABLE_JS_HOOK
-#define MICROPY_VM_HOOK_COUNT (10)
-#define MICROPY_VM_HOOK_INIT static uint vm_hook_divisor = MICROPY_VM_HOOK_COUNT;
-#define MICROPY_VM_HOOK_POLL if (--vm_hook_divisor == 0) { \
-        vm_hook_divisor = MICROPY_VM_HOOK_COUNT; \
-        extern void mp_js_hook(void); \
-        mp_js_hook(); \
-}
-#ifndef MICROPY_VM_HOOK_LOOP
-#define MICROPY_VM_HOOK_LOOP MICROPY_VM_HOOK_POLL
+#if !defined(MICROPY_EMIT_X86) && defined(__i386__)
+    #define MICROPY_EMIT_X86        (1)
 #endif
-#ifndef MICROPY_VM_HOOK_RETURN
-#define MICROPY_VM_HOOK_RETURN MICROPY_VM_HOOK_POLL
+#if !defined(MICROPY_EMIT_THUMB) && defined(__thumb2__)
+    #define MICROPY_EMIT_THUMB      (1)
+    #define MICROPY_MAKE_POINTER_CALLABLE(p) ((void *)((mp_uint_t)(p) | 1))
 #endif
+// Some compilers define __thumb2__ and __arm__ at the same time, let
+// autodetected thumb2 emitter have priority.
+#if !defined(MICROPY_EMIT_ARM) && defined(__arm__) && !defined(__thumb2__)
+    #define MICROPY_EMIT_ARM        (1)
 #endif
 
 // Type definitions for the specific machine based on the word size.
@@ -127,7 +113,7 @@ typedef unsigned int mp_uint_t; // must be pointer size
 // Assume that if we already defined the obj repr then we also defined types.
 #endif
 
-// File offset type
+// Cannot include <sys/types.h>, as it may lead to symbol name clashes
 #if _FILE_OFFSET_BITS == 64 && !defined(__LP64__)
 typedef long long mp_off_t;
 #else
@@ -135,38 +121,166 @@ typedef long mp_off_t;
 #endif
 
 // We need to provide a declaration/definition of alloca()
+// unless support for it is disabled.
 #if !defined(MICROPY_NO_ALLOCA) || MICROPY_NO_ALLOCA == 0
+#if defined(__FreeBSD__) || defined(__NetBSD__)
+#include <stdlib.h>
+#else
 #include <alloca.h>
 #endif
+#endif
 
-// Machine-specific configuration
+// Always enable GC.
+#define MICROPY_ENABLE_GC           (1)
+// CIRCUITPY-CHANGE
+#define MICROPY_ENABLE_SELECTIVE_COLLECT (1)
+
+#if !(defined(MICROPY_GCREGS_SETJMP) || defined(__x86_64__) || defined(__i386__) || defined(__thumb2__) || defined(__thumb__) || defined(__arm__) || (defined(__riscv) && (__riscv_xlen == 64)))
+// Fall back to setjmp() implementation for discovery of GC pointers in registers.
+#define MICROPY_GCREGS_SETJMP (1)
+#endif
+
+// Enable the VFS, and enable the posix "filesystem".
+#define MICROPY_ENABLE_FINALISER    (1)
+#define MICROPY_VFS                 (1)
+#define MICROPY_READER_VFS          (1)
+
+#if MICROPY_VFS
+// _GNU_SOURCE must be defined to get definitions of DT_xxx symbols from dirent.h.
+#define _GNU_SOURCE
+#endif
+#ifdef __EMSCRIPTEN__
+#define MICROPY_HELPER_LEXER_UNIX   (0)
+#define MICROPY_VFS_POSIX           (0)
+#define MICROPY_READER_POSIX        (0)
+#else
+#define MICROPY_HELPER_LEXER_UNIX   (1)
+#define MICROPY_VFS_POSIX           (1)
+#define MICROPY_READER_POSIX        (1)
+#endif
+// CIRCUITPY-CHANGE: define no matter what
+#ifndef MICROPY_TRACKED_ALLOC
+#define MICROPY_TRACKED_ALLOC       (MICROPY_PY_FFI || MICROPY_BLUETOOTH_BTSTACK)
+#endif
+
+// VFS stat functions should return time values relative to 1970/1/1
+#define MICROPY_EPOCH_IS_1970       (1)
+
+// Assume that select() call, interrupted with a signal, and erroring
+// with EINTR, updates remaining timeout value.
+#define MICROPY_SELECT_REMAINING_TIME (1)
+
+// Disable stackless by default.
+#ifndef MICROPY_STACKLESS
+#define MICROPY_STACKLESS           (0)
+#define MICROPY_STACKLESS_STRICT    (0)
+#endif
+
+// Implementation of the machine module.
+#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/unix/modmachine.c"
+
+// Unix-specific configuration of machine.mem*.
+#define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
+#define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
+
+#define MICROPY_FATFS_ENABLE_LFN       (1)
+#define MICROPY_FATFS_RPATH            (2)
+#define MICROPY_FATFS_MAX_SS           (4096)
+#define MICROPY_FATFS_LFN_CODE_PAGE    437 /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
+// CIRCUITPY-CHANGE: enable FAT32 support
+#define MICROPY_FATFS_MKFS_FAT32       (1)
+// CIRCUITPY-CHANGE: allow FAT label access
+#define MICROPY_FATFS_USE_LABEL (1)
+
+#ifdef __EMSCRIPTEN__
+#define MICROPY_ALLOC_PATH_MAX      (260)  // WebAssembly path max
+// Override MP_SSIZE_MAX for Emscripten (like webassembly port)
 #define MP_SSIZE_MAX (0x7fffffff)
-#define MP_STATE_PORT MP_STATE_VM
+#else
+#define MICROPY_ALLOC_PATH_MAX      (PATH_MAX)
+#endif
 
-// CircuitPython WebAssembly specific board/MCU names
-#define MICROPY_HW_BOARD_NAME "CircuitPython WebAssembly"
-#define MICROPY_HW_MCU_NAME "Emscripten"
+// Ensure builtinimport.c works with -m.
+#define MICROPY_MODULE_OVERRIDE_MAIN_IMPORT (1)
 
-// Background tasks macro for CircuitPython compatibility
+// Don't default sys.argv and sys.path because we do that in main.
+#define MICROPY_PY_SYS_PATH_ARGV_DEFAULTS (0)
+
+// Enable sys.executable.
+#define MICROPY_PY_SYS_EXECUTABLE (1)
+
+#define MICROPY_PY_SOCKET_LISTEN_BACKLOG_DEFAULT (SOMAXCONN < 128 ? SOMAXCONN : 128)
+
+// Bare-metal ports don't have stderr. Printing debug to stderr may give tests
+// which check stdout a chance to pass, etc.
+extern const struct _mp_print_t mp_stderr_print;
+#define MICROPY_DEBUG_PRINTER (&mp_stderr_print)
+#define MICROPY_ERROR_PRINTER (&mp_stderr_print)
+
+// For the native emitter configure how to mark a region as executable.
+void mp_unix_alloc_exec(size_t min_size, void **ptr, size_t *size);
+void mp_unix_free_exec(void *ptr, size_t size);
+#define MP_PLAT_ALLOC_EXEC(min_size, ptr, size) mp_unix_alloc_exec(min_size, ptr, size)
+#define MP_PLAT_FREE_EXEC(ptr, size) mp_unix_free_exec(ptr, size)
+
+// If enabled, configure how to seed random on init.
+#ifdef MICROPY_PY_RANDOM_SEED_INIT_FUNC
+#include <stddef.h>
+void mp_hal_get_random(size_t n, void *buf);
+static inline unsigned long mp_random_seed_init(void) {
+    unsigned long r;
+    mp_hal_get_random(sizeof(r), &r);
+    return r;
+}
+#endif
+
+#ifdef __linux__
+// Can access physical memory using /dev/mem
+#define MICROPY_PLAT_DEV_MEM  (1)
+#endif
+
+#ifdef __ANDROID__
+#include <android/api-level.h>
+#if __ANDROID_API__ < 4
+// Bionic libc in Android 1.5 misses these 2 functions
+#define MP_NEED_LOG2 (1)
+#define nan(x) NAN
+#endif
+#endif
+
+// From "man readdir": "Under glibc, programs can check for the availability
+// of the fields [in struct dirent] not defined in POSIX.1 by testing whether
+// the macros [...], _DIRENT_HAVE_D_TYPE are defined."
+// Other libc's don't define it, but proactively assume that dirent->d_type
+// is available on a modern *nix system.
+#ifndef _DIRENT_HAVE_D_TYPE
+#define _DIRENT_HAVE_D_TYPE (1)
+#endif
+// This macro is not provided by glibc but we need it so ports that don't have
+// dirent->d_ino can disable the use of this field.
+#ifndef _DIRENT_HAVE_D_INO
+#define _DIRENT_HAVE_D_INO (1)
+#endif
+
+#ifndef __APPLE__
+// For debugging purposes, make printf() available to any source file.
+#include <stdio.h>
+#endif
+
+// Configure the implementation of machine.idle().
+#include <sched.h>
+#define MICROPY_UNIX_MACHINE_IDLE sched_yield();
+
+#ifndef MICROPY_PY_BLUETOOTH_ENABLE_CENTRAL_MODE
+#define MICROPY_PY_BLUETOOTH_ENABLE_CENTRAL_MODE (1)
+#endif
+
+#ifndef MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS
+#define MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS (MICROPY_BLUETOOTH_NIMBLE)
+#endif
+
+// CIRCUITPY-CHANGE
 #define RUN_BACKGROUND_TASKS ((void)0)
 
-// Event handling
-#define MICROPY_EVENT_POLL_HOOK \
-    do { \
-        extern void mp_handle_pending(bool); \
-        mp_handle_pending(true); \
-    } while (0);
-
-// Supervisor port functions
-void port_background_tick(void);
-void port_start_background_tick(void);
-void port_finish_background_tick(void);
-void port_wake_main_task(void);
-
-// External printer function
-extern const struct _mp_print_t mp_stderr_print;
-
-// USB configuration (not used in WebAssembly but required by CircuitPython)
-#define USB_NUM_ENDPOINT_PAIRS 8
-
-#endif // MICROPY_INCLUDED_WEBASSEMBLY_MPCONFIGPORT_H
+// CIRCUITPY-CHANGE: Define clean banner machine name
+#define MICROPY_BANNER_MACHINE "WebAssembly"

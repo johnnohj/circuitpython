@@ -72,4 +72,17 @@ mergeInto(LibraryManager.library, {
 
     mp_js_random_u32: () =>
         globalThis.crypto.getRandomValues(new Uint32Array(1))[0],
+
+    mp_js_write: (str_ptr, len) => {
+        const str = UTF8ToString(str_ptr, len);
+        if (typeof Module.stdout === 'function') {
+            // Call the stdout callback provided by the user
+            for (let i = 0; i < str.length; i++) {
+                Module.stdout(str.charCodeAt(i));
+            }
+        } else {
+            // Fallback to regular console output
+            Module.print(str);
+        }
+    },
 });

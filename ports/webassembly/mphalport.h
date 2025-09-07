@@ -3,7 +3,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2013, 2014 Damien P. George and 2017, 2018 Rami Ali
+ * Copyright (c) 2015 Damien P. George
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,31 +23,70 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
-#include "py/obj.h"
-#include "shared/runtime/interrupt_char.h"
-
-#define mp_hal_stdin_rx_chr() (0)
-mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len);
-
-void mp_hal_delay_ms(mp_uint_t ms);
-void mp_hal_delay_us(mp_uint_t us);
-mp_uint_t mp_hal_ticks_ms(void);
-mp_uint_t mp_hal_ticks_us(void);
-mp_uint_t mp_hal_ticks_cpu(void);
-uint64_t mp_hal_time_ms(void);
-
-int mp_hal_get_interrupt_char(void);
-
-#if MICROPY_VFS_POSIX
-
 #include <errno.h>
+#include <unistd.h>
+// CIRCUITPY-CHANGE: extra include
+#include <stdbool.h>
+
+#ifndef CHAR_CTRL_C
+#define CHAR_CTRL_C (3)
+#endif
+
+// If threading is enabled, configure the atomic section.
+#if MICROPY_PY_THREAD
+#define MICROPY_BEGIN_ATOMIC_SECTION() (mp_thread_unix_begin_atomic_section(), 0xffffffff)
+#define MICROPY_END_ATOMIC_SECTION(x) (void)x; mp_thread_unix_end_atomic_section()
+#endif
+
+// CIRCUITPY-CHANGE: mp_hal_set_interrupt_char(int) instead of char
+void mp_hal_set_interrupt_char(int c);
+bool mp_hal_is_interrupted(void);
+
+uintptr_t mp_hal_stdio_poll(uintptr_t poll_flags);
+void mp_hal_stdio_mode_raw(void);
+void mp_hal_stdio_mode_orig(void);
+
+#if MICROPY_PY_BUILTINS_INPUT && MICROPY_USE_READLINE == 0
+
+#include <malloc.h>
+#include "py/misc.h"
+#include "input.h"
+#define mp_hal_readline mp_hal_readline
+static inline int mp_hal_readline(vstr_t *vstr, const char *p) {
+    char *line = prompt((char *)p);
+    vstr_add_str(vstr, line);
+    free(line);
+    return 0;
+}
+
+#elif MICROPY_PY_BUILTINS_INPUT && MICROPY_USE_READLINE == 1
+
+#include "py/misc.h"
+#include "shared/readline/readline.h"
+// For built-in input() we need to wrap the standard readline() to enable raw mode
+#define mp_hal_readline mp_hal_readline
+static inline int mp_hal_readline(vstr_t *vstr, const char *p) {
+    mp_hal_stdio_mode_raw();
+    int ret = readline(vstr, p);
+    mp_hal_stdio_mode_orig();
+    return ret;
+}
+
+#endif
+
+static inline void mp_hal_delay_us(mp_uint_t us) {
+    // WebAssembly doesn't support usleep - use busy wait or no-op
+    // In a real application, this should yield to JavaScript event loop
+    (void)us;  // No-op for now
+}
+#define mp_hal_ticks_cpu() 0
 
 // This macro is used to implement PEP 475 to retry specified syscalls on EINTR
-#define MP_HAL_RETRY_SYSCALL(ret, syscall, raise) \
-    { \
+#define MP_HAL_RETRY_SYSCALL(ret, syscall, raise) { \
         for (;;) { \
+            MP_THREAD_GIL_EXIT(); \
             ret = syscall; \
+            MP_THREAD_GIL_ENTER(); \
             if (ret == -1) { \
                 int err = errno; \
                 if (err == EINTR) { \
@@ -58,6 +97,18 @@ int mp_hal_get_interrupt_char(void);
             } \
             break; \
         } \
-    }
+}
 
+#define RAISE_ERRNO(err_flag, error_val) \
+    { if (err_flag == -1) \
+      { mp_raise_OSError(error_val); } }
+
+void mp_hal_get_random(size_t n, void *buf);
+
+#if MICROPY_PY_BLUETOOTH
+enum {
+    MP_HAL_MAC_BDADDR,
+};
+
+void mp_hal_get_mac(int idx, uint8_t buf[6]);
 #endif

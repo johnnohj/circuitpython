@@ -221,7 +221,7 @@ static mp_obj_t jsproxy_call(mp_obj_t self_in, size_t n_args, size_t n_kw, const
         mp_arg_check_num(n_args, n_kw, 0, 1, true);
         uint32_t key[n_kw];
         uint32_t value[PVN * n_kw];
-        for (int i = 0; i < n_kw; ++i) {
+        for (size_t i = 0; i < n_kw; ++i) {
             key[i] = (uintptr_t)mp_obj_str_get_str(args[n_args + i * 2]);
             proxy_convert_mp_to_js_obj_cside(args[n_args + i * 2 + 1], &value[i * PVN]);
         }
@@ -257,7 +257,7 @@ static mp_obj_t jsproxy_call(mp_obj_t self_in, size_t n_args, size_t n_kw, const
         return proxy_convert_js_to_mp_obj_cside(out);
     } else {
         uint32_t value[PVN * n_args];
-        for (int i = 0; i < n_args; ++i) {
+        for (size_t i = 0; i < n_args; ++i) {
             proxy_convert_mp_to_js_obj_cside(args[i], &value[i * PVN]);
         }
         uint32_t out[3];

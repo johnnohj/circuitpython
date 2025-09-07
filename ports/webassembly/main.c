@@ -3,7 +3,8 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2021 Damien P. George and 2017, 2018 Rami Ali
+ * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2014-2017 Paul Sokolovsky
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,9 +36,20 @@
 #include "py/repl.h"
 #include "py/gc.h"
 #include "py/mperrno.h"
+#include "py/mphal.h"
+#include "py/objstr.h"
+#include "py/lexer.h"
+#include "py/parse.h"
+#include "py/nlr.h"
 #include "extmod/vfs.h"
 #include "extmod/vfs_posix.h"
 #include "shared/runtime/pyexec.h"
+
+// CIRCUITPY-CHANGE: Add CircuitPython supervisor includes
+#include "supervisor/board.h"
+#include "supervisor/port.h"
+#include "supervisor/shared/translate/translate.h"
+#include "supervisor/shared/tick.h"
 
 #include "emscripten.h"
 #include "lexer_dedent.h"
@@ -69,7 +81,19 @@ void external_call_depth_dec(void) {
     --external_call_depth;
 }
 
+// CIRCUITPY-CHANGE: Provide stderr print implementation
+static void stderr_print_strn(void *env, const char *str, size_t len) {
+    (void)env;
+    printf("%.*s", (int)len, str);
+}
+
+const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};
+
+
 void mp_js_init(int pystack_size, int heap_size) {
+    // CIRCUITPY-CHANGE: Initialize CircuitPython supervisor components
+    board_init();
+
     mp_cstack_init_with_sp_here(CSTACK_SIZE);
 
     #if MICROPY_ENABLE_PYSTACK
@@ -92,7 +116,10 @@ void mp_js_init(int pystack_size, int heap_size) {
 
     mp_init();
 
-    #if MICROPY_VFS_POSIX
+    // CIRCUITPY-CHANGE: Initialize CircuitPython supervisor services
+    // Note: WebAssembly doesn't need continuous background ticking
+
+    #if MICROPY_VFS_POSIX && !DISABLE_FILESYSTEM
     {
         // Mount the host FS at the root of our internal VFS
         mp_obj_t args[2] = {
@@ -102,7 +129,11 @@ void mp_js_init(int pystack_size, int heap_size) {
         mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
         MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
     }
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR__slash_lib));
+    // WEBASM-FIX: Use safer approach for sys.path append
+    if (mp_sys_path && MP_OBJ_IS_TYPE(mp_sys_path, &mp_type_list)) {
+        mp_obj_t lib_path = MP_OBJ_NEW_QSTR(MP_QSTR__slash_lib);
+        mp_obj_list_append(mp_sys_path, lib_path);
+    }
     #endif
 }
 
@@ -112,6 +143,13 @@ void mp_js_register_js_module(const char *name, uint32_t *value) {
     mp_map_t *mp_loaded_modules_map = &MP_STATE_VM(mp_loaded_modules_dict).map;
     mp_map_lookup(mp_loaded_modules_map, module_name, MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = module;
 }
+
+// JavaScript semihosting API functions (from webassembly port)
+void mp_js_register_board_config(uint32_t *js_config_ref);
+void mp_js_register_board_pins(uint32_t *pins_array, size_t num_pins);
+void mp_js_stdin_write_char(int c);
+void mp_js_stdin_write_str(const char *str, size_t len);
+bool mp_hal_is_stdin_raw_mode(void);
 
 void mp_js_do_import(const char *name, uint32_t *out) {
     external_call_depth_inc();
@@ -142,6 +180,17 @@ void mp_js_do_import(const char *name, uint32_t *out) {
     }
 }
 
+void mp_js_repl_init(void) {
+    pyexec_event_repl_init();
+}
+
+int mp_js_repl_process_char(int c) {
+    external_call_depth_inc();
+    int ret = pyexec_event_repl_process_char(c);
+    external_call_depth_dec();
+    return ret;
+}
+
 void mp_js_do_exec(const char *src, size_t len, uint32_t *out) {
     external_call_depth_inc();
     mp_parse_input_kind_t input_kind = MP_PARSE_FILE_INPUT;
@@ -163,26 +212,18 @@ void mp_js_do_exec(const char *src, size_t len, uint32_t *out) {
 }
 
 void mp_js_do_exec_async(const char *src, size_t len, uint32_t *out) {
-    // CircuitPython doesn't have top-level await, so just call regular exec
+    #if MICROPY_PY_ASYNC_AWAIT
+    mp_compile_allow_top_level_await = true;
     mp_js_do_exec(src, len, out);
+    mp_compile_allow_top_level_await = false;
+    #else
+    mp_js_do_exec(src, len, out);
+    #endif
 }
 
-// JavaScript API: Initialize interpreter with heap size (compatibility wrapper for enhanced API)
 EMSCRIPTEN_KEEPALIVE void mp_js_init_with_heap(int heap_size) {
-    // Use standard pystack size for compatibility with enhanced circuitpython-api.js
     const int pystack_size = 8192;
     mp_js_init(pystack_size, heap_size);
-}
-
-void mp_js_repl_init(void) {
-    pyexec_event_repl_init();
-}
-
-int mp_js_repl_process_char(int c) {
-    external_call_depth_inc();
-    int ret = pyexec_event_repl_process_char(c);
-    external_call_depth_dec();
-    return ret;
 }
 
 #if MICROPY_GC_SPLIT_HEAP_AUTO
@@ -194,11 +235,6 @@ size_t gc_get_max_new_split(void) {
     return 128 * 1024 * 1024;
 }
 
-// Don't collect anything.  Instead require the heap to grow.
-void gc_collect(void) {
-    gc_collect_pending = true;
-}
-
 // Collect at the top-level, where there are no root pointers from stack/registers.
 static void gc_collect_top_level(void) {
     if (gc_collect_pending) {
@@ -206,19 +242,6 @@ static void gc_collect_top_level(void) {
         gc_collect_start();
         gc_collect_end();
     }
-}
-
-#else
-
-static void gc_scan_func(void *begin, void *end) {
-    gc_collect_root((void **)begin, (void **)end - (void **)begin + 1);
-}
-
-void gc_collect(void) {
-    gc_collect_start();
-    emscripten_scan_stack(gc_scan_func);
-    emscripten_scan_registers(gc_scan_func);
-    gc_collect_end();
 }
 
 #endif
@@ -255,4 +278,27 @@ void MP_WEAK __assert_func(const char *file, int line, const char *func, const c
     printf("Assertion '%s' failed, at file %s:%d\n", expr, file, line);
     __fatal_error("Assertion failed");
 }
+#endif
+
+
+
+
+
+#if MICROPY_VFS_ROM_IOCTL
+
+static uint8_t romfs_buf[4] = { 0xd2, 0xcd, 0x31, 0x00 }; // empty ROMFS
+static const MP_DEFINE_MEMORYVIEW_OBJ(romfs_obj, 'B', 0, sizeof(romfs_buf), romfs_buf);
+
+mp_obj_t mp_vfs_rom_ioctl(size_t n_args, const mp_obj_t *args) {
+    switch (mp_obj_get_int(args[0])) {
+        case MP_VFS_ROM_IOCTL_GET_NUMBER_OF_SEGMENTS:
+            return MP_OBJ_NEW_SMALL_INT(1);
+
+        case MP_VFS_ROM_IOCTL_GET_SEGMENT:
+            return MP_OBJ_FROM_PTR(&romfs_obj);
+    }
+
+    return MP_OBJ_NEW_SMALL_INT(-MP_EINVAL);
+}
+
 #endif

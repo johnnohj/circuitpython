@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WebAssembly Port Web REPL</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #terminal {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: #1e1e1e;
+        }
+        #input-line {
+            display: flex;
+            align-items: center;
+            background: #252525;
+            border-top: 1px solid #3e3e42;
+            padding: 5px 10px;
+        }
+        #prompt {
+            color: #569cd6;
+            margin-right: 5px;
+        }
+        #input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: inherit;
+            outline: none;
+        }
+        .output { color: #d4d4d4; }
+        .error { color: #f48771; }
+        .result { color: #b5cea8; }
+        .info { color: #9cdcfe; }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+    <div id="input-line">
+        <span id="prompt">>>> </span>
+        <input type="text" id="input" autofocus>
+    </div>
+
+    <script type="module">
+        import loadCircuitPython from './build-standard/circuitpython.mjs';
+
+        const terminal = document.getElementById('terminal');
+        const input = document.getElementById('input');
+        const promptEl = document.getElementById('prompt');
+        
+        let mp = null;
+        let history = [];
+        let historyIndex = 0;
+        let multilineBuffer = '';
+        let inMultiline = false;
+
+        function appendOutput(text, className = 'output') {
+            const span = document.createElement('span');
+            span.className = className;
+            span.textContent = text + '\n';
+            terminal.appendChild(span);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function updatePrompt() {
+            promptEl.textContent = inMultiline ? '... ' : '>>> ';
+        }
+
+        async function executeCode(code) {
+            if (!mp) return;
+            
+            try {
+                const outputPtr = mp._malloc(4);
+                
+                // Capture output
+                const originalPrint = mp.print;
+                let capturedOutput = '';
+                mp.print = (text) => capturedOutput += text + '\n';
+                
+                // Try to evaluate as expression for REPL echo
+                try {
+                    const evalCode = `
+import sys
+_old_stdout = sys.stdout
+class _CaptureStdout:
+    def __init__(self):
+        self.data = []
+    def write(self, text):
+        self.data.append(text)
+    def flush(self):
+        pass
+        
+_capture = _CaptureStdout()
+sys.stdout = _capture
+
+try:
+    _result = ${code}
+    if _result is not None:
+        print(repr(_result))
+except SyntaxError:
+    exec('''${code}''')
+finally:
+    sys.stdout = _old_stdout
+    for text in _capture.data:
+        print(text, end='')
+`;
+                    mp._mp_js_do_exec(evalCode, outputPtr);
+                } catch (e) {
+                    // Fall back to simple exec
+                    mp._mp_js_do_exec(code, outputPtr);
+                }
+                
+                // Restore print and show output
+                mp.print = originalPrint;
+                if (capturedOutput.trim()) {
+                    appendOutput(capturedOutput.trim());
+                }
+                
+                mp._free(outputPtr);
+            } catch (error) {
+                appendOutput(error.message, 'error');
+            }
+        }
+
+        async function init() {
+            appendOutput('Loading CircuitPython WebAssembly port...', 'info');
+            
+            try {
+                mp = await loadCircuitPython({
+                    print: (text) => appendOutput(text),
+                    printErr: (text) => appendOutput(text, 'error'),
+                    stdin: () => null
+                });
+                
+                // Initialize with 256KB heap
+                mp._mp_js_init(8 * 1024, 256 * 1024);
+                
+                // Show banner
+                const outputPtr = mp._malloc(4);
+                mp._mp_js_do_exec("import sys; print(f'CircuitPython {sys.version} on WebAssembly port')", outputPtr);
+                mp._free(outputPtr);
+                
+                appendOutput('Type "help()" for more information\n', 'info');
+                
+            } catch (error) {
+                appendOutput('Failed to initialize: ' + error.message, 'error');
+            }
+        }
+
+        // Handle input
+        input.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const code = input.value;
+                
+                // Show input in terminal
+                appendOutput(promptEl.textContent + code);
+                
+                // Add to history
+                if (code.trim()) {
+                    history.push(code);
+                    historyIndex = history.length;
+                }
+                
+                // Clear input
+                input.value = '';
+                
+                // Handle multiline
+                if (inMultiline) {
+                    if (code === '') {
+                        inMultiline = false;
+                        await executeCode(multilineBuffer);
+                        multilineBuffer = '';
+                    } else {
+                        multilineBuffer += code + '\n';
+                    }
+                } else {
+                    if (code.endsWith(':')) {
+                        inMultiline = true;
+                        multilineBuffer = code + '\n';
+                    } else if (code.trim()) {
+                        await executeCode(code);
+                    }
+                }
+                
+                updatePrompt();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    input.value = history[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex < history.length - 1) {
+                    historyIndex++;
+                    input.value = history[historyIndex];
+                } else {
+                    historyIndex = history.length;
+                    input.value = '';
+                }
+            } else if (e.ctrlKey && e.key === 'c') {
+                e.preventDefault();
+                if (inMultiline) {
+                    appendOutput('^C\nKeyboardInterrupt', 'error');
+                    inMultiline = false;
+                    multilineBuffer = '';
+                    updatePrompt();
+                }
+            }
+        });
+
+        // Initialize
+        init();
+    </script>
+</body>
+</html>

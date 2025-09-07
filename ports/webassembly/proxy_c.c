@@ -145,7 +145,7 @@ void proxy_c_free_obj(uint32_t c_ref) {
         // recent proxy of this object.)
         mp_obj_t obj_key = mp_obj_new_int_from_uint((uintptr_t)proxy_c_get_obj(c_ref));
         mp_map_elem_t *elem = mp_map_lookup(mp_obj_dict_get_map(MP_STATE_PORT(proxy_c_dict)), obj_key, MP_MAP_LOOKUP);
-        if (elem != NULL && mp_obj_int_get_truncated(elem->value) == c_ref) {
+        if (elem != NULL && (uint32_t)mp_obj_int_get_truncated(elem->value) == c_ref) {
             mp_map_lookup(mp_obj_dict_get_map(MP_STATE_PORT(proxy_c_dict)), obj_key, MP_MAP_LOOKUP_REMOVE_IF_FOUND);
         }
 

@@ -1,42 +1,49 @@
 /*
- * WebAssembly stubs
- * Provides stubs for modules and functions that CircuitPython removed
- * but are still referenced by core py/ code
+ * This file is part of the MicroPython project, http://micropython.org/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2023 Damien P. George
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 
+// Stubs for WebAssembly build
+
 #include "py/obj.h"
-#include "py/runtime.h"
-#include "py/lexer.h"
-#include "py/mperrno.h"
 
-// uctypes module stub - CircuitPython removed this entirely
-const mp_obj_module_t mp_module_uctypes = {
+// Stub for input.c prompt function (we excluded input.c)
+char *prompt(const char *p) {
+    (void)p;
+    return NULL;
+}
+
+// Stub for ulab module (we disabled it but it's still referenced)
+const mp_obj_module_t ulab_user_cmodule = {
     .base = { &mp_type_module },
-    .globals = (mp_obj_dict_t *)&mp_const_empty_dict_obj,
+    .globals = NULL,
 };
 
-// RingIO type stub - simplified implementation
-const mp_obj_type_t mp_type_ringio = {
-    { &mp_type_type },
-    .name = MP_QSTR_RingIO,
-};
-
-// Simple REPL stubs for WebAssembly (when not using event-driven REPL)
-// COMMENTED OUT: Use real REPL implementations instead of stubs
-/*
-void pyexec_event_repl_init(void) {
-    // Initialize basic REPL state - no-op for WebAssembly
-}
-
-int pyexec_event_repl_process_char(int c) {
-    // Process a single character in REPL - basic implementation
-    // For WebAssembly, we can just return that input is complete
-    return 0; // No special handling needed
-}
-*/
-
-// Lexer function for VFS - simple stub
-mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
-    // For WebAssembly without full VFS, files aren't supported
-    mp_raise_OSError(MP_ENOENT);
+// Stub for gc_helper_collect_regs_and_stack 
+// WebAssembly doesn't need stack scanning in the same way
+#include "py/gc.h"
+void gc_helper_collect_regs_and_stack(void) {
+    // WebAssembly stub - no register/stack scanning needed
+    // The WASM runtime manages this for us
 }
