@@ -91,8 +91,8 @@ const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};
 
 
 void mp_js_init(int pystack_size, int heap_size) {
-    // CIRCUITPY-CHANGE: Initialize CircuitPython supervisor components
-    board_init();
+    // CIRCUITPY-CHANGE: Skip early board_init() to prevent proxy crashes
+    // Board initialization will be deferred until mp_js_post_init()
 
     mp_cstack_init_with_sp_here(CSTACK_SIZE);
 
@@ -116,6 +116,34 @@ void mp_js_init(int pystack_size, int heap_size) {
 
     mp_init();
 
+    // WEBASM-FIX: Initialize sys.path early (like Unix port) before any module operations
+    // This is critical for proper module imports and prevents "memory access out of bounds" errors
+    {
+        // sys.path starts as [""] (following Unix port pattern)
+        mp_sys_path = mp_obj_new_list(0, NULL);
+        mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
+        
+        // Add WebAssembly-appropriate default paths
+        const char *default_path = MICROPY_PY_SYS_PATH_DEFAULT;
+        if (default_path) {
+            // Parse colon-separated path entries (reusing Unix port logic)
+            const char *path = default_path;
+            while (*path) {
+                const char *path_entry_end = strchr(path, ':');
+                if (path_entry_end == NULL) {
+                    path_entry_end = path + strlen(path);
+                }
+                if (path_entry_end > path) {  // Non-empty entry
+                    mp_obj_list_append(mp_sys_path, mp_obj_new_str_via_qstr(path, path_entry_end - path));
+                }
+                path = (*path_entry_end) ? path_entry_end + 1 : path_entry_end;
+            }
+        }
+    }
+
+    // Initialize sys.argv as well (following Unix port pattern)
+    mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_argv), 0);
+
     // CIRCUITPY-CHANGE: Initialize CircuitPython supervisor services
     // Note: WebAssembly doesn't need continuous background ticking
 
@@ -128,9 +156,8 @@ void mp_js_init(int pystack_size, int heap_size) {
         };
         mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
         MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
-    }
-    // WEBASM-FIX: Use safer approach for sys.path append
-    if (mp_sys_path && MP_OBJ_IS_TYPE(mp_sys_path, &mp_type_list)) {
+        
+        // Add /lib to sys.path for VFS-mounted library access
         mp_obj_t lib_path = MP_OBJ_NEW_QSTR(MP_QSTR__slash_lib);
         mp_obj_list_append(mp_sys_path, lib_path);
     }
@@ -151,8 +178,22 @@ void mp_js_stdin_write_char(int c);
 void mp_js_stdin_write_str(const char *str, size_t len);
 bool mp_hal_is_stdin_raw_mode(void);
 
+// WEBASM-FIX: Strategic GC collection before memory-intensive module loading
+static void gc_collect_before_import(void) {
+    #if MICROPY_ENABLE_GC
+    if (external_call_depth == 1) {
+        // Force garbage collection before module import to prevent fragmentation
+        gc_collect();
+    }
+    #endif
+}
+
 void mp_js_do_import(const char *name, uint32_t *out) {
     external_call_depth_inc();
+    
+    // WEBASM-FIX: Collect garbage before module loading to prevent memory access errors
+    gc_collect_before_import();
+    
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
         mp_obj_t ret = mp_import_name(qstr_from_str(name), mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
@@ -221,9 +262,26 @@ void mp_js_do_exec_async(const char *src, size_t len, uint32_t *out) {
     #endif
 }
 
+// Post-initialization function to safely initialize proxy-dependent components
+EMSCRIPTEN_KEEPALIVE void mp_js_post_init(void) {
+    extern bool proxy_c_is_initialized(void);
+    extern void proxy_c_init_safe(void);
+    
+    // Initialize proxy system safely first
+    proxy_c_init_safe();
+    
+    // Now safe to initialize board after proxy is ready
+    if (proxy_c_is_initialized()) {
+        board_init();
+    }
+}
+
 EMSCRIPTEN_KEEPALIVE void mp_js_init_with_heap(int heap_size) {
     const int pystack_size = 8192;
     mp_js_init(pystack_size, heap_size);
+    
+    // Automatically perform post-initialization for common use cases
+    mp_js_post_init();
 }
 
 #if MICROPY_GC_SPLIT_HEAP_AUTO
@@ -233,6 +291,15 @@ static bool gc_collect_pending = false;
 // The largest new region that is available to become Python heap.
 size_t gc_get_max_new_split(void) {
     return 128 * 1024 * 1024;
+}
+
+// WEBASM-FIX: Try to add a new heap area when memory is needed (based on MicroPython WebAssembly port)
+bool gc_try_add_heap(size_t bytes) {
+    // For WebAssembly, we rely on Emscripten's memory growth
+    // The heap will grow automatically when more memory is allocated
+    // Return false to indicate we don't manually add heap areas
+    (void)bytes;
+    return false;
 }
 
 // Collect at the top-level, where there are no root pointers from stack/registers.

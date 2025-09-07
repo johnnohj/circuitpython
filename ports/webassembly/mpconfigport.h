@@ -140,6 +140,14 @@ typedef long mp_off_t;
 #define MICROPY_GCREGS_SETJMP (1)
 #endif
 
+// WEBASM-FIX: Enhanced memory management for module loading (based on MicroPython v1.23.0)
+// Note: MICROPY_GC_SPLIT_HEAP_AUTO disabled due to missing gc_try_add_heap in CircuitPython
+// #define MICROPY_GC_SPLIT_HEAP_AUTO (1)
+#define MICROPY_GC_ALLOC_THRESHOLD (4096)
+
+// WEBASM-FIX: Enable stack checking to catch overflows during module loading
+#define MICROPY_STACK_CHECK (1)
+
 // Enable the VFS, and enable the posix "filesystem".
 #define MICROPY_ENABLE_FINALISER    (1)
 #define MICROPY_VFS                 (1)

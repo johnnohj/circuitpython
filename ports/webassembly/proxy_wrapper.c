@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "proxy_c.h"
+#include "py/runtime.h"
 
 static bool proxy_initialized = false;
 
@@ -17,8 +18,13 @@ bool proxy_c_is_initialized(void) {
 // Safe wrapper for proxy_c_init
 void proxy_c_init_safe(void) {
     if (!proxy_initialized) {
-        proxy_c_init();
-        proxy_initialized = true;
+        // Additional safety check: ensure MicroPython VM is initialized
+        extern mp_state_ctx_t mp_state_ctx;
+        if (mp_state_ctx.vm.mp_loaded_modules_dict.map.table != NULL) {
+            proxy_c_init();
+            proxy_initialized = true;
+        }
+        // If MicroPython not ready yet, initialization will be attempted again later
     }
 }
 

@@ -180,11 +180,6 @@ $(BUILD)/supervisor/shared/translate/translate.o: $(HEADER_BUILD)/qstrdefs.gener
 
 all: $(BUILD)/$(PROG)
 
-$(BUILD)/$(PROG): $(OBJ)
-	$(ECHO) "LINK $@"
-	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ)
-	$(Q)test -n "$(SRC_JS)" && cat $(SRC_JS) >> $@ || true
-
 $(BUILD)/circuitpython.min.mjs: $(BUILD)/$(PROG)
 	$(TERSER) $< --compress --module -o $@
 
@@ -193,3 +188,9 @@ repl: $(BUILD)/$(PROG)
 
 # Include py core make rules.
 include $(TOP)/py/mkrules.mk
+
+# WebAssembly-specific build rule (must come after mkrules.mk to override generic rule)
+$(BUILD)/$(PROG): $(OBJ)
+	$(ECHO) "LINK $@"
+	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ)
+	$(Q)test -n "$(SRC_JS)" && cat $(SRC_JS) >> $@ || true
