@@ -83,11 +83,12 @@ LDFLAGS += -s EXIT_RUNTIME=0
 LDFLAGS += -s ALLOW_MEMORY_GROWTH=1
 # Support longjmp (needed for Python exceptions)
 LDFLAGS += -s SUPPORT_LONGJMP=emscripten
-# Allow dynamic function pointers (needed for Python closures and callbacks)  
+# Allow dynamic function pointers (needed for Python closures and callbacks)
+# Conservative increase for EXTRA_FEATURES ROM level - browsers have limits
 LDFLAGS += -s ALLOW_TABLE_GROWTH=1
-LDFLAGS += -s RESERVED_FUNCTION_POINTERS=5000
-# Significantly increase initial table size to avoid runtime growth issues
-LDFLAGS += -s INITIAL_TABLE=10000
+LDFLAGS += -s RESERVED_FUNCTION_POINTERS=8000
+# Moderate initial table size that browsers can handle
+LDFLAGS += -s INITIAL_TABLE=12000
 
 # HAL provider system sources
 SRC_HAL = \

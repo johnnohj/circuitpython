@@ -15,8 +15,12 @@
 // CircuitPython enhancement
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
 
-// Set minimal feature level for WebAssembly to avoid table issues
+// Keep BASIC_FEATURES for stability but manually enable specific functions
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_BASIC_FEATURES)
+
+// Manually enable help function (normally requires EXTRA_FEATURES)
+#define MICROPY_PY_BUILTINS_HELP (1)
+#define MICROPY_PY_BUILTINS_HELP_MODULES (1)
 
 // WebAssembly/Emscripten platform
 #ifndef MICROPY_PY_SYS_PLATFORM
