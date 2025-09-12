@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "py/builtin.h"
 #include "py/compile.h"
@@ -15,7 +16,12 @@
 #include "py/repl.h"
 #include "py/gc.h"
 #include "py/mperrno.h"
+#include "py/mphal.h"
+#include "py/nlr.h"
 #include "shared/runtime/pyexec.h"
+
+// External variable declaration
+extern pyexec_mode_kind_t pyexec_mode_kind;
 
 #include "emscripten.h"
 
@@ -89,15 +95,19 @@ void mp_js_init_with_heap(int heap_size) {
     mp_js_init(8 * 1024, heap_size);
 }
 
+// No custom REPL structures needed - using official pyexec_event_repl_init()
+
 void mp_js_repl_init(void) {
-    // Initialize REPL - basic initialization for now
-    // The actual REPL setup can be done in JavaScript
+    // Use exact same approach as official MicroPython WASM
+    pyexec_event_repl_init();
 }
 
 int mp_js_repl_process_char(int c) {
     external_call_depth_inc();
-    // Basic character processing - placeholder for now
-    int ret = 0;
+    
+    // Use the REAL MicroPython REPL - this is what actually executes Python code
+    int ret = pyexec_event_repl_process_char(c);
+    
     external_call_depth_dec();
     return ret;
 }
@@ -130,12 +140,12 @@ int mp_hal_get_interrupt_char(void) {
     return -1; // Indicate no interrupt character
 }
 
-void mp_hal_stdout_tx_strn(const char *str, size_t len) {
-    // Output to JavaScript console
-    EM_ASM({
-        var s = UTF8ToString($0, $1);
-        console.log(s);
-    }, str, len);
+mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
+    // Temporarily disable EM_ASM to isolate table index issue
+    // Just write to stdout for now
+    size_t ret = write(1, str, len);
+    fflush(stdout);
+    return ret;
 }
 
 // Main function for Emscripten

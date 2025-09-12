@@ -7,32 +7,34 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <emscripten.h>
 
 #include "py/obj.h" 
 #include "py/mphal.h"
 #include "py/gc.h"
 #include "py/nlr.h"
+#include "py/lexer.h"
+#include "py/runtime.h"
+#include "py/builtin.h"
+#include "py/misc.h"
 #include "mpconfigport.h"
 
 #if CIRCUITPY_HAL_PROVIDER
 #include "hal_provider.h"
 #endif
 
+// Control character constants
+#define CHAR_CTRL_A (1)
+#define CHAR_CTRL_B (2) 
+#define CHAR_CTRL_C (3)
+#define CHAR_CTRL_D (4)
+
 // WebAssembly HAL port implementation
 
-void mp_hal_set_interrupt_char(int c) {
-    // Not implemented for WebAssembly
-}
+// mp_hal_stdout_tx_str is now provided by shared/runtime/stdout_helpers.c
 
-void mp_hal_stdout_tx_str(const char *str) {
-    mp_hal_stdout_tx_strn(str, strlen(str));
-}
-
-void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len) {
-    // For cooked output, we can process newlines if needed
-    mp_hal_stdout_tx_strn(str, len);
-}
+// mp_hal_stdout_tx_strn_cooked is now provided by shared/runtime/stdout_helpers.c
 
 uint32_t mp_hal_ticks_ms(void) {
     // Use Emscripten's time function
@@ -131,6 +133,50 @@ void gc_collect(void) {
     gc_collect_end();
 }
 
-bool mp_hal_is_interrupted(void) {
-    return false;
+// Stubs for missing symbols needed by the REPL
+mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
+    return NULL; // Not supported in WebAssembly
 }
+
+mp_import_stat_t mp_import_stat(const char *path) {
+    return MP_IMPORT_STAT_NO_EXIST; // No file system in WebAssembly
+}
+
+// The real readline implementation is in shared/readline/readline.c
+// We just need a stub for the traditional readline() function which isn't used in event-driven mode
+
+char *readline(const char *prompt) {
+    return NULL; // Event-driven REPL doesn't use this
+}
+
+// System objects stubs - only define what's needed
+const mp_obj_type_t mp_type_ringio = { 0 };
+mp_obj_t mp_sys_stdin_obj = MP_OBJ_NULL;
+mp_obj_t mp_sys_stdout_obj = MP_OBJ_NULL;
+mp_obj_t mp_sys_stderr_obj = MP_OBJ_NULL;
+
+// Builtin open stub (needed when VFS is disabled)
+mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) {
+    mp_raise_OSError(ENOENT); // No file system support
+    return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
+
+// Missing module stubs - forward declare globals first
+const mp_obj_dict_t mp_module_uctypes_globals;
+const mp_obj_module_t mp_module_uctypes = {
+    .base = { &mp_type_module },
+    .globals = (mp_obj_dict_t*)&mp_module_uctypes_globals,
+};
+const mp_obj_dict_t mp_module_uctypes_globals = {
+    .base = {&mp_type_dict},
+    .map = {
+        .all_keys_are_qstrs = 1,
+        .is_fixed = 1,
+        .is_ordered = 1,
+        .used = 0,
+        .alloc = 0,
+        .table = NULL,
+    },
+};
+

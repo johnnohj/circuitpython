@@ -15,8 +15,8 @@
 // CircuitPython enhancement
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
 
-// Set base feature level suitable for WebAssembly
-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
+// Set minimal feature level for WebAssembly to avoid table issues
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_BASIC_FEATURES)
 
 // WebAssembly/Emscripten platform
 #ifndef MICROPY_PY_SYS_PLATFORM
@@ -32,15 +32,32 @@
 #define MICROPY_HW_MCU_NAME "Emscripten"
 #endif
 
+// Readline configuration - use VM state like MicroPython WebAssembly port  
+#define MICROPY_READLINE_HISTORY_SIZE (8)
+#define MP_STATE_PORT MP_STATE_VM
+
+// Add readline history to VM state
+#define MICROPY_PORT_STATE_MACHINE \
+    const char *readline_hist[MICROPY_READLINE_HISTORY_SIZE];
+
 // Always enable GC
 #define MICROPY_ENABLE_GC (1)
 #define MICROPY_ENABLE_PYSTACK (1)
 
 // Event-driven REPL for Node.js compatibility
 #define MICROPY_REPL_EVENT_DRIVEN (1)
+#define MICROPY_HELPER_REPL (1)
+#define MICROPY_REPL_AUTO_INDENT (1)
+#define MICROPY_ENABLE_COMPILER (1)
+#define MICROPY_KBD_EXCEPTION (1)
+
+// Remove duplicate readline configuration (already defined above)
 
 // HAL provider system
 #define CIRCUITPY_HAL_PROVIDER (1)
+
+// Enable minimal CircuitPython modules (disabled for testing)
+// #define CIRCUITPY_SUPERVISOR (1)
 
 // Enable JavaScript FFI for hardware provider communication
 #define MICROPY_PY_JSFFI (1)
@@ -87,17 +104,36 @@ typedef long mp_off_t;
 #define MICROPY_HELPER_LEXER_UNIX (0)
 #define MICROPY_VFS_POSIX (0)
 #define MICROPY_READER_POSIX (0)
+#define MICROPY_VFS (0)
+#define MICROPY_PY_BUILTINS_INPUT (0)
+#define MICROPY_HELPER_READLINE (0)
 
 // Essential modules
 #define MICROPY_PY_ASYNC_AWAIT (1)
 #define MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT (1)
+
+// Basic Python built-ins needed for object operations
+#define MICROPY_PY_BUILTINS_STR_UNICODE (1)
+#define MICROPY_PY_BUILTINS_STR_COUNT (1)
+#define MICROPY_PY_BUILTINS_STR_OP_MODULO (1)
+#define MICROPY_PY_BUILTINS_BYTES (1)
+#define MICROPY_PY_BUILTINS_BYTEARRAY (1)
+#define MICROPY_PY_BUILTINS_SET (1)
+#define MICROPY_PY_BUILTINS_FROZENSET (1)
+#define MICROPY_PY_BUILTINS_PROPERTY (1)
+#define MICROPY_PY_BUILTINS_RANGE_ATTRS (1)
+#define MICROPY_PY_BUILTINS_ENUMERATE (1)
+#define MICROPY_PY_BUILTINS_FILTER (1)
+#define MICROPY_PY_BUILTINS_MAP (1)
+#define MICROPY_PY_BUILTINS_ZIP (1)
+#define MICROPY_PY_BUILTINS_REVERSED (1)
 
 // Enable floating-point support
 #define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_DOUBLE)
 #define MICROPY_PY_BUILTINS_FLOAT (1)
 #define MICROPY_PY_MATH (1)
 
-// HAL stdout function
+// HAL stdout function - provided by shared/runtime/stdout_helpers.c
 extern void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len);
 #define MP_PLAT_PRINT_STRN(str, len) mp_hal_stdout_tx_strn_cooked(str, len)
 

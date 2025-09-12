@@ -54,15 +54,40 @@ SRC_SUPERVISOR_WEBASM = supervisor/stub/filesystem.c \
 	supervisor/stub/stack.c \
 	supervisor/shared/translate/translate.c \
 
+# Add missing shared runtime sources
+SRC_SHARED_MODULE = \
+	shared/runtime/pyexec.c \
+	shared/runtime/interrupt_char.c \
+	shared/runtime/stdout_helpers.c \
+	shared/readline/readline.c \
+
+# Minimal CircuitPython shared-bindings (disabled to isolate table bounds error)
+SRC_SHARED_BINDINGS = \
+
+# Minimal CircuitPython shared-module (disabled for now)  
+SRC_SHARED_MODULE_CP = \
+
 # Set target program name
 PROG ?= circuitpython.mjs
 
 # Linker settings for WebAssembly ES module
 LDFLAGS += -s WASM=1
-LDFLAGS += -s EXPORTED_FUNCTIONS="_main,_mp_js_init,_mp_js_init_with_heap,_mp_js_repl_init,_mp_js_repl_process_char,_mp_hal_get_interrupt_char,_hal_register_js_provider"
-LDFLAGS += -s EXPORTED_RUNTIME_METHODS="ccall,cwrap,getValue,setValue"
+LDFLAGS += -s EXPORTED_FUNCTIONS="_main,_free,_malloc,_mp_js_init,_mp_js_init_with_heap,_mp_js_repl_init,_mp_js_repl_process_char,_mp_hal_get_interrupt_char,_hal_register_js_provider"
+LDFLAGS += -s EXPORTED_RUNTIME_METHODS="ccall,cwrap,getValue,setValue,FS,HEAPU8"
 LDFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
 LDFLAGS += -s EXPORT_ES6=1
+# Enable filesystem support for stdout/stderr
+LDFLAGS += -s FORCE_FILESYSTEM=1
+LDFLAGS += -s EXIT_RUNTIME=0
+# Allow memory growth for Python heap
+LDFLAGS += -s ALLOW_MEMORY_GROWTH=1
+# Support longjmp (needed for Python exceptions)
+LDFLAGS += -s SUPPORT_LONGJMP=emscripten
+# Allow dynamic function pointers (needed for Python closures and callbacks)  
+LDFLAGS += -s ALLOW_TABLE_GROWTH=1
+LDFLAGS += -s RESERVED_FUNCTION_POINTERS=5000
+# Significantly increase initial table size to avoid runtime growth issues
+LDFLAGS += -s INITIAL_TABLE=10000
 
 # HAL provider system sources
 SRC_HAL = \
@@ -81,6 +106,9 @@ SRC_C = \
 	$(SRC_HAL) \
 	$(SRC_CIRCUITPY) \
 	$(SRC_SUPERVISOR_WEBASM) \
+	$(SRC_SHARED_MODULE) \
+	$(SRC_SHARED_BINDINGS) \
+	$(SRC_SHARED_MODULE_CP) \
 
 SRC_QSTR += $(SRC_C)
 

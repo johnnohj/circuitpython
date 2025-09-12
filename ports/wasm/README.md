@@ -1,4 +1,4 @@
-# CircuitPython WebAssembly Port with HAL Provider System
+# CircuitPython WebAssembly Port
 
 This port combines the efficiency of MicroPython's WebAssembly implementation with CircuitPython's hardware abstraction and educational API design.
 
@@ -12,7 +12,6 @@ This port combines the efficiency of MicroPython's WebAssembly implementation wi
 ## Variants
 
 - `variants/standard`: MicroPython base + CircuitPython APIs + JavaScript HAL provider
-- `variants/hal`: Full HAL system with multiple provider support
 
 ## Providers
 
@@ -24,7 +23,6 @@ This port combines the efficiency of MicroPython's WebAssembly implementation wi
 
 ```bash
 make VARIANT=standard    # Standard CircuitPython-compatible build
-make VARIANT=hal         # Full HAL provider system
 ```
 
 ## Key Features
