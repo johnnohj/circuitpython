@@ -93,7 +93,6 @@ LDFLAGS += -s SUPPORT_LONGJMP=emscripten
 SRC_HAL = \
 	hal_provider.c \
 	generic_board.c \
-	providers/generic_provider.c \
 	providers/stub_provider.c \
 	providers/js_provider.c \
 

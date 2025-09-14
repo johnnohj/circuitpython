@@ -1,4 +1,4 @@
-// Generic Metro-style board implementation for WASM HAL
+// Generic board implementation for CircuitPython WASM HAL
 
 #include <stdio.h>
 #include <string.h>
@@ -31,20 +31,20 @@ void generic_board_init(void) {
     }
     
     // Allocate virtual pins
-    virtual_pin_count = GENERIC_METRO_PIN_COUNT;
+    virtual_pin_count = GENERIC_BOARD_PIN_COUNT;
     virtual_pins = calloc(virtual_pin_count, sizeof(virtual_pin_state_t));
     
     // Initialize each pin
-    for (int i = 0; i < GENERIC_METRO_PIN_COUNT; i++) {
-        virtual_pins[i].name = generic_metro_pins[i].name;
-        virtual_pins[i].capabilities = generic_metro_pins[i].capabilities;
+    for (int i = 0; i < GENERIC_BOARD_PIN_COUNT; i++) {
+        virtual_pins[i].name = generic_board_pins[i].name;
+        virtual_pins[i].capabilities = generic_board_pins[i].capabilities;
         virtual_pins[i].value = 0;
         virtual_pins[i].direction = 0;  // Input by default
         virtual_pins[i].pull = 0;
         virtual_pins[i].analog_value = 0.0;
         
         // Special initializations
-        if (strcmp(generic_metro_pins[i].name, "BUTTON") == 0) {
+        if (strcmp(generic_board_pins[i].name, "BUTTON") == 0) {
             virtual_pins[i].value = 1;  // Button not pressed (pull-up)
             virtual_pins[i].pull = 1;   // Internal pull-up
         }
@@ -52,7 +52,7 @@ void generic_board_init(void) {
     
     board_initialized = 1;
     
-    printf("Generic Metro board initialized with %d pins\n", virtual_pin_count);
+    printf("Generic board initialized with %d pins\n", virtual_pin_count);
 }
 
 // Generate JSON representation of the board
@@ -71,45 +71,45 @@ const char* generic_board_to_json(void) {
     
     // Board info
     sprintf(json_buffer + strlen(json_buffer),
-        "\"board_name\":\"%s\",", generic_metro_info.board_name);
+        "\"board_name\":\"%s\",", generic_board_info.board_name);
     sprintf(json_buffer + strlen(json_buffer),
-        "\"mcu_type\":\"%s\",", generic_metro_info.mcu_type);
+        "\"mcu_type\":\"%s\",", generic_board_info.mcu_type);
     sprintf(json_buffer + strlen(json_buffer),
-        "\"flash_size\":%u,", generic_metro_info.flash_size);
+        "\"flash_size\":%u,", generic_board_info.flash_size);
     sprintf(json_buffer + strlen(json_buffer),
-        "\"ram_size\":%u,", generic_metro_info.ram_size);
+        "\"ram_size\":%u,", generic_board_info.ram_size);
     sprintf(json_buffer + strlen(json_buffer),
-        "\"cpu_frequency_mhz\":%.1f,", generic_metro_info.cpu_frequency_mhz);
+        "\"cpu_frequency_mhz\":%.1f,", generic_board_info.cpu_frequency_mhz);
     sprintf(json_buffer + strlen(json_buffer),
-        "\"logic_level_v\":%.1f,", generic_metro_info.logic_level_v);
+        "\"logic_level_v\":%.1f,", generic_board_info.logic_level_v);
     
     // Pins array
     strcat(json_buffer, "\"pins\":[");
-    for (int i = 0; i < GENERIC_METRO_PIN_COUNT; i++) {
+    for (int i = 0; i < GENERIC_BOARD_PIN_COUNT; i++) {
         if (i > 0) strcat(json_buffer, ",");
         sprintf(json_buffer + strlen(json_buffer),
             "{\"name\":\"%s\",\"mcu_pin\":\"%s\",\"capabilities\":%u}",
-            generic_metro_pins[i].name,
-            generic_metro_pins[i].mcu_pin,
-            generic_metro_pins[i].capabilities
+            generic_board_pins[i].name,
+            generic_board_pins[i].mcu_pin,
+            generic_board_pins[i].capabilities
         );
     }
     strcat(json_buffer, "],");
     
     // Peripherals array
     strcat(json_buffer, "\"peripherals\":[");
-    for (int i = 0; i < GENERIC_METRO_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < GENERIC_BOARD_PERIPHERAL_COUNT; i++) {
         if (i > 0) strcat(json_buffer, ",");
         sprintf(json_buffer + strlen(json_buffer),
             "{\"name\":\"%s\",\"pins\":[",
-            generic_metro_peripherals[i].name
+            generic_board_peripherals[i].name
         );
         
         // Add peripheral pins
-        for (int j = 0; j < 4 && generic_metro_peripherals[i].default_pins[j]; j++) {
+        for (int j = 0; j < 4 && generic_board_peripherals[i].default_pins[j]; j++) {
             if (j > 0) strcat(json_buffer, ",");
             sprintf(json_buffer + strlen(json_buffer),
-                "\"%s\"", generic_metro_peripherals[i].default_pins[j]
+                "\"%s\"", generic_board_peripherals[i].default_pins[j]
             );
         }
         strcat(json_buffer, "]}");
@@ -219,21 +219,21 @@ const char* mp_js_generate_board_module(void) {
     }
     
     module_source = malloc(4096);
-    strcpy(module_source, "# Auto-generated board module for Generic Metro\n");
+    strcpy(module_source, "# Auto-generated board module for Generic Board\n");
     strcat(module_source, "# This module provides pin definitions for the simulated board\n\n");
     
     // Add pin constants
-    for (int i = 0; i < GENERIC_METRO_PIN_COUNT; i++) {
+    for (int i = 0; i < GENERIC_BOARD_PIN_COUNT; i++) {
         sprintf(module_source + strlen(module_source),
                 "%s = '%s'\n", 
-                generic_metro_pins[i].name,
-                generic_metro_pins[i].name);
+                generic_board_pins[i].name,
+                generic_board_pins[i].name);
     }
     
     // Add helper information
     strcat(module_source, "\n# Board information\n");
     sprintf(module_source + strlen(module_source),
-            "board_id = '%s'\n", generic_metro_info.board_name);
+            "board_id = '%s'\n", generic_board_info.board_name);
     
     // Add peripheral groupings
     strcat(module_source, "\n# Peripheral pin groups\n");

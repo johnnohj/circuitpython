@@ -1,4 +1,4 @@
-// Generic Metro-style board configuration for WASM HAL
+// Generic board configuration for CircuitPython WASM HAL
 // Provides a comprehensive fallback board with common peripherals
 
 #ifndef GENERIC_BOARD_H
@@ -6,8 +6,8 @@
 
 #include <stdint.h>
 
-// Generic Metro board pin definitions
-// Based on common Arduino Uno/Metro layout
+// Generic board pin definitions
+// Based on common Arduino-compatible layout for familiarity
 
 typedef struct {
     const char* name;
@@ -24,8 +24,8 @@ typedef struct {
 #define PIN_CAP_UART        (1 << 5)
 #define PIN_CAP_TOUCH       (1 << 6)
 
-// Standard Metro/Arduino pin layout
-static const generic_pin_def_t generic_metro_pins[] = {
+// Standard Arduino-compatible pin layout
+static const generic_pin_def_t generic_board_pins[] = {
     // Digital pins (0-13)
     {"D0",  "PA00", PIN_CAP_DIGITAL | PIN_CAP_UART},  // RX
     {"D1",  "PA01", PIN_CAP_DIGITAL | PIN_CAP_UART},  // TX
@@ -73,7 +73,7 @@ static const generic_pin_def_t generic_metro_pins[] = {
     {"RX", "PA00", PIN_CAP_DIGITAL | PIN_CAP_UART},
 };
 
-#define GENERIC_METRO_PIN_COUNT (sizeof(generic_metro_pins) / sizeof(generic_metro_pins[0]))
+#define GENERIC_BOARD_PIN_COUNT (sizeof(generic_board_pins) / sizeof(generic_board_pins[0]))
 
 // Board metadata
 typedef struct {
@@ -85,9 +85,9 @@ typedef struct {
     float logic_level_v;
 } generic_board_info_t;
 
-static const generic_board_info_t generic_metro_info = {
-    .board_name = "Generic Metro (WASM Simulator)",
-    .mcu_type = "Virtual SAMD21G18",  // Pretend to be SAMD21 for compatibility
+static const generic_board_info_t generic_board_info = {
+    .board_name = "Generic Board (WASM)",
+    .mcu_type = "Virtual MCU",  // Generic virtual microcontroller
     .flash_size = 256 * 1024,         // 256KB flash
     .ram_size = 32 * 1024,            // 32KB RAM
     .cpu_frequency_mhz = 48.0,
@@ -100,14 +100,14 @@ typedef struct {
     const char* default_pins[4];  // Up to 4 pins per peripheral
 } generic_peripheral_t;
 
-static const generic_peripheral_t generic_metro_peripherals[] = {
+static const generic_peripheral_t generic_board_peripherals[] = {
     {"I2C", {"SDA", "SCL", NULL, NULL}},
     {"SPI", {"MOSI", "MISO", "SCK", "D10"}},  // D10 as CS
     {"UART", {"TX", "RX", NULL, NULL}},
     {"NEOPIXEL", {"NEOPIXEL", NULL, NULL, NULL}},
 };
 
-#define GENERIC_METRO_PERIPHERAL_COUNT (sizeof(generic_metro_peripherals) / sizeof(generic_metro_peripherals[0]))
+#define GENERIC_BOARD_PERIPHERAL_COUNT (sizeof(generic_board_peripherals) / sizeof(generic_board_peripherals[0]))
 
 // Function declarations
 void generic_board_init(void);
