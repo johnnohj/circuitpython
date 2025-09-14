@@ -63,6 +63,11 @@ void hal_provider_init(void) {
     // Clear provider and pin arrays
     memset(providers, 0, sizeof(providers));
     memset(pins, 0, sizeof(pins));
+    
+    // Initialize generic board as fallback
+    // This will be available even if no UF2 is loaded
+    extern void generic_board_init(void);
+    generic_board_init();
 }
 
 void hal_provider_deinit(void) {

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM - Dynamic Module Loading Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #1e1e1e;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00ff88;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .demo-section {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00ff88;
+        }
+        
+        .code-editor {
+            background: #1e1e1e;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            color: #ffffff;
+            width: 100%;
+            min-height: 150px;
+            resize: vertical;
+        }
+        
+        .output {
+            background: #000;
+            color: #00ff88;
+            font-family: 'Courier New', monospace;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #333;
+        }
+        
+        .controls {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #0052a3;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            background: #2d2d2d;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        
+        .success { color: #00ff88; }
+        .error { color: #ff4444; }
+        .warning { color: #ffaa00; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐍 Dynamic Module Loading Demo</h1>
+        
+        <div class="demo-section">
+            <h3>What This Demonstrates</h3>
+            <p>This demo shows <strong>proper dynamic module loading</strong> in CircuitPython WASM:</p>
+            <ul>
+                <li><strong>Runtime Module Creation:</strong> Load Python modules from source code</li>
+                <li><strong>WASM Internal Implementation:</strong> No JavaScript workarounds needed</li>
+                <li><strong>Clean API Integration:</strong> Simple function call to load modules</li>
+                <li><strong>Memory Management:</strong> Proper string allocation and cleanup</li>
+            </ul>
+        </div>
+
+        <div class="demo-section">
+            <h3>1. Initialize CircuitPython</h3>
+            <div class="controls">
+                <button id="initBtn" onclick="initializeCircuitPython()">Initialize System</button>
+            </div>
+            <div id="initStatus" class="status">Ready to initialize</div>
+        </div>
+
+        <div class="demo-section">
+            <h3>2. Create Your Python Module</h3>
+            <p>Write Python code to load as a module:</p>
+            <textarea id="moduleCode" class="code-editor" placeholder="Enter Python module code here...">
+# Example CircuitPython module
+def led_blink(pin_num=25, times=5):
+    """Simulate LED blinking on specified pin"""
+    results = []
+    for i in range(times):
+        results.append(f"Pin {pin_num}: LED ON  (blink {i+1})")
+        results.append(f"Pin {pin_num}: LED OFF (blink {i+1})")
+    return results
+
+def get_board_info():
+    """Get information about the virtual board"""
+    import sys
+    return {
+        'platform': sys.platform,
+        'version': sys.version_info[:2],
+        'implementation': str(sys.implementation.name)
+    }
+
+def fibonacci(n):
+    """Generate fibonacci sequence"""
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    
+    fib = [0, 1]
+    for i in range(2, n):
+        fib.append(fib[i-1] + fib[i-2])
+    return fib
+
+# Module initialization
+print(f"✓ Module '{__name__}' loaded successfully!")
+print("Available functions: led_blink, get_board_info, fibonacci")
+            </textarea>
+            
+            <div class="controls">
+                <input type="text" id="moduleName" placeholder="Module name (e.g., 'my_module')" value="demo_module" 
+                       style="padding: 10px; background: #333; color: white; border: 1px solid #555; border-radius: 4px;">
+                <button id="loadBtn" onclick="loadModule()" disabled>Load Module</button>
+                <button onclick="clearModuleCode()">Clear Code</button>
+                <button onclick="loadExampleModule()">Load Example</button>
+            </div>
+            
+            <div id="moduleStatus" class="status">Waiting for initialization</div>
+        </div>
+
+        <div class="demo-section">
+            <h3>3. Test Your Module</h3>
+            <p>Enter Python commands to test your loaded module:</p>
+            <textarea id="testCode" class="code-editor" placeholder="Enter test commands here...">
+# Test the loaded module
+led_blink(13, 3)
+get_board_info()
+fibonacci(8)
+            </textarea>
+            
+            <div class="controls">
+                <button id="testBtn" onclick="runTests()" disabled>Run Tests</button>
+                <button onclick="clearOutput()">Clear Output</button>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h3>4. Output</h3>
+            <div id="output" class="output">Output will appear here...</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import _createCircuitPythonModule from '../build/circuitpython.mjs';
+
+        let circuitPython = null;
+        let isInitialized = false;
+        let outputDiv = document.getElementById('output');
+
+        // Utility functions
+        function updateStatus(elementId, message, type = 'normal') {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+
+        function appendOutput(text, type = 'normal') {
+            const timestamp = new Date().toLocaleTimeString();
+            outputDiv.textContent += `[${timestamp}] ${text}\n`;
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+        }
+
+        // Initialize CircuitPython
+        window.initializeCircuitPython = async function() {
+            const initBtn = document.getElementById('initBtn');
+            initBtn.disabled = true;
+            
+            updateStatus('initStatus', 'Initializing CircuitPython WASM...', 'warning');
+            appendOutput('🚀 Initializing CircuitPython WebAssembly...');
+
+            try {
+                // Load WASM module
+                circuitPython = await _createCircuitPythonModule({
+                    stdout: (charCode) => {
+                        const char = String.fromCharCode(charCode);
+                        appendOutput(char, 'success');
+                    },
+                    stderr: (charCode) => {
+                        const char = String.fromCharCode(charCode);
+                        appendOutput(char, 'error');
+                    }
+                });
+
+                appendOutput('✓ WASM module loaded');
+
+                // Initialize Python runtime
+                circuitPython._mp_js_init_with_heap(2 * 1024 * 1024); // 2MB heap
+                appendOutput('✓ Python runtime initialized with 2MB heap');
+
+                // Initialize REPL
+                circuitPython._mp_js_repl_init();
+                appendOutput('✓ REPL system ready');
+
+                isInitialized = true;
+                updateStatus('initStatus', '✅ CircuitPython ready for module loading', 'success');
+                
+                // Enable module loading controls
+                document.getElementById('loadBtn').disabled = false;
+                document.getElementById('testBtn').disabled = false;
+                updateStatus('moduleStatus', 'Ready to load modules', 'success');
+
+            } catch (error) {
+                console.error('Initialization failed:', error);
+                updateStatus('initStatus', `❌ Initialization failed: ${error.message}`, 'error');
+                appendOutput(`❌ Error: ${error.message}`, 'error');
+                initBtn.disabled = false;
+            }
+        };
+
+        // Load module using proper string allocation
+        window.loadModule = async function() {
+            if (!circuitPython || !isInitialized) {
+                updateStatus('moduleStatus', '❌ CircuitPython not initialized', 'error');
+                return;
+            }
+
+            const moduleName = document.getElementById('moduleName').value.trim();
+            const moduleCode = document.getElementById('moduleCode').value.trim();
+
+            if (!moduleName || !moduleCode) {
+                updateStatus('moduleStatus', '❌ Please provide both module name and code', 'error');
+                return;
+            }
+
+            updateStatus('moduleStatus', '🔄 Loading module...', 'warning');
+            appendOutput(`📦 Loading module '${moduleName}'...`);
+
+            try {
+                // Method 1: Use ccall for proper string handling
+                const result = circuitPython.ccall('mp_js_load_module', 'number', ['string', 'string'], [moduleName, moduleCode]);
+                
+                if (result === 0) {
+                    updateStatus('moduleStatus', `✅ Module '${moduleName}' loaded successfully!`, 'success');
+                    appendOutput(`✅ Module '${moduleName}' loaded and ready to use!`, 'success');
+                } else if (result === -1) {
+                    updateStatus('moduleStatus', '❌ Invalid parameters (empty strings?)', 'error');
+                    appendOutput('❌ Module loading failed: Invalid parameters', 'error');
+                } else if (result === -2) {
+                    updateStatus('moduleStatus', '❌ Python execution error in module', 'error');
+                    appendOutput('❌ Module loading failed: Python execution error', 'error');
+                } else {
+                    updateStatus('moduleStatus', `❌ Unknown error (code: ${result})`, 'error');
+                    appendOutput(`❌ Module loading failed with error code: ${result}`, 'error');
+                }
+
+            } catch (error) {
+                console.error('Module loading error:', error);
+                updateStatus('moduleStatus', '❌ Module loading exception', 'error');
+                appendOutput(`❌ Exception during module loading: ${error.message}`, 'error');
+            }
+        };
+
+        // Run test code
+        window.runTests = function() {
+            if (!circuitPython || !isInitialized) {
+                appendOutput('❌ CircuitPython not initialized', 'error');
+                return;
+            }
+
+            const testCode = document.getElementById('testCode').value.trim();
+            if (!testCode) {
+                appendOutput('❌ No test code provided', 'error');
+                return;
+            }
+
+            appendOutput('\n🧪 Running test code...');
+            appendOutput('=' * 40);
+
+            // Split test code into lines and execute each
+            const lines = testCode.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
+            
+            for (const line of lines) {
+                appendOutput(`>>> ${line}`);
+                
+                // Send each character to REPL
+                const input = line + '\n';
+                for (const char of input) {
+                    circuitPython._mp_js_repl_process_char(char.charCodeAt(0));
+                }
+            }
+
+            appendOutput('=' * 40);
+            appendOutput('✅ Test execution completed\n');
+        };
+
+        // Utility functions
+        window.clearModuleCode = function() {
+            document.getElementById('moduleCode').value = '';
+        };
+
+        window.clearOutput = function() {
+            outputDiv.textContent = '';
+        };
+
+        window.loadExampleModule = function() {
+            // The example is already in the textarea by default
+            document.getElementById('moduleName').value = 'demo_module';
+        };
+
+        // Initialize page
+        appendOutput('Dynamic Module Loading Demo Ready');
+        appendOutput('Click "Initialize System" to start');
+    </script>
+</body>
+</html>

@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM + xterm.js Browser Example</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #1e1e1e;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00ff88;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .info {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00ff88;
+        }
+        
+        .terminal-header {
+            background: #000000;
+            padding: 8px 10px;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            font-family: 'Monaco', 'Consolas', 'Liberation Mono', monospace;
+            font-size: 14px;
+            color: #ffffff;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        
+        .blinka-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+        
+        .terminal-container {
+            background: #000000;
+            padding: 0;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        #terminal {
+            width: 100%;
+            height: 500px;
+            position: relative;
+            border-radius: 0 0 8px 8px;
+        }
+        
+        /* Map Unicode private use area character to Blinka glyph */
+        @font-face {
+            font-family: 'BlinkaMono';
+            src: url('data:font/woff2;base64,') format('woff2');
+            font-display: swap;
+        }
+        
+        /* Style for the Blinka Unicode character */
+        .blinka-unicode::before {
+            content: "\E000";
+            font-family: 'BlinkaMono', monospace;
+            background-image: url('blinka_glyph.png');
+            background-size: 1ch 1em;
+            background-repeat: no-repeat;
+            background-position: center;
+            display: inline-block;
+            width: 1ch;
+            height: 1em;
+            text-indent: -9999px;
+            vertical-align: middle;
+        }
+        
+        /* Fallback for browsers that don't support the custom font */
+        .blinka-glyph {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            background-image: url('blinka_glyph.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #0052a3;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            background: #2d2d2d;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            font-family: monospace;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #00ff88;
+        }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css" />
+</head>
+<body>
+    <div class="container">
+        <h1>🐍 CircuitPython WebAssembly + xterm.js</h1>
+        
+        <div class="info">
+            <h3>Proper I/O Wiring Example</h3>
+            <p>This demonstrates the <strong>correct architecture</strong> for integrating CircuitPython WASM with xterm.js:</p>
+            <ul>
+                <li>WASM handles Python execution internally</li>
+                <li>xterm.js provides terminal interface</li>
+                <li>Clean I/O bridging between WASM ↔ xterm.js</li>
+                <li>Character-by-character REPL processing</li>
+                <li>Dynamic module loading capability</li>
+            </ul>
+        </div>
+
+        <div class="controls">
+            <button id="initBtn" onclick="initializeTerminal()">Initialize CircuitPython</button>
+            <button id="loadModuleBtn" onclick="loadExampleModule()" disabled>Load Example Module</button>
+            <button id="runTestBtn" onclick="runTests()" disabled>Run Tests</button>
+            <button id="pyImportBtn" onclick="testPyImport()" disabled>Test pyImport</button>
+            <button id="clearBtn" onclick="clearTerminal()" disabled>Clear Terminal</button>
+        </div>
+
+        <div id="loading" class="loading">
+            <p>Click "Initialize CircuitPython" to start</p>
+        </div>
+
+        <div class="terminal-container" id="terminalContainer" style="display: none;">
+            <div class="terminal-header" id="terminalHeader">
+                <img src="blinka_glyph.png" alt="Blinka" class="blinka-icon">
+                <span id="bannerText"></span>
+            </div>
+            <div id="terminal"></div>
+        </div>
+
+        <div class="status" id="status">
+            <strong>Status:</strong> <span id="statusText">Ready to initialize</span>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://unpkg.com/@xterm/addon-image@0.8.0/lib/addon-image.js"></script>
+    <script type="module">
+        import _createCircuitPythonModule from './circuitpython.mjs';
+        import { initializeCircuitPythonAPI } from '../circuitpython_api.js';
+        import { setupModuleResolver } from '../module_resolver.js';
+
+        // Global state
+        let terminal = null;
+        let circuitPython = null;
+        let isInitialized = false;
+        let imageAddon = null;
+
+        // Initialize xterm.js terminal
+        function createTerminal() {
+            terminal = new Terminal({
+                cols: 80,
+                rows: 30,
+                theme: {
+                    background: '#000000',
+                    foreground: '#ffffff',
+                    cursor: '#00ff88',
+                    selection: '#444444'
+                },
+                fontSize: 14,
+                fontFamily: 'Monaco, Consolas, "Liberation Mono", monospace',
+                cursorBlink: true,
+                scrollback: 1000
+            });
+
+            terminal.open(document.getElementById('terminal'));
+            
+            // Add image addon for proper image support
+            try {
+                imageAddon = new window.ImageAddon.ImageAddon();
+                terminal.loadAddon(imageAddon);
+                console.log('✅ ImageAddon loaded successfully');
+            } catch (error) {
+                console.log('ImageAddon not available:', error);
+                imageAddon = null;
+            }
+            
+            // Handle terminal input
+            terminal.onData((data) => {
+                if (circuitPython && isInitialized) {
+                    handleTerminalInput(data);
+                }
+            });
+
+            return terminal;
+        }
+
+        // Handle input from terminal and send to CircuitPython REPL
+        function handleTerminalInput(data) {
+            for (let i = 0; i < data.length; i++) {
+                const charCode = data.charCodeAt(i);
+                
+                try {
+                    // Send character to CircuitPython REPL
+                    const result = circuitPython._mp_js_repl_process_char(charCode);
+                    
+                    // Handle special return codes if needed
+                    if (result === 2) {
+                        // Ctrl+C or interrupt
+                        updateStatus('REPL interrupted');
+                    }
+                } catch (error) {
+                    console.error('Error processing character:', error);
+                    terminal.write('\r\n\x1b[31mError processing input\x1b[0m\r\n');
+                }
+            }
+        }
+
+        // Initialize CircuitPython WASM
+        window.initializeTerminal = async function() {
+            const initBtn = document.getElementById('initBtn');
+            const loading = document.getElementById('loading');
+            const terminalContainer = document.getElementById('terminalContainer');
+            
+            initBtn.disabled = true;
+            updateStatus('Initializing CircuitPython WASM...');
+            loading.innerHTML = '<p>Loading CircuitPython WebAssembly module...</p>';
+
+            try {
+                // Create terminal first
+                terminal = createTerminal();
+
+                // Load CircuitPython WASM with banner-capturing I/O handlers
+                let bannerBuffer = '';
+                let bannerCaptured = false;
+                
+                circuitPython = await _createCircuitPythonModule({
+                    stdout: (charCode) => {
+                        const char = String.fromCharCode(charCode);
+                        
+                        if (!bannerCaptured) {
+                            bannerBuffer += char;
+                            
+                            // Look for the complete banner line
+                            if (bannerBuffer.includes('Adafruit CircuitPython') && bannerBuffer.includes('Emscripten')) {
+                                // Extract the banner line
+                                const lines = bannerBuffer.split('\n');
+                                const bannerLine = lines.find(line => line.includes('Adafruit CircuitPython'));
+                                
+                                if (bannerLine) {
+                                    // Update sticky header with banner text
+                                    document.getElementById('bannerText').textContent = bannerLine.trim();
+                                    bannerCaptured = true;
+                                    
+                                    // Filter out unwanted lines and output the rest
+                                    let filteredOutput = bannerBuffer
+                                        .replace(bannerLine, '')
+                                        .replace(/Dynamic module system initialized\s*\n?/g, '')
+                                        .replace(/\n\n/g, '\n');
+                                    
+                                    if (filteredOutput.trim()) {
+                                        terminal.write(filteredOutput);
+                                    }
+                                    bannerBuffer = '';
+                                    return;
+                                }
+                            }
+                            
+                            // If buffer gets too long, flush it
+                            if (bannerBuffer.length > 200) {
+                                terminal.write(bannerBuffer);
+                                bannerBuffer = '';
+                                bannerCaptured = true;
+                            }
+                        } else {
+                            // Normal output after banner is captured
+                            terminal.write(char);
+                        }
+                    },
+                    stderr: (charCode) => {
+                        // Send WASM errors to terminal (in red)
+                        const char = String.fromCharCode(charCode);
+                        terminal.write(`\x1b[31m${char}\x1b[0m`);
+                    }
+                });
+
+                updateStatus('WASM loaded, initializing...');
+
+                // Initialize CircuitPython with heap
+                circuitPython._mp_js_init_with_heap(1024 * 1024); // 1MB heap
+
+                // Initialize REPL (this will show the banner)
+                circuitPython._mp_js_repl_init();
+
+                // Set up module resolver and API
+                setupModuleResolver(circuitPython);
+                initializeCircuitPythonAPI(circuitPython);
+
+                isInitialized = true;
+                updateStatus('Ready - Terminal active');
+                
+                // Show terminal, hide loading
+                loading.style.display = 'none';
+                terminalContainer.style.display = 'block';
+                
+                // Enable other buttons
+                document.getElementById('loadModuleBtn').disabled = false;
+                document.getElementById('runTestBtn').disabled = false;
+                document.getElementById('clearBtn').disabled = false;
+
+            } catch (error) {
+                console.error('Initialization failed:', error);
+                updateStatus(`Initialization failed: ${error.message}`);
+                loading.innerHTML = `<p style="color: #ff4444">Failed to initialize: ${error.message}</p>`;
+                initBtn.disabled = false;
+            }
+        };
+
+        // Load example module
+        window.loadExampleModule = async function() {
+            if (!circuitPython || !isInitialized) return;
+
+            updateStatus('Loading example module...');
+            
+            const exampleModule = `
+def fibonacci(n):
+    """Generate Fibonacci sequence up to n terms"""
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    elif n == 2:
+        return [0, 1]
+    
+    fib = [0, 1]
+    for i in range(2, n):
+        fib.append(fib[i-1] + fib[i-2])
+    return fib
+
+def led_blink_sim(times=3):
+    """Simulate LED blinking"""
+    import time
+    for i in range(times):
+        print(f"💡 LED ON  (blink {i+1}/{times})")
+        print(f"💡 LED OFF (blink {i+1}/{times})")
+    return "Blink simulation complete!"
+
+def board_info():
+    """Show virtual board information"""
+    import sys
+    return {
+        'platform': sys.platform,
+        'implementation': str(sys.implementation),
+        'version': sys.version,
+        'board': 'CircuitPython WASM Virtual Board'
+    }
+
+print("📦 Example module loaded successfully!")
+print("Available functions:")
+print("  • fibonacci(n) - Generate Fibonacci sequence")
+print("  • led_blink_sim(times) - Simulate LED blinking") 
+print("  • board_info() - Show board information")
+            `;
+
+            try {
+                const result = circuitPython._mp_js_load_module('examples', exampleModule);
+                
+                if (result === 0) {
+                    terminal.write('\r\n\x1b[32m✓ Example module loaded! Try the functions above.\x1b[0m\r\n');
+                    updateStatus('Example module loaded successfully');
+                } else {
+                    terminal.write(`\r\n\x1b[31m❌ Failed to load module (error code: ${result})\x1b[0m\r\n`);
+                    updateStatus('Module loading failed');
+                }
+            } catch (error) {
+                console.error('Module loading error:', error);
+                terminal.write('\r\n\x1b[31m❌ Module loading error\x1b[0m\r\n');
+            }
+        };
+
+        // Run automated tests
+        window.runTests = async function() {
+            if (!circuitPython || !isInitialized) return;
+
+            updateStatus('Running tests...');
+            terminal.write('\r\n\x1b[33m=== Running Automated Tests ===\x1b[0m\r\n');
+
+            const testCommands = [
+                'print("Test 1: Basic arithmetic")',
+                '2 + 2',
+                'print("Test 2: String operations")', 
+                '"Hello " + "WASM!"',
+                'print("Test 3: List comprehension")',
+                '[x*2 for x in range(5)]',
+                'print("Test 4: Import and system info")',
+                'import sys',
+                'len(sys.modules)',
+            ];
+
+            for (const cmd of testCommands) {
+                terminal.write(`\r\n>>> ${cmd}\r\n`);
+                
+                // Simulate typing the command
+                for (const char of cmd + '\r') {
+                    handleTerminalInput(char);
+                    await new Promise(resolve => setTimeout(resolve, 20));
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+
+            terminal.write('\r\n\x1b[32m✅ Tests completed!\x1b[0m\r\n');
+            updateStatus('Tests completed successfully');
+        };
+
+        // Clear terminal
+        window.clearTerminal = function() {
+            if (terminal) {
+                terminal.clear();
+                updateStatus('Terminal cleared');
+            }
+        };
+
+        // Display Blinka as text character (terminal-native approach)
+        async function displayBlinkaCharacter(terminal, circuitPython) {
+            try {
+                // Try to get Blinka character from WASM
+                if (circuitPython && typeof circuitPython._mp_js_get_blinka_char === 'function') {
+                    const charPtr = circuitPython._mp_js_get_blinka_char();
+                    if (charPtr && circuitPython.UTF8ToString) {
+                        const blinkaChar = circuitPython.UTF8ToString(charPtr);
+                        
+                        // Write the Unicode character directly to terminal
+                        terminal.write(blinkaChar);
+                        console.log('✅ Blinka character written as Unicode text');
+                        return true;
+                    }
+                }
+                return false;
+            } catch (error) {
+                console.log('Could not write Blinka character:', error);
+                return false;
+            }
+        }
+
+        // Display PNG image by injecting HTML directly into terminal (fallback)
+        async function displayImageInTerminal(terminal, imagePath) {
+            try {
+                // Insert the image directly into the terminal DOM
+                const terminalElement = document.getElementById('terminal');
+                const xtermScreen = terminalElement.querySelector('.xterm-screen');
+                
+                if (xtermScreen) {
+                    // Create image element
+                    const img = document.createElement('img');
+                    img.src = imagePath;
+                    img.style.width = '16px';
+                    img.style.height = '16px';
+                    img.style.display = 'inline-block';
+                    img.style.verticalAlign = 'middle';
+                    img.style.marginRight = '4px';
+                    img.style.position = 'absolute';
+                    img.style.zIndex = '1000';
+                    
+                    // Get current cursor position approximation
+                    const cursorX = terminal.buffer.active.cursorX;
+                    const cursorY = terminal.buffer.active.cursorY;
+                    
+                    // Position image at cursor location
+                    img.style.left = `${cursorX * 9}px`; // Approximate character width
+                    img.style.top = `${cursorY * 17}px`; // Approximate line height
+                    
+                    xtermScreen.appendChild(img);
+                    
+                    // Move cursor forward to account for image space
+                    terminal.write(' ');
+                    
+                    console.log('✅ Blinka glyph displayed as inline image');
+                } else {
+                    // Fallback if DOM manipulation fails
+                    terminal.write('🐍 ');
+                }
+                
+            } catch (error) {
+                console.log('Failed to display image:', error);
+                terminal.write('🐍 '); // Fallback to emoji
+            }
+        }
+
+        // Update status display
+        function updateStatus(message) {
+            document.getElementById('statusText').textContent = message;
+        }
+
+        // Make functions globally available
+        window.initializeTerminal = initializeTerminal;
+        window.loadExampleModule = loadExampleModule;
+        window.runTests = runTests;
+        window.clearTerminal = clearTerminal;
+
+        // Initialize on load
+        console.log('CircuitPython WASM + xterm.js integration ready');
+        updateStatus('Ready to initialize');
+    </script>
+</body>
+</html>

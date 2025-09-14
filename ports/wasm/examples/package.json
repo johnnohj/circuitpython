@@ -1,0 +1,26 @@
+{
+  "name": "circuitpython-wasm-xterm-example",
+  "version": "1.0.0",
+  "description": "Example integration of CircuitPython WASM with xterm.js",
+  "type": "module",
+  "scripts": {
+    "start": "node headless-example.mjs",
+    "serve": "python3 -m http.server 8080",
+    "build": "cd .. && make"
+  },
+  "dependencies": {
+    "@xterm/headless": "^5.5.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-image": "^0.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "keywords": [
+    "circuitpython",
+    "webassembly",
+    "xterm",
+    "terminal",
+    "repl"
+  ]
+}

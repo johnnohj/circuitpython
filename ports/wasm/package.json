@@ -1,0 +1,19 @@
+{
+  "name": "wasm",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "This port combines the efficiency of MicroPython's WebAssembly implementation with CircuitPython's hardware abstraction and educational API design.",
+  "main": "api.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jimp": "^1.6.0"
+  }
+}

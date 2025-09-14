@@ -12,24 +12,46 @@
 
 #include "py/builtin.h"
 #include "py/compile.h"
-#include "py/runtime.h" 
+#include "py/runtime.h"
 #include "py/repl.h"
 #include "py/gc.h"
 #include "py/mperrno.h"
 #include "py/mphal.h"
 #include "py/nlr.h"
 #include "shared/runtime/pyexec.h"
+#include "dynamic_modules.h"
+#include "emscripten.h"
 
 // External variable declaration
 extern pyexec_mode_kind_t pyexec_mode_kind;
 
-#include "emscripten.h"
+// Blinka glyph API for xterm.js integration
+EMSCRIPTEN_KEEPALIVE
+const char* mp_js_get_blinka_glyph_path(void) {
+    return "./blinka_glyph.png";
+}
+
+// Blinka glyph as Unicode character (private use area)
+EMSCRIPTEN_KEEPALIVE
+const char* mp_js_get_blinka_char(void) {
+    return "\uE000"; // Private use area U+E000
+}
+
+// User-friendly Python import API (like PyScript's pyImport)
+// EMSCRIPTEN_KEEPALIVE
+// int mp_js_py_import(const char* module_name) {
+//     // This will trigger the dynamic module loading system
+//     // The JavaScript module resolver will handle finding the source
+//     extern int mp_js_do_dynamic_import(const char* name);
+//     return mp_js_do_dynamic_import(module_name);
+// }
 
 #if CIRCUITPY_HAL_PROVIDER
 #include "hal_provider.h"
 // Provider declarations
 extern const hal_provider_t hal_stub_provider;
 extern const hal_provider_t hal_js_provider;
+extern const hal_provider_t hal_generic_provider;
 #endif
 
 // This counter tracks the current depth of calls into C code that originated
@@ -57,17 +79,21 @@ void external_call_depth_dec(void) {
     --external_call_depth;
 }
 
+// Global pointers for cleanup
+static mp_obj_t *pystack_memory = NULL;
+static char *heap_memory = NULL;
+
 void mp_js_init(int pystack_size, int heap_size) {
     mp_cstack_init_with_sp_here(CSTACK_SIZE);
 
     #if MICROPY_ENABLE_PYSTACK
-    mp_obj_t *pystack = (mp_obj_t *)malloc(pystack_size * sizeof(mp_obj_t));
-    mp_pystack_init(pystack, pystack + pystack_size);
+    pystack_memory = (mp_obj_t *)malloc(pystack_size * sizeof(mp_obj_t));
+    mp_pystack_init(pystack_memory, pystack_memory + pystack_size);
     #endif
 
     #if MICROPY_ENABLE_GC
-    char *heap = (char *)malloc(heap_size * sizeof(char));
-    gc_init(heap, heap + heap_size);
+    heap_memory = (char *)malloc(heap_size * sizeof(char));
+    gc_init(heap_memory, heap_memory + heap_size);
     #endif
 
     #if MICROPY_GC_SPLIT_HEAP_AUTO
@@ -83,8 +109,12 @@ void mp_js_init(int pystack_size, int heap_size) {
     #if CIRCUITPY_HAL_PROVIDER
     // Initialize HAL provider system
     hal_provider_init();
+
+    // Register the generic Metro provider as default
+    // This provides a fully-featured simulated board
+    hal_register_provider(&hal_generic_provider);
     
-    // Register default stub provider
+    // Also register stub provider as fallback
     hal_register_provider(&hal_stub_provider);
     #endif
 
@@ -93,6 +123,9 @@ void mp_js_init(int pystack_size, int heap_size) {
 
 void mp_js_init_with_heap(int heap_size) {
     mp_js_init(8 * 1024, heap_size);
+
+    // Initialize dynamic module system (Phase 2)
+    dynamic_modules_register();
 }
 
 // No custom REPL structures needed - using official pyexec_event_repl_init()
@@ -104,10 +137,10 @@ void mp_js_repl_init(void) {
 
 int mp_js_repl_process_char(int c) {
     external_call_depth_inc();
-    
+
     // Use the REAL MicroPython REPL - this is what actually executes Python code
     int ret = pyexec_event_repl_process_char(c);
-    
+
     external_call_depth_dec();
     return ret;
 }
@@ -146,6 +179,36 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     size_t ret = write(1, str, len);
     fflush(stdout);
     return ret;
+}
+
+// Clean up allocated memory (for proper WASM module cleanup)
+EMSCRIPTEN_KEEPALIVE
+void mp_js_deinit(void) {
+    // Deinitialize dynamic module system
+    dynamic_modules_deinit();
+    
+    #if CIRCUITPY_HAL_PROVIDER
+    // Deinitialize HAL provider system
+    hal_provider_deinit();
+    #endif
+    
+    // Deinitialize MicroPython
+    mp_deinit();
+    
+    // Free allocated memory
+    #if MICROPY_ENABLE_PYSTACK
+    if (pystack_memory != NULL) {
+        free(pystack_memory);
+        pystack_memory = NULL;
+    }
+    #endif
+    
+    #if MICROPY_ENABLE_GC
+    if (heap_memory != NULL) {
+        free(heap_memory);
+        heap_memory = NULL;
+    }
+    #endif
 }
 
 // Main function for Emscripten

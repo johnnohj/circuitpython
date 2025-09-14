@@ -48,6 +48,9 @@
 #define MICROPY_ENABLE_GC (1)
 #define MICROPY_ENABLE_PYSTACK (1)
 
+// Use system printf instead of internal printf to avoid conflicts with Emscripten
+#define MICROPY_USE_INTERNAL_PRINTF (0)
+
 // Event-driven REPL for Node.js compatibility
 #define MICROPY_REPL_EVENT_DRIVEN (1)
 #define MICROPY_HELPER_REPL (1)
@@ -136,6 +139,10 @@ typedef long mp_off_t;
 #define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_DOUBLE)
 #define MICROPY_PY_BUILTINS_FLOAT (1)
 #define MICROPY_PY_MATH (1)
+
+// Disable problematic modules that aren't fully implemented
+#define MICROPY_PY_CMATH (0)
+#define MICROPY_PY_UZLIB (0)
 
 // HAL stdout function - provided by shared/runtime/stdout_helpers.c
 extern void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len);
