@@ -52,7 +52,7 @@ void generic_board_init(void) {
     
     board_initialized = 1;
     
-    printf("Generic board initialized with %d pins\n", virtual_pin_count);
+    // printf("Generic board initialized with %d pins\n", virtual_pin_count);
 }
 
 // Generate JSON representation of the board

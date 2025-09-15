@@ -180,7 +180,7 @@ static const hal_pin_ops_t js_pin_ops = {
 };
 
 static bool js_provider_init(void) {
-    printf("JavaScript HAL provider initialized\n");
+    // printf("JavaScript HAL provider initialized\n");
     
     // Initialize the generic board configuration
     generic_board_init();
@@ -205,7 +205,7 @@ static bool js_provider_init(void) {
 
 static void js_provider_deinit(void) {
     // Clean up any allocated resources
-    printf("JavaScript HAL provider deinitialized\n");
+    // printf("JavaScript HAL provider deinitialized\n");
 }
 
 static mp_obj_t js_get_board_module(void) {

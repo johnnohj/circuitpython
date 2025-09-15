@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+
+#include "py/misc.h"
 #include <emscripten.h>
 
 #include "py/obj.h" 
@@ -143,11 +145,7 @@ mp_import_stat_t mp_import_stat(const char *path) {
 }
 
 // The real readline implementation is in shared/readline/readline.c
-// We just need a stub for the traditional readline() function which isn't used in event-driven mode
-
-char *readline(const char *prompt) {
-    return NULL; // Event-driven REPL doesn't use this
-}
+// No stub needed - the shared implementation handles everything
 
 // System objects stubs - only define what's needed
 const mp_obj_type_t mp_type_ringio = { 0 };

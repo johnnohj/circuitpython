@@ -162,5 +162,5 @@ void dynamic_modules_register(void) {
     // Add dynamic_import to the global namespace
     mp_store_global(MP_QSTR_dynamic_import, MP_OBJ_FROM_PTR(&mp_dynamic_import_obj));
     
-    printf("Dynamic module system initialized\n");
+    // printf("Dynamic module system initialized\n");
 }

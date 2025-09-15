@@ -143,13 +143,14 @@ $(BUILD)/shared-module/%: | $(HEADER_BUILD)/qstr.i.last
 .PHONY: browser node both clean-browser clean-node size-compare
 
 browser:
-	@echo "Building CircuitPython for Browser (optimized)..."
+	@echo "Building CircuitPython for Browser (minimal/optimized)..."
 	@mkdir -p build-browser
-	$(MAKE) VARIANT=browser CFLAGS="$(CFLAGS) -DCIRCUITPY_BROWSER=1" LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=web,worker -s INITIAL_MEMORY=2MB"
-	@if [ -f build/circuitpython.mjs ]; then \
-		cp build/circuitpython.mjs build-browser/circuitpython-web.mjs; \
-		echo "Browser build complete: build-browser/circuitpython-web.mjs"; \
-	fi
+	$(MAKE) clean
+	$(MAKE) LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=web -s INITIAL_MEMORY=2MB"
+	@cp build/circuitpython.mjs build-browser/circuitpython-web.mjs
+	@cp build/circuitpython.wasm build-browser/circuitpython-web.wasm
+	@echo "Browser build complete: build-browser/circuitpython-web.mjs + circuitpython-web.wasm"
+	@echo "Size: $$(wc -c < build-browser/circuitpython-web.mjs) bytes (MJS) + $$(wc -c < build-browser/circuitpython-web.wasm) bytes (WASM)"
 
 node:
 	@echo "Building CircuitPython for Node.js (full features)..."
@@ -160,7 +161,8 @@ node:
 		LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=node -s NODERAWFS=1 -s INITIAL_MEMORY=8MB -s MAXIMUM_MEMORY=256MB -O2"
 	@if [ -f build/circuitpython.mjs ]; then \
 		cp build/circuitpython.mjs build-node/circuitpython-node.mjs; \
-		echo "Node.js build complete: build-node/circuitpython-node.mjs"; \
+		cp build/circuitpython.wasm build-node/circuitpython-node.wasm; \
+		echo "Node.js build complete: build-node/circuitpython-node.mjs + circuitpython-node.wasm"; \
 	fi
 
 both: browser node
