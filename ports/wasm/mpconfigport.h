@@ -24,9 +24,9 @@
 #define MICROPY_PY_BUILTINS_HELP (1)
 #define MICROPY_PY_BUILTINS_HELP_MODULES (1)
 
-// WebAssembly/Emscripten platform
+// Browser platform
 #ifndef MICROPY_PY_SYS_PLATFORM
-#define MICROPY_PY_SYS_PLATFORM "webassembly"
+#define MICROPY_PY_SYS_PLATFORM "browser"
 #endif
 
 // Board and MCU identification
@@ -69,7 +69,7 @@
 // #define CIRCUITPY_SUPERVISOR (1)
 
 // Enable JavaScript FFI for hardware provider communication
-#define MICROPY_PY_JSFFI (1)
+#define MICROPY_PY_JSFFI (0)  // Disabled for browser-only build
 
 // Disable filesystem support
 #define MICROPY_VFS (0)

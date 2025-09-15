@@ -25,22 +25,10 @@ var Module = moduleArg;
 // Determine the runtime environment we are in. You can customize this by
 // setting the ENVIRONMENT setting at compile time (see settings.js).
 
-// Attempt to auto-detect the environment
-var ENVIRONMENT_IS_WEB = typeof window == 'object';
-var ENVIRONMENT_IS_WORKER = typeof WorkerGlobalScope != 'undefined';
-// N.b. Electron.js environment is simultaneously a NODE-environment, but
-// also a web environment.
-var ENVIRONMENT_IS_NODE = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
-var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIRONMENT_IS_WORKER;
-
-if (ENVIRONMENT_IS_NODE) {
-  // When building an ES module `require` is not normally available.
-  // We need to use `createRequire()` to construct the require()` function.
-  const { createRequire } = await import('module');
-  /** @suppress{duplicate} */
-  var require = createRequire(import.meta.url);
-
-}
+var ENVIRONMENT_IS_WEB = true;
+var ENVIRONMENT_IS_WORKER = false;
+var ENVIRONMENT_IS_NODE = false;
+var ENVIRONMENT_IS_SHELL = false;
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
@@ -66,54 +54,6 @@ function locateFile(path) {
 // Hooks that are implemented differently in different runtime environments.
 var readAsync, readBinary;
 
-if (ENVIRONMENT_IS_NODE) {
-  const isNode = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
-  if (!isNode) throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
-
-  var nodeVersion = process.versions.node;
-  var numericVersion = nodeVersion.split('.').slice(0, 3);
-  numericVersion = (numericVersion[0] * 10000) + (numericVersion[1] * 100) + (numericVersion[2].split('-')[0] * 1);
-  if (numericVersion < 160000) {
-    throw new Error('This emscripten-generated code requires node v16.0.0 (detected v' + nodeVersion + ')');
-  }
-
-  // These modules will usually be used on Node.js. Load them eagerly to avoid
-  // the complexity of lazy-loading.
-  var fs = require('fs');
-
-  if (_scriptName.startsWith('file:')) {
-    scriptDirectory = require('path').dirname(require('url').fileURLToPath(_scriptName)) + '/';
-  }
-
-// include: node_shell_read.js
-readBinary = (filename) => {
-  // We need to re-wrap `file://` strings to URLs.
-  filename = isFileURI(filename) ? new URL(filename) : filename;
-  var ret = fs.readFileSync(filename);
-  assert(Buffer.isBuffer(ret));
-  return ret;
-};
-
-readAsync = async (filename, binary = true) => {
-  // See the comment in the `readBinary` function.
-  filename = isFileURI(filename) ? new URL(filename) : filename;
-  var ret = fs.readFileSync(filename, binary ? undefined : 'utf8');
-  assert(binary ? Buffer.isBuffer(ret) : typeof ret == 'string');
-  return ret;
-};
-// end include: node_shell_read.js
-  if (process.argv.length > 1) {
-    thisProgram = process.argv[1].replace(/\\/g, '/');
-  }
-
-  arguments_ = process.argv.slice(2);
-
-  quit_ = (status, toThrow) => {
-    process.exitCode = status;
-    throw toThrow;
-  };
-
-} else
 if (ENVIRONMENT_IS_SHELL) {
 
   const isNode = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
@@ -136,37 +76,8 @@ if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
 
   {
 // include: web_or_worker_shell_read.js
-if (ENVIRONMENT_IS_WORKER) {
-    readBinary = (url) => {
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', url, false);
-      xhr.responseType = 'arraybuffer';
-      xhr.send(null);
-      return new Uint8Array(/** @type{!ArrayBuffer} */(xhr.response));
-    };
-  }
-
-  readAsync = async (url) => {
-    // Fetch has some additional restrictions over XHR, like it can't be used on a file:// url.
-    // See https://github.com/github/fetch/pull/92#issuecomment-140665932
-    // Cordova or Electron apps are typically loaded from a file:// url.
-    // So use XHR on webview if URL is a file URL.
-    if (isFileURI(url)) {
-      return new Promise((resolve, reject) => {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, true);
-        xhr.responseType = 'arraybuffer';
-        xhr.onload = () => {
-          if (xhr.status == 200 || (xhr.status == 0 && xhr.response)) { // file URLs can return 0
-            resolve(xhr.response);
-            return;
-          }
-          reject(xhr.status);
-        };
-        xhr.onerror = reject;
-        xhr.send(null);
-      });
-    }
+readAsync = async (url) => {
+    assert(!isFileURI(url), "readAsync does not work with file:// URLs");
     var response = await fetch(url, { credentials: 'same-origin' });
     if (response.ok) {
       return response.arrayBuffer();
@@ -195,6 +106,10 @@ var NODEFS = 'NODEFS is no longer included by default; build with -lnodefs.js';
 
 // perform assertions in shell.js after we set up out() and err(), as otherwise
 // if an assertion fails it cannot print the message
+
+assert(!ENVIRONMENT_IS_WORKER, 'worker environment detected but not enabled at build time.  Add `worker` to `-sENVIRONMENT` to enable.');
+
+assert(!ENVIRONMENT_IS_NODE, 'node environment detected but not enabled at build time.  Add `node` to `-sENVIRONMENT` to enable.');
 
 assert(!ENVIRONMENT_IS_SHELL, 'shell environment detected but not enabled at build time.  Add `shell` to `-sENVIRONMENT` to enable.');
 
@@ -564,9 +479,6 @@ function addRunDependency(id) {
         err('(end of list)');
       }
     }, 10000);
-    // Prevent this timer from keeping the runtime alive if nothing
-    // else is.
-    runDependencyWatcher.unref?.()
   }
 }
 
@@ -690,15 +602,6 @@ async function instantiateArrayBuffer(binaryFile, imports) {
 
 async function instantiateAsync(binary, binaryFile, imports) {
   if (!binary
-      // Don't use streaming for file:// delivered objects in a webview, fetch them synchronously.
-      && !isFileURI(binaryFile)
-      // Avoid instantiateStreaming() on Node.js environment for now, as while
-      // Node.js v18.1.0 implements it, it does not have a full fetch()
-      // implementation yet.
-      //
-      // Reference:
-      //   https://github.com/emscripten-core/emscripten/pull/16917
-      && !ENVIRONMENT_IS_NODE
      ) {
     try {
       var response = fetch(binaryFile, { credentials: 'same-origin' });
@@ -877,7 +780,6 @@ async function createWasm() {
       warnOnce.shown ||= {};
       if (!warnOnce.shown[text]) {
         warnOnce.shown[text] = 1;
-        if (ENVIRONMENT_IS_NODE) text = 'warning: ' + text;
         err(text);
       }
     };
@@ -1114,11 +1016,6 @@ async function createWasm() {
   };
   
   var initRandomFill = () => {
-      // This block is not needed on v19+ since crypto.getRandomValues is builtin
-      if (ENVIRONMENT_IS_NODE) {
-        var nodeCrypto = require('crypto');
-        return (view) => nodeCrypto.randomFillSync(view);
-      }
   
       return (view) => crypto.getRandomValues(view);
     };
@@ -1320,35 +1217,6 @@ async function createWasm() {
   var FS_stdin_getChar = () => {
       if (!FS_stdin_getChar_buffer.length) {
         var result = null;
-        if (ENVIRONMENT_IS_NODE) {
-          // we will read data by chunks of BUFSIZE
-          var BUFSIZE = 256;
-          var buf = Buffer.alloc(BUFSIZE);
-          var bytesRead = 0;
-  
-          // For some reason we must suppress a closure warning here, even though
-          // fd definitely exists on process.stdin, and is even the proper way to
-          // get the fd of stdin,
-          // https://github.com/nodejs/help/issues/2136#issuecomment-523649904
-          // This started to happen after moving this logic out of library_tty.js,
-          // so it is related to the surrounding code in some unclear manner.
-          /** @suppress {missingProperties} */
-          var fd = process.stdin.fd;
-  
-          try {
-            bytesRead = fs.readSync(fd, buf, 0, BUFSIZE);
-          } catch(e) {
-            // Cross-platform differences: on Windows, reading EOF throws an
-            // exception, but on other OSes, reading EOF returns 0. Uniformize
-            // behavior by treating the EOF exception to return 0.
-            if (e.toString().includes('EOF')) bytesRead = 0;
-            else throw e;
-          }
-  
-          if (bytesRead > 0) {
-            result = buf.slice(0, bytesRead).toString('utf-8');
-          }
-        } else
         if (typeof window != 'undefined' &&
           typeof window.prompt == 'function') {
           // Browser.
@@ -4484,18 +4352,21 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('fetchSettings');
 }
 var ASM_CONSTS = {
-  106472: ($0) => { if (Module.onLEDChange) { Module.onLEDChange($0); } },  
- 106528: () => { if (Module.getButtonState) { return Module.getButtonState(); } }
+  107134: ($0) => { if (Module.onLEDChange) { Module.onLEDChange($0); } },  
+ 107190: () => { if (Module.getButtonState) { return Module.getButtonState(); } }
 };
 function fetch_module_source_js(module_name) { if (typeof Module.fetchModuleSource === 'function') { try { const source = Module.fetchModuleSource(UTF8ToString(module_name)); if (source) { const len = lengthBytesUTF8(source) + 1; const ptr = _malloc(len); stringToUTF8(source, ptr, len); return ptr; } } catch (e) { console.error('Error fetching module:', e); } } return 0; }
-function js_notify_pin_change(pin_name,value) { const name = UTF8ToString(pin_name); if (Module.onGenericPinChange) { Module.onGenericPinChange(name, value); } if (name === 'LED' || name === 'D13') { if (Module.onLEDChange) { Module.onLEDChange(value); } } }
-function js_get_button_state() { if (Module.getButtonState) { return Module.getButtonState() ? 1 : 0; } return 1; }
-function js_get_analog_value(pin_name) { const name = UTF8ToString(pin_name); if (Module.getAnalogValue) { return Module.getAnalogValue(name); } return 512.0; }
-function js_digital_set_direction(pin,output) { if (Module.hardwareProvider && Module.hardwareProvider.digitalSetDirection) { Module.hardwareProvider.digitalSetDirection(pin, output); } else { console.log(`HAL: Pin ${pin} direction -> ${output ? 'OUTPUT' : 'INPUT'}`); } }
-function js_digital_set_value(pin,value) { if (Module.hardwareProvider && Module.hardwareProvider.digitalSetValue) { Module.hardwareProvider.digitalSetValue(pin, value); } else { console.log(`HAL: Pin ${pin} = ${value}`); } }
-function js_digital_get_value(pin) { if (Module.hardwareProvider && Module.hardwareProvider.digitalGetValue) { return Module.hardwareProvider.digitalGetValue(pin); } return false; }
-function js_analog_read(pin) { if (Module.hardwareProvider && Module.hardwareProvider.analogRead) { return Module.hardwareProvider.analogRead(pin); } return Math.floor(Math.random() * 65536); }
-function js_analog_write(pin,value) { if (Module.hardwareProvider && Module.hardwareProvider.analogWrite) { Module.hardwareProvider.analogWrite(pin, value); } else { console.log(`HAL: Analog pin ${pin} = ${value}`); } }
+function js_digital_set_direction_by_name(pin_name,output) { const name = UTF8ToString(pin_name); if (Module.hardwareProvider && Module.hardwareProvider.digitalSetDirection) { Module.hardwareProvider.digitalSetDirection(name, output); } else { console.log(`HAL: Pin ${name} direction -> ${output ? 'OUTPUT' : 'INPUT'}`); } }
+function js_digital_set_direction(pin,output) { if (Module.hardwareProvider && Module.hardwareProvider.digitalSetDirectionByNumber) { Module.hardwareProvider.digitalSetDirectionByNumber(pin, output); } else { console.log(`HAL: Pin #${pin} direction -> ${output ? 'OUTPUT' : 'INPUT'}`); } }
+function js_digital_set_value_by_name(pin_name,value) { const name = UTF8ToString(pin_name); if (Module.hardwareProvider && Module.hardwareProvider.digitalSetValue) { Module.hardwareProvider.digitalSetValue(name, value); } else { console.log(`HAL: Pin ${name} = ${value}`); } if (name === 'LED' || name === 'D13') { if (Module.onLEDChange) { Module.onLEDChange(value); } } if (Module.onPinChange) { Module.onPinChange(name, value); } }
+function js_digital_set_value(pin,value) { if (Module.hardwareProvider && Module.hardwareProvider.digitalSetValueByNumber) { Module.hardwareProvider.digitalSetValueByNumber(pin, value); } else { console.log(`HAL: Pin #${pin} = ${value}`); } }
+function js_digital_get_value_by_name(pin_name) { const name = UTF8ToString(pin_name); if (Module.hardwareProvider && Module.hardwareProvider.digitalGetValue) { return Module.hardwareProvider.digitalGetValue(name); } if (name === 'BUTTON' && Module.getButtonState) { return Module.getButtonState() ? 0 : 1; } return false; }
+function js_digital_get_value(pin) { if (Module.hardwareProvider && Module.hardwareProvider.digitalGetValueByNumber) { return Module.hardwareProvider.digitalGetValueByNumber(pin); } return false; }
+function js_analog_read_by_name(pin_name) { const name = UTF8ToString(pin_name); if (Module.hardwareProvider && Module.hardwareProvider.analogRead) { return Module.hardwareProvider.analogRead(name); } if (Module.getAnalogValue) { return Module.getAnalogValue(name); } return Math.floor(Math.random() * 1024); }
+function js_analog_read(pin) { if (Module.hardwareProvider && Module.hardwareProvider.analogReadByNumber) { return Module.hardwareProvider.analogReadByNumber(pin); } return Math.floor(Math.random() * 1024); }
+function js_analog_write_by_name(pin_name,value) { const name = UTF8ToString(pin_name); if (Module.hardwareProvider && Module.hardwareProvider.analogWrite) { Module.hardwareProvider.analogWrite(name, value); } else { console.log(`HAL: PWM pin ${name} = ${value}`); } if (Module.onPWMChange) { Module.onPWMChange(name, value); } }
+function js_analog_write(pin,value) { if (Module.hardwareProvider && Module.hardwareProvider.analogWriteByNumber) { Module.hardwareProvider.analogWriteByNumber(pin, value); } else { console.log(`HAL: PWM pin #${pin} = ${value}`); } }
+function js_notify_board_init(board_json) { if (Module.onBoardInit) { const json = UTF8ToString(board_json); Module.onBoardInit(JSON.parse(json)); } }
 
 // Imports from the Wasm binary.
 var _free = Module['_free'] = makeInvalidEarlyAccess('_free');
@@ -4599,19 +4470,25 @@ var wasmImports = {
   /** @export */
   js_analog_read,
   /** @export */
+  js_analog_read_by_name,
+  /** @export */
   js_analog_write,
+  /** @export */
+  js_analog_write_by_name,
   /** @export */
   js_digital_get_value,
   /** @export */
+  js_digital_get_value_by_name,
+  /** @export */
   js_digital_set_direction,
+  /** @export */
+  js_digital_set_direction_by_name,
   /** @export */
   js_digital_set_value,
   /** @export */
-  js_get_analog_value,
+  js_digital_set_value_by_name,
   /** @export */
-  js_get_button_state,
-  /** @export */
-  js_notify_pin_change
+  js_notify_board_init
 };
 var wasmExports = await createWasm();
 

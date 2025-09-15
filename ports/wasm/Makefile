@@ -73,12 +73,14 @@ SRC_SHARED_MODULE_CP = \
 # Set target program name
 PROG ?= circuitpython.mjs
 
-# Linker settings for WebAssembly ES module
+# Linker settings for WebAssembly browser module
 LDFLAGS += -s WASM=1
 LDFLAGS += -s EXPORTED_FUNCTIONS="_main,_free,_malloc,_mp_js_init,_mp_js_init_with_heap,_mp_js_deinit,_mp_js_repl_init,_mp_js_repl_process_char,_mp_hal_get_interrupt_char,_hal_register_js_provider,_mp_js_get_blinka_glyph_path,_mp_js_get_blinka_char,_mp_js_init_generic_board,_mp_js_get_generic_board_json,_mp_js_generic_pin_set_value,_mp_js_generic_pin_get_value,_mp_js_generic_pin_set_direction,_mp_js_generate_board_module"
 LDFLAGS += -s EXPORTED_RUNTIME_METHODS="ccall,cwrap,getValue,setValue,FS,HEAPU8,stringToUTF8,lengthBytesUTF8,UTF8ToString,allocateUTF8"
 LDFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
 LDFLAGS += -s EXPORT_ES6=1
+LDFLAGS += -s ENVIRONMENT=web  # Browser-only environment
+LDFLAGS += -s INITIAL_MEMORY=2MB  # Minimal memory for fast loading
 # Enable filesystem support for stdout/stderr
 LDFLAGS += -s FORCE_FILESYSTEM=1
 LDFLAGS += -s EXIT_RUNTIME=0
@@ -139,48 +141,21 @@ $(BUILD)/$(PROG): $(OBJ)
 $(BUILD)/shared-bindings/%: | $(HEADER_BUILD)/qstr.i.last
 $(BUILD)/shared-module/%: | $(HEADER_BUILD)/qstr.i.last
 
-# Convenience targets for dual builds
-.PHONY: browser node both clean-browser clean-node size-compare
+# Browser-specific build target
+.PHONY: browser clean-browser
 
 browser:
-	@echo "Building CircuitPython for Browser (minimal/optimized)..."
+	@echo "Building CircuitPython for Browser..."
 	@mkdir -p build-browser
 	$(MAKE) clean
 	$(MAKE) LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=web -s INITIAL_MEMORY=2MB"
-	@cp build/circuitpython.mjs build-browser/circuitpython-web.mjs
-	@cp build/circuitpython.wasm build-browser/circuitpython-web.wasm
-	@echo "Browser build complete: build-browser/circuitpython-web.mjs + circuitpython-web.wasm"
-	@echo "Size: $$(wc -c < build-browser/circuitpython-web.mjs) bytes (MJS) + $$(wc -c < build-browser/circuitpython-web.wasm) bytes (WASM)"
-
-node:
-	@echo "Building CircuitPython for Node.js (full features)..."
-	@mkdir -p build-node
-	$(MAKE) clean
-	$(MAKE) VARIANT=node \
-		CFLAGS_EXTRA="-Wno-macro-redefined -DMICROPY_CONFIG_ROM_LEVEL=MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES -DMICROPY_PY_JSON=1 -DMICROPY_PY_RE=1 -DMICROPY_PY_HASHLIB=1 -DMICROPY_PY_BINASCII=1 -DMICROPY_PY_RANDOM=1 -DMICROPY_PY_ERRNO=1 -DMICROPY_PY_SELECT=1 -DMICROPY_PY_ASYNCIO=1 -DMICROPY_PY_ZLIB=1 -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_SYS_PLATFORM=\\\"nodejs\\\" -DMICROPY_PY_SYS_EXIT=1" \
-		LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=node -s NODERAWFS=1 -s INITIAL_MEMORY=8MB -s MAXIMUM_MEMORY=256MB -O2"
-	@if [ -f build/circuitpython.mjs ]; then \
-		cp build/circuitpython.mjs build-node/circuitpython-node.mjs; \
-		cp build/circuitpython.wasm build-node/circuitpython-node.wasm; \
-		echo "Node.js build complete: build-node/circuitpython-node.mjs + circuitpython-node.wasm"; \
-	fi
-
-both: browser node
-
-size-compare: both
-	@echo "=== Build Size Comparison ==="
-	@if [ -f build-browser/circuitpython-web.mjs ] && [ -f build-node/circuitpython-node.mjs ]; then \
-		browser_size=$$(wc -c < build-browser/circuitpython-web.mjs); \
-		node_size=$$(wc -c < build-node/circuitpython-node.mjs); \
-		echo "Browser: $$browser_size bytes ($$(du -h build-browser/circuitpython-web.mjs | cut -f1))"; \
-		echo "Node.js: $$node_size bytes ($$(du -h build-node/circuitpython-node.mjs | cut -f1))"; \
-	fi
+	@cp build/circuitpython.mjs build-browser/circuitpython.mjs
+	@cp build/circuitpython.wasm build-browser/circuitpython.wasm
+	@echo "Browser build complete: build-browser/"
+	@echo "Size: $$(wc -c < build-browser/circuitpython.mjs) bytes (MJS) + $$(wc -c < build-browser/circuitpython.wasm) bytes (WASM)"
 
 clean-browser:
 	rm -rf build-browser
-
-clean-node:
-	rm -rf build-node
 
 print-cfg:
 	$(info VARIANT: $(VARIANT))

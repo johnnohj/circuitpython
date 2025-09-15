@@ -1,28 +1,27 @@
-# CircuitPython WebAssembly Port
+# CircuitPython Browser Port
 
-This port combines the efficiency of MicroPython's WebAssembly implementation with CircuitPython's hardware abstraction and educational API design.
+This port provides a lightweight CircuitPython implementation optimized for web browsers, focusing on educational use and web-based development environments.
 
 ## Architecture
 
-- **Base**: MicroPython WebAssembly runtime (proven, efficient)
-- **Compatibility**: CircuitPython module names and APIs
-- **Hardware**: HAL provider system for pluggable hardware backends
-- **REPL**: Character-by-character event-driven REPL for Node.js
+- **Target**: Web browsers only (for Node.js, see the separate wasm-node port)
+- **Size**: Optimized for fast loading (~250KB total)
+- **REPL**: Browser-based interactive Python environment
+- **Hardware**: Virtual GPIO through JavaScript HAL provider
 
-## Variants
+## Features
 
-- `variants/standard`: MicroPython base + CircuitPython APIs + JavaScript HAL provider
+- **Minimal footprint** for fast browser loading
+- **Clean Python REPL** without unnecessary complexity
+- **Educational focus** with clear, simple APIs
+- **Web editor integration** ready
 
-## Providers
-
-- `providers/js_provider.c`: JavaScript hardware provider for browser/Node.js
-- `providers/stub_provider.c`: No-op provider for testing
-- `providers/sim_provider.c`: Simulation provider with virtual hardware
-
-## Build Targets
+## Build
 
 ```bash
-make VARIANT=standard    # Standard CircuitPython-compatible build
+make            # Build for browser
+make browser    # Build and package for browser deployment
+make clean      # Clean build artifacts
 ```
 
 ## Key Features

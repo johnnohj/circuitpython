@@ -1,0 +1,71 @@
+{
+  "name": "circuitpython-node",
+  "version": "0.0.1",
+  "description": "CircuitPython WebAssembly for Node.js - CLI tools, automation scripts, and background task Python runtime",
+  "type": "module",
+  "main": "circuitpython-node.js",
+  "bin": {
+    "circuitpython": "./circuitpython_repl.js",
+    "circuitpython-node": "./circuitpython-node.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./circuitpython-node.js"
+    },
+    "./repl": {
+      "import": "./circuitpython_repl.js"
+    },
+    "./bridge": {
+      "import": "./nodejs-hardware-bridge.js"
+    }
+  },
+  "scripts": {
+    "build": "make",
+    "build:core": "make VARIANT=core",
+    "clean": "make clean",
+    "start": "node circuitpython-node.js",
+    "repl": "node circuitpython_repl.js"
+  },
+  "keywords": [
+    "circuitpython",
+    "python",
+    "webassembly",
+    "nodejs",
+    "cli",
+    "automation",
+    "scripting",
+    "background-tasks",
+    "hardware-simulation",
+    "iot",
+    "embedded"
+  ],
+  "author": "CircuitPython Community",
+  "license": "MIT",
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "@serialport/parser-readline": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adafruit/circuitpython"
+  },
+  "bugs": {
+    "url": "https://github.com/adafruit/circuitpython/issues"
+  },
+  "homepage": "https://circuitpython.org",
+  "files": [
+    "index.js",
+    "entries/",
+    "build-*/circuitpython.wasm",
+    "build-*/circuitpython.mjs",
+    "*.js",
+    "*.md",
+    "package.json"
+  ]
+}
