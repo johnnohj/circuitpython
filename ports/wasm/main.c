@@ -110,9 +110,9 @@ void mp_js_init(int pystack_size, int heap_size) {
     // Initialize HAL provider system
     hal_provider_init();
 
-    // Register the generic Metro provider as default
-    // This provides a fully-featured simulated board
-    hal_register_provider(&hal_generic_provider);
+    // Register the JavaScript provider as default
+    // This bridges to JavaScript and uses generic Metro board configuration
+    hal_register_provider(&hal_js_provider);
     
     // Also register stub provider as fallback
     hal_register_provider(&hal_stub_provider);

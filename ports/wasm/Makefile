@@ -139,7 +139,51 @@ $(BUILD)/$(PROG): $(OBJ)
 $(BUILD)/shared-bindings/%: | $(HEADER_BUILD)/qstr.i.last
 $(BUILD)/shared-module/%: | $(HEADER_BUILD)/qstr.i.last
 
+# Convenience targets for dual builds
+.PHONY: browser node both clean-browser clean-node size-compare
+
+browser:
+	@echo "Building CircuitPython for Browser (optimized)..."
+	@mkdir -p build-browser
+	$(MAKE) VARIANT=browser CFLAGS="$(CFLAGS) -DCIRCUITPY_BROWSER=1" LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=web,worker -s INITIAL_MEMORY=2MB"
+	@if [ -f build/circuitpython.mjs ]; then \
+		cp build/circuitpython.mjs build-browser/circuitpython-web.mjs; \
+		echo "Browser build complete: build-browser/circuitpython-web.mjs"; \
+	fi
+
+node:
+	@echo "Building CircuitPython for Node.js (full features)..."
+	@mkdir -p build-node
+	$(MAKE) clean
+	$(MAKE) VARIANT=node \
+		CFLAGS_EXTRA="-Wno-macro-redefined -DMICROPY_CONFIG_ROM_LEVEL=MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES -DMICROPY_PY_JSON=1 -DMICROPY_PY_RE=1 -DMICROPY_PY_HASHLIB=1 -DMICROPY_PY_BINASCII=1 -DMICROPY_PY_RANDOM=1 -DMICROPY_PY_ERRNO=1 -DMICROPY_PY_SELECT=1 -DMICROPY_PY_ASYNCIO=1 -DMICROPY_PY_ZLIB=1 -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_SYS_PLATFORM=\\\"nodejs\\\" -DMICROPY_PY_SYS_EXIT=1" \
+		LDFLAGS="$(LDFLAGS) -s ENVIRONMENT=node -s NODERAWFS=1 -s INITIAL_MEMORY=8MB -s MAXIMUM_MEMORY=256MB -O2"
+	@if [ -f build/circuitpython.mjs ]; then \
+		cp build/circuitpython.mjs build-node/circuitpython-node.mjs; \
+		echo "Node.js build complete: build-node/circuitpython-node.mjs"; \
+	fi
+
+both: browser node
+
+size-compare: both
+	@echo "=== Build Size Comparison ==="
+	@if [ -f build-browser/circuitpython-web.mjs ] && [ -f build-node/circuitpython-node.mjs ]; then \
+		browser_size=$$(wc -c < build-browser/circuitpython-web.mjs); \
+		node_size=$$(wc -c < build-node/circuitpython-node.mjs); \
+		echo "Browser: $$browser_size bytes ($$(du -h build-browser/circuitpython-web.mjs | cut -f1))"; \
+		echo "Node.js: $$node_size bytes ($$(du -h build-node/circuitpython-node.mjs | cut -f1))"; \
+	fi
+
+clean-browser:
+	rm -rf build-browser
+
+clean-node:
+	rm -rf build-node
+
 print-cfg:
+	$(info VARIANT: $(VARIANT))
+	$(info PROG: $(PROG))
+	$(info BUILD: $(BUILD))
 	$(info HAL sources: $(SRC_HAL))
 	$(info CircuitPython sources: $(SRC_CIRCUITPY))
 	$(info Port sources: $(SRC_C))

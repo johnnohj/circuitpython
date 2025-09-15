@@ -12,6 +12,8 @@
 // For size_t and ssize_t
 #include <unistd.h>
 
+// Variant-specific configuration handled by Makefile
+
 // CircuitPython enhancement
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
 

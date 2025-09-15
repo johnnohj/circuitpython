@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM - Refactored HAL Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .panel h2 {
+            margin-top: 0;
+            color: #444;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        #terminal {
+            grid-column: span 2;
+            height: 400px;
+            background: #1e1e1e;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            padding: 10px;
+            overflow-y: auto;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        .board-info {
+            font-size: 14px;
+            color: #666;
+        }
+        .board-info div {
+            margin: 5px 0;
+            padding: 5px;
+            background: #f8f8f8;
+            border-radius: 4px;
+        }
+        .board-info strong {
+            color: #333;
+        }
+        .pin-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .pin {
+            padding: 8px;
+            background: #f0f0f0;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 12px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .pin.output {
+            background: #fff3cd;
+            border-color: #ffc107;
+        }
+        .pin.input {
+            background: #cce5ff;
+            border-color: #004085;
+        }
+        .pin.high {
+            background: #d4edda;
+            border-color: #28a745;
+            font-weight: bold;
+        }
+        .pin.analog {
+            background: #d1ecf1;
+            border-color: #17a2b8;
+        }
+        .controls {
+            margin-top: 15px;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        .led {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #666;
+            margin-left: 10px;
+            transition: all 0.3s;
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+        }
+        .led.on {
+            background: #ff0000;
+            box-shadow: 0 0 20px #ff0000;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .provider-info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+    <script src="hardware-provider.js"></script>
+</head>
+<body>
+    <h1>CircuitPython WASM - Refactored HAL Provider Test</h1>
+    
+    <div id="status" class="status info">Loading CircuitPython WebAssembly module...</div>
+    
+    <div class="provider-info">
+        <strong>Architecture:</strong> Using JavaScript HAL Provider → Module.hardwareProvider → Generic Metro Board Configuration
+    </div>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Board Information</h2>
+            <div id="boardInfo" class="board-info">
+                <div>Waiting for board initialization...</div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Pin States (Click to Toggle)</h2>
+            <div id="pinStates" class="pin-grid">
+                <!-- Pins will be populated here -->
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>HAL Provider Tests</h2>
+            <div class="controls">
+                <button onclick="testDigitalIO()">Test Digital I/O</button>
+                <br>
+                <button onclick="testAnalogRead()">Test Analog Read</button>
+                <br>
+                <button onclick="testPWM()">Test PWM Output</button>
+                <br>
+                <button onclick="testButton()">Test Button (Space)</button>
+                <span class="led" id="buttonIndicator"></span>
+                <br>
+                <button onclick="toggleLED()">Toggle LED</button>
+                <span class="led" id="ledIndicator"></span>
+                <br>
+                <button onclick="getProviderState()">Get Provider State</button>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Test Results</h2>
+            <div id="testResults">
+                <div>No tests run yet</div>
+            </div>
+        </div>
+        
+        <div class="panel" style="grid-column: span 2;">
+            <h2>Terminal Output</h2>
+            <div id="terminal"></div>
+        </div>
+        
+        <div class="panel" style="grid-column: span 2;">
+            <h2>Provider State</h2>
+            <pre id="providerState">Provider state will appear here...</pre>
+        </div>
+    </div>
+
+    <script type="module">
+        import createCircuitPythonModule from './circuitpython.mjs';
+        
+        let Module;
+        let hardwareProvider;
+        let boardConfig = null;
+        
+        function log(message, type = 'info') {
+            const terminal = document.getElementById('terminal');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff6b6b' : type === 'success' ? '#51cf66' : '#00ff00';
+            terminal.innerHTML += `<span style="color: ${color}">[${timestamp}] ${message}</span>\n`;
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.textContent = message;
+        }
+        
+        function addTestResult(test, result, details = '') {
+            const results = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.style.marginBottom = '10px';
+            resultDiv.style.padding = '8px';
+            resultDiv.style.background = result ? '#d4edda' : '#f8d7da';
+            resultDiv.style.borderRadius = '4px';
+            resultDiv.innerHTML = `
+                <strong>${test}:</strong> ${result ? '✅ PASS' : '❌ FAIL'}
+                ${details ? `<br><small>${details}</small>` : ''}
+            `;
+            if (results.children[0]?.textContent === 'No tests run yet') {
+                results.innerHTML = '';
+            }
+            results.appendChild(resultDiv);
+        }
+        
+        function updatePinDisplay(pinName, value, direction = null) {
+            const pinElement = document.querySelector(`[data-pin="${pinName}"]`);
+            if (pinElement) {
+                let classes = ['pin'];
+                
+                if (direction !== null) {
+                    classes.push(direction ? 'output' : 'input');
+                }
+                
+                if (value) {
+                    classes.push('high');
+                }
+                
+                pinElement.className = classes.join(' ');
+                pinElement.innerHTML = `${pinName}<br><small>${value ? 'HIGH' : 'LOW'}</small>`;
+            }
+        }
+        
+        function displayBoardInfo(boardData) {
+            const infoDiv = document.getElementById('boardInfo');
+            infoDiv.innerHTML = `
+                <div><strong>Board Name:</strong> ${boardData.board_name}</div>
+                <div><strong>MCU Type:</strong> ${boardData.mcu_type}</div>
+                <div><strong>Flash Size:</strong> ${(boardData.flash_size / 1024).toFixed(0)} KB</div>
+                <div><strong>RAM Size:</strong> ${(boardData.ram_size / 1024).toFixed(0)} KB</div>
+                <div><strong>CPU Frequency:</strong> ${boardData.cpu_frequency_mhz} MHz</div>
+                <div><strong>Logic Level:</strong> ${boardData.logic_level_v}V</div>
+                <div><strong>Total Pins:</strong> ${boardData.pins.length}</div>
+                <div><strong>Provider:</strong> JavaScript HAL</div>
+            `;
+        }
+        
+        function initializePinDisplay() {
+            const pinGrid = document.getElementById('pinStates');
+            const commonPins = ['D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 
+                               'D8', 'D9', 'D10', 'D11', 'D12', 'D13', 'LED', 'BUTTON',
+                               'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'SDA', 'SCL'];
+            
+            pinGrid.innerHTML = commonPins.map(pin => 
+                `<div class="pin" data-pin="${pin}" onclick="window.togglePin('${pin}')">${pin}<br><small>-</small></div>`
+            ).join('');
+        }
+        
+        // Test functions
+        window.testDigitalIO = function() {
+            log('Testing Digital I/O through HAL provider...');
+            
+            // Test setting direction
+            hardwareProvider.digitalSetDirection('D2', true);  // Output
+            addTestResult('Set D2 as OUTPUT', true);
+            updatePinDisplay('D2', 0, true);
+            
+            // Test writing value
+            hardwareProvider.digitalSetValue('D2', 1);
+            addTestResult('Set D2 HIGH', true);
+            updatePinDisplay('D2', 1, true);
+            
+            // Test reading value
+            const value = hardwareProvider.digitalGetValue('D2');
+            addTestResult('Read D2 value', value === 1, `Value: ${value}`);
+            
+            log('Digital I/O test complete', 'success');
+        };
+        
+        window.testAnalogRead = function() {
+            log('Testing Analog Read through HAL provider...');
+            
+            for (let i = 0; i < 6; i++) {
+                const pinName = `A${i}`;
+                const value = hardwareProvider.analogRead(pinName);
+                log(`Analog ${pinName}: ${value}`);
+                addTestResult(`Analog Read ${pinName}`, value >= 0 && value <= 1023, `Value: ${value}`);
+                
+                const pinElement = document.querySelector(`[data-pin="${pinName}"]`);
+                if (pinElement) {
+                    pinElement.className = 'pin analog';
+                    pinElement.innerHTML = `${pinName}<br><small>${value}</small>`;
+                }
+            }
+            
+            log('Analog read test complete', 'success');
+        };
+        
+        window.testPWM = function() {
+            log('Testing PWM output through HAL provider...');
+            
+            const pwmPins = ['D3', 'D5', 'D6', 'D9', 'D10', 'D11'];
+            pwmPins.forEach(pin => {
+                const value = Math.floor(Math.random() * 256);
+                hardwareProvider.analogWrite(pin, value);
+                addTestResult(`PWM ${pin}`, true, `Value: ${value}`);
+                
+                const pinElement = document.querySelector(`[data-pin="${pin}"]`);
+                if (pinElement) {
+                    pinElement.className = 'pin analog';
+                    pinElement.innerHTML = `${pin}<br><small>PWM:${value}</small>`;
+                }
+            });
+            
+            log('PWM test complete', 'success');
+        };
+        
+        window.testButton = function() {
+            const state = hardwareProvider.digitalGetValue('BUTTON');
+            const pressed = state === 0;  // Inverted for pull-up
+            log(`Button state: ${pressed ? 'PRESSED' : 'NOT PRESSED'}`);
+            addTestResult('Button Read', true, `State: ${state}`);
+            document.getElementById('buttonIndicator').className = pressed ? 'led on' : 'led';
+            updatePinDisplay('BUTTON', state);
+        };
+        
+        window.toggleLED = function() {
+            const currentState = hardwareProvider.getLEDState();
+            const newState = currentState ? 0 : 1;
+            hardwareProvider.digitalSetValue('LED', newState);
+            
+            document.getElementById('ledIndicator').className = newState ? 'led on' : 'led';
+            log(`LED set to ${newState ? 'ON' : 'OFF'}`);
+            addTestResult('LED Toggle', true, `Set to ${newState}`);
+            
+            updatePinDisplay('LED', newState);
+            updatePinDisplay('D13', newState);
+        };
+        
+        window.togglePin = function(pinName) {
+            const currentValue = hardwareProvider.digitalGetValue(pinName);
+            const newValue = currentValue ? 0 : 1;
+            
+            // Set as output and write value
+            hardwareProvider.digitalSetDirection(pinName, true);
+            hardwareProvider.digitalSetValue(pinName, newValue);
+            
+            updatePinDisplay(pinName, newValue, true);
+            log(`Toggled ${pinName} to ${newValue ? 'HIGH' : 'LOW'}`);
+        };
+        
+        window.getProviderState = function() {
+            const state = hardwareProvider.getBoardState();
+            document.getElementById('providerState').textContent = JSON.stringify(state, null, 2);
+            log('Provider state retrieved', 'success');
+        };
+        
+        // Keyboard support for button simulation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ') {
+                e.preventDefault();
+                window.buttonPressed = true;
+                hardwareProvider.setButtonState(true);
+                document.getElementById('buttonIndicator').className = 'led on';
+                updatePinDisplay('BUTTON', 0);
+                log('Button pressed (spacebar)');
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === ' ') {
+                e.preventDefault();
+                window.buttonPressed = false;
+                hardwareProvider.setButtonState(false);
+                document.getElementById('buttonIndicator').className = 'led';
+                updatePinDisplay('BUTTON', 1);
+                log('Button released (spacebar)');
+            }
+        });
+        
+        async function initializeCircuitPython() {
+            try {
+                updateStatus('Initializing hardware provider...', 'info');
+                log('Creating hardware provider instance...');
+                
+                // Create hardware provider instance
+                hardwareProvider = new GenericMetroHardwareProvider();
+                
+                // Set up callbacks for UI updates
+                hardwareProvider.onPinChange = (pin, value) => {
+                    updatePinDisplay(pin, value);
+                };
+                
+                hardwareProvider.onDirectionChange = (pin, isOutput) => {
+                    updatePinDisplay(pin, hardwareProvider.digitalGetValue(pin), isOutput);
+                };
+                
+                hardwareProvider.onAnalogChange = (pin, value) => {
+                    const pinElement = document.querySelector(`[data-pin="${pin}"]`);
+                    if (pinElement) {
+                        pinElement.className = 'pin analog';
+                        pinElement.innerHTML = `${pin}<br><small>PWM:${value}</small>`;
+                    }
+                };
+                
+                updateStatus('Loading CircuitPython WebAssembly module...', 'info');
+                log('Loading CircuitPython WASM module...');
+                
+                Module = await createCircuitPythonModule({
+                    print: (text) => log(text),
+                    printErr: (text) => log(text, 'error'),
+                    
+                    // Attach the hardware provider
+                    hardwareProvider: hardwareProvider,
+                    
+                    // Board initialization callback
+                    onBoardInit: (boardData) => {
+                        boardConfig = boardData;
+                        log('Board initialized: ' + boardData.board_name, 'success');
+                        displayBoardInfo(boardData);
+                    },
+                    
+                    // Legacy callbacks for compatibility
+                    onLEDChange: (value) => {
+                        document.getElementById('ledIndicator').className = value ? 'led on' : 'led';
+                    },
+                    
+                    onPinChange: (pinName, value) => {
+                        updatePinDisplay(pinName, value);
+                    },
+                    
+                    getButtonState: () => window.buttonPressed,
+                    
+                    getAnalogValue: (pinName) => {
+                        return hardwareProvider.analogRead(pinName);
+                    }
+                });
+                
+                log('CircuitPython module loaded', 'success');
+                
+                // Initialize Python runtime
+                log('Initializing Python runtime with 1MB heap...');
+                Module._mp_js_init_with_heap(1024 * 1024);
+                log('Python runtime initialized', 'success');
+                
+                // The js_provider should auto-initialize with the generic board
+                updateStatus('CircuitPython WASM with JavaScript HAL Provider Ready', 'success');
+                
+                // Run initial tests
+                setTimeout(() => {
+                    log('Running initial provider tests...', 'info');
+                    testDigitalIO();
+                    getProviderState();
+                }, 1000);
+                
+            } catch (error) {
+                log(`Initialization error: ${error}`, 'error');
+                updateStatus(`Error: ${error.message}`, 'error');
+                addTestResult('Module Initialization', false, error.toString());
+            }
+        }
+        
+        // Initialize everything
+        initializePinDisplay();
+        initializeCircuitPython();
+    </script>
+</body>
+</html>
