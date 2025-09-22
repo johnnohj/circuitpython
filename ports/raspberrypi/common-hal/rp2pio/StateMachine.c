@@ -523,9 +523,10 @@ static void consider_instruction(introspect_t *state, uint16_t full_instruction,
         }
     }
     if (instruction == pio_instr_bits_wait) {
-        uint16_t wait_source = (full_instruction & 0x0060) >> 5;
-        uint16_t wait_index = (full_instruction & 0x001f) + state->inputs.pio_gpio_offset;
-        if (wait_source == 0 && !PIO_PINMASK_IS_SET(state->inputs.pins_we_use, wait_index)) { // GPIO
+        const uint16_t wait_source = (full_instruction & 0x0060) >> 5;
+        const uint16_t wait_index = full_instruction & 0x001f;
+        const uint16_t wait_pin = wait_index + state->inputs.pio_gpio_offset;
+        if (wait_source == 0 && !PIO_PINMASK_IS_SET(state->inputs.pins_we_use, wait_pin)) { // GPIO
             mp_raise_ValueError_varg(MP_ERROR_TEXT("%q[%u] uses extra pin"), what_program, i);
         } else if (wait_source == 1) { // Input pin
             if (!state->inputs.has_in_pin) {
@@ -626,6 +627,9 @@ void common_hal_rp2pio_statemachine_construct(rp2pio_statemachine_obj_t *self,
     int fifo_type,
     int mov_status_type,
     int mov_status_n) {
+
+    // Ensure object starts in its deinit state.
+    common_hal_rp2pio_statemachine_mark_deinit(self);
 
     // First, check that all pins are free OR already in use by any PIO if exclusive_pin_use is false.
     pio_pinmask_t pins_we_use = wait_gpio_mask;
@@ -743,7 +747,7 @@ void common_hal_rp2pio_statemachine_construct(rp2pio_statemachine_obj_t *self,
         mov_status_type, mov_status_n);
     if (!ok) {
         // indicate state machine never inited
-        self->state_machine = NUM_PIO_STATE_MACHINES;
+        common_hal_rp2pio_statemachine_mark_deinit(self);
         mp_raise_RuntimeError(MP_ERROR_TEXT("All state machines in use"));
     }
 }
@@ -824,6 +828,10 @@ void rp2pio_statemachine_deinit(rp2pio_statemachine_obj_t *self, bool leave_pins
 
 void common_hal_rp2pio_statemachine_deinit(rp2pio_statemachine_obj_t *self) {
     rp2pio_statemachine_deinit(self, false);
+}
+
+void common_hal_rp2pio_statemachine_mark_deinit(rp2pio_statemachine_obj_t *self) {
+    self->state_machine = NUM_PIO_STATE_MACHINES;
 }
 
 void common_hal_rp2pio_statemachine_never_reset(rp2pio_statemachine_obj_t *self) {
