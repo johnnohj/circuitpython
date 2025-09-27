@@ -453,6 +453,7 @@ void background_callback_run_all(void);
 
 #define MICROPY_VM_HOOK_LOOP RUN_BACKGROUND_TASKS;
 #define MICROPY_VM_HOOK_RETURN RUN_BACKGROUND_TASKS;
+#define MICROPY_INTERNAL_EVENT_HOOK (RUN_BACKGROUND_TASKS)
 
 // CIRCUITPY_AUTORELOAD_DELAY_MS = 0 will completely disable autoreload.
 #ifndef CIRCUITPY_AUTORELOAD_DELAY_MS
@@ -512,6 +513,18 @@ void background_callback_run_all(void);
 #endif
 
 // USB settings
+
+#ifndef CIRCUITPY_SDCARD_USB
+#if CIRCUITPY_USB_DEVICE
+#define CIRCUITPY_SDCARD_USB (CIRCUITPY_SDCARDIO && CIRCUITPY_USB_MSC)
+#else
+#define CIRCUITPY_SDCARD_USB (0)
+#endif
+#endif
+
+#if CIRCUITPY_SDCARD_USB && !(CIRCUITPY_SDCARDIO)
+#error CIRCUITPY_SDCARD_USB requires CIRCUITPY_SDCARDIO
+#endif
 
 // Debug level for TinyUSB. Only outputs over debug UART so it doesn't cause
 // additional USB logging.
