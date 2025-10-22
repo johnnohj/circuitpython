@@ -1,7 +1,7 @@
 // Simple test script for CircuitPython WASM
-import { loadMicroPython } from './build-standard/circuitpython.mjs';
+import { loadCircuitPython } from '../build-standard/circuitpython.mjs';
 
-const mp = await loadMicroPython();
+const mp = await loadCircuitPython();
 
 console.log('\n=== CircuitPython WASM Test ===\n');
 

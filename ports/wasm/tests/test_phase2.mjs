@@ -1,5 +1,5 @@
 // Phase 2 Test - CircuitPython modules
-import { loadMicroPython } from './build-standard/circuitpython.mjs';
+import { loadMicroPython } from '../build-standard/circuitpython.mjs';
 
 const mp = await loadMicroPython();
 

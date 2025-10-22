@@ -30,8 +30,10 @@ typedef enum {
     MSG_TYPE_GPIO_SET_PULL = 4,
 
     // Analog operations
-    MSG_TYPE_ANALOG_READ = 10,
-    MSG_TYPE_ANALOG_WRITE = 11,
+    MSG_TYPE_ANALOG_INIT = 10,
+    MSG_TYPE_ANALOG_DEINIT = 11,
+    MSG_TYPE_ANALOG_READ = 12,
+    MSG_TYPE_ANALOG_WRITE = 13,
 
     // I2C operations
     MSG_TYPE_I2C_INIT = 20,
@@ -39,11 +41,15 @@ typedef enum {
     MSG_TYPE_I2C_WRITE = 22,
     MSG_TYPE_I2C_READ = 23,
     MSG_TYPE_I2C_WRITE_READ = 24,
+    MSG_TYPE_I2C_PROBE = 25,
 
     // SPI operations
     MSG_TYPE_SPI_INIT = 30,
     MSG_TYPE_SPI_DEINIT = 31,
     MSG_TYPE_SPI_TRANSFER = 32,
+    MSG_TYPE_SPI_WRITE = 33,
+    MSG_TYPE_SPI_READ = 34,
+    MSG_TYPE_SPI_CONFIGURE = 35,
 
     // Time operations
     MSG_TYPE_TIME_SLEEP = 40,
@@ -52,6 +58,18 @@ typedef enum {
     // Console operations
     MSG_TYPE_CONSOLE_WRITE = 50,
     MSG_TYPE_CONSOLE_READ = 51,
+
+    // UART operations
+    MSG_TYPE_UART_INIT = 52,
+    MSG_TYPE_UART_DEINIT = 53,
+    MSG_TYPE_UART_READ = 54,
+    MSG_TYPE_UART_WRITE = 55,
+    MSG_TYPE_UART_SET_BAUDRATE = 56,
+    MSG_TYPE_UART_RX_AVAILABLE = 57,
+    MSG_TYPE_UART_CLEAR_RX = 58,
+
+    // System operations
+    MSG_TYPE_MCU_RESET = 60,
 } message_type_t;
 
 // Request status
@@ -91,6 +109,15 @@ typedef struct {
 
         struct {
             uint8_t pin;
+            bool is_output;
+        } analog_init;
+
+        struct {
+            uint8_t pin;
+        } analog_deinit;
+
+        struct {
+            uint8_t pin;
         } analog_read;
 
         struct {
@@ -99,20 +126,27 @@ typedef struct {
         } analog_write;
 
         struct {
-            uint8_t bus_id;
+            uint8_t scl_pin;
+            uint8_t sda_pin;
+            uint32_t frequency;
+        } i2c_init;
+
+        struct {
+            uint8_t scl_pin;
+        } i2c_deinit;
+
+        struct {
             uint8_t address;
             uint16_t length;
             uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
         } i2c_write;
 
         struct {
-            uint8_t bus_id;
             uint8_t address;
             uint16_t length;
         } i2c_read;
 
         struct {
-            uint8_t bus_id;
             uint8_t address;
             uint16_t write_length;
             uint16_t read_length;
@@ -120,8 +154,70 @@ typedef struct {
         } i2c_write_read;
 
         struct {
+            uint8_t address;
+        } i2c_probe;
+
+        struct {
+            uint8_t clock_pin;
+            uint8_t mosi_pin;
+            uint8_t miso_pin;
+        } spi_init;
+
+        struct {
+            uint8_t clock_pin;
+        } spi_deinit;
+
+        struct {
+            uint32_t baudrate;
+            uint8_t polarity;
+            uint8_t phase;
+            uint8_t bits;
+        } spi_configure;
+
+        struct {
+            uint16_t length;
+            uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
+        } spi_write;
+
+        struct {
+            uint16_t length;
+            uint8_t write_value;
+        } spi_read;
+
+        struct {
+            uint16_t length;
+            uint8_t data_out[MESSAGE_QUEUE_MAX_PAYLOAD];
+        } spi_transfer;
+
+        struct {
             uint32_t milliseconds;
         } time_sleep;
+
+        struct {
+            uint8_t tx_pin;
+            uint8_t rx_pin;
+            uint32_t baudrate;
+            uint8_t bits;
+            uint8_t parity;
+            uint8_t stop;
+        } uart_init;
+
+        struct {
+            uint8_t tx_pin;
+        } uart_deinit;
+
+        struct {
+            uint16_t length;
+        } uart_read;
+
+        struct {
+            uint16_t length;
+            uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
+        } uart_write;
+
+        struct {
+            uint32_t baudrate;
+        } uart_set_baudrate;
     } params;
 
     // Response data
@@ -143,9 +239,21 @@ typedef struct {
             uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
         } i2c_data;
 
+        // Generic data response for SPI/I2C reads
+        uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
+
         struct {
             uint64_t milliseconds;
         } time_value;
+
+        struct {
+            uint16_t length;
+            uint8_t data[MESSAGE_QUEUE_MAX_PAYLOAD];
+        } uart_data;
+
+        struct {
+            uint32_t count;
+        } uart_available;
     } response;
 
     // Error information
@@ -183,6 +291,9 @@ bool message_queue_has_error(uint32_t request_id);
 
 // Process all pending requests (called from background task)
 void message_queue_process(void);
+
+// Send a request to JavaScript
+void message_queue_send_to_js(uint32_t request_id);
 
 // Get statistics for debugging
 typedef struct {

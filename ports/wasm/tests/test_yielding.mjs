@@ -1,7 +1,7 @@
 // Test CircuitPython's native yielding mechanism
 // This demonstrates that time.sleep() yields control to JavaScript
 
-import {loadMicroPython} from './build-standard/circuitpython.mjs';
+import {loadCircuitPython} from '../build-standard/circuitpython.mjs';
 
 console.log('=== CircuitPython Yielding Test ===\n');
 
@@ -10,7 +10,7 @@ let jsEventCount = 0;
 let jsEventsProcessed = [];
 
 // Create the WASM module with a mock message queue handler
-const mp = await loadMicroPython({
+const mp = await loadCircuitPython({
     stdin: () => '',
 
     // Mock handler for WASM requests

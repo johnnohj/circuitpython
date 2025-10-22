@@ -25,10 +25,67 @@
  */
 
 mergeInto(LibraryManager.library, {
-    // This string will be emitted directly into the output file by Emscripten.
-    mp_js_ticks_ms__postset: "var MP_JS_EPOCH = Date.now()",
+    // Get pointer to virtual hardware shared memory
+    mp_js_ticks_ms__postset: `
+        var virtualHardwarePtr = null;
+        var cachedHeapBuffer = null;
 
-    mp_js_ticks_ms: () => Date.now() - MP_JS_EPOCH,
+        // Initialize virtual hardware access
+        function initVirtualHardware() {
+            if (virtualHardwarePtr === null) {
+                try {
+                    virtualHardwarePtr = Module.ccall('get_virtual_hardware_ptr', 'number', [], []);
+                } catch (e) {
+                    console.warn('Virtual hardware not available, falling back to Date.now():', e);
+                }
+            }
+        }
+
+        // Get a fresh DataView (handles WASM memory growth)
+        function getVirtualHardwareView() {
+            if (virtualHardwarePtr === null) {
+                return null;
+            }
+            // Check if heap buffer changed (memory grew)
+            if (cachedHeapBuffer !== Module.HEAPU8.buffer) {
+                cachedHeapBuffer = Module.HEAPU8.buffer;
+            }
+            // Always create fresh DataView from current buffer
+            // Structure size: uint64_t (8) + uint32_t (4) + uint8_t (1) + padding (3) = 16 bytes
+            return new DataView(cachedHeapBuffer, virtualHardwarePtr, 16);
+        }
+
+        var MP_JS_EPOCH = Date.now();
+    `,
+
+    mp_js_ticks_ms: () => {
+        // Lazy initialization
+        if (virtualHardwarePtr === null) {
+            initVirtualHardware();
+        }
+
+        // If virtual hardware is available, read from it
+        if (virtualHardwarePtr !== null) {
+            try {
+                const view = getVirtualHardwareView();
+                if (view !== null) {
+                    // Read uint64_t ticks_32khz (8 bytes, little-endian)
+                    const ticks32kHzLow = view.getUint32(0, true);
+                    const ticks32kHzHigh = view.getUint32(4, true);
+                    const ticks32kHz = (BigInt(ticks32kHzHigh) << 32n) | BigInt(ticks32kHzLow);
+
+                    // Convert 32kHz ticks to milliseconds (ticks / 32)
+                    const milliseconds = Number(ticks32kHz / 32n);
+                    return milliseconds;
+                }
+            } catch (e) {
+                console.warn('Error reading virtual hardware, falling back to Date.now():', e);
+            }
+        }
+
+        // Fallback to real time if virtual hardware not available
+        return Date.now() - MP_JS_EPOCH;
+    },
 
     mp_js_hook: () => {
         if (ENVIRONMENT_IS_NODE) {
@@ -64,7 +121,32 @@ mergeInto(LibraryManager.library, {
         }
     },
 
-    mp_js_time_ms: () => Date.now(),
+    mp_js_time_ms: () => {
+        // Use virtual hardware if available, otherwise fall back to Date.now()
+        if (virtualHardwarePtr === null) {
+            initVirtualHardware();
+        }
+
+        if (virtualHardwarePtr !== null) {
+            try {
+                const view = getVirtualHardwareView();
+                if (view !== null) {
+                    // Read uint64_t ticks_32khz (8 bytes, little-endian)
+                    const ticks32kHzLow = view.getUint32(0, true);
+                    const ticks32kHzHigh = view.getUint32(4, true);
+                    const ticks32kHz = (BigInt(ticks32kHzHigh) << 32n) | BigInt(ticks32kHzLow);
+
+                    // Convert to milliseconds and add epoch for absolute time
+                    const milliseconds = Number(ticks32kHz / 32n);
+                    return MP_JS_EPOCH + milliseconds;
+                }
+            } catch (e) {
+                console.warn('Error reading virtual hardware for time_ms, falling back:', e);
+            }
+        }
+
+        return Date.now();
+    },
 
     // Node prior to v19 did not expose "crypto" as a global, so make sure it exists.
     mp_js_random_u32__postset:

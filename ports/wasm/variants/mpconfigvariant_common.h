@@ -53,9 +53,19 @@
 #define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF (1)
 #define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE (256)
 
+// Configure the "sys" module with features not usually enabled on bare-metal.
+#define MICROPY_PY_SYS_ATEXIT          (1)
+#define MICROPY_PY_SYS_EXC_INFO        (1)
+
 // Memory/GC settings
 #define MICROPY_ALLOC_PARSE_CHUNK_INIT (16)
 #define MICROPY_REPL_INFO           (1)
+
+// Return number of collected objects from gc.collect().
+#define MICROPY_PY_GC_COLLECT_RETVAL   (1)
+
+// Allow loading of .mpy files.
+#define MICROPY_PERSISTENT_CODE_LOAD   (1)
 
 // Float settings
 #define MICROPY_FLOAT_IMPL          (MICROPY_FLOAT_IMPL_DOUBLE)
@@ -63,3 +73,11 @@
 
 // Allow keyboard interrupt from signal handler
 #define MICROPY_ASYNC_KBD_INTR      (1)
+
+// REPL conveniences.
+#define MICROPY_REPL_EMACS_WORDS_MOVE  (1)
+#define MICROPY_REPL_EMACS_EXTRA_WORDS_MOVE (1)
+#define MICROPY_USE_READLINE_HISTORY   (1)
+#ifndef MICROPY_READLINE_HISTORY_SIZE
+#define MICROPY_READLINE_HISTORY_SIZE  (50)
+#endif

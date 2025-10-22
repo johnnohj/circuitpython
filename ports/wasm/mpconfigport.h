@@ -71,7 +71,8 @@
 #define MICROPY_LONGINT_IMPL        (MICROPY_LONGINT_IMPL_MPZ)
 #define MICROPY_ENABLE_DOC_STRING   (1)
 #define MICROPY_WARNINGS            (1)
-#define MICROPY_ERROR_PRINTER       (&mp_stderr_print)
+// CIRCUITPY-CHANGE: Use mp_plat_print (stdout) for Python errors, keep stderr for JS/TS infrastructure
+#define MICROPY_ERROR_PRINTER       (&mp_plat_print)
 #define MICROPY_FLOAT_IMPL          (MICROPY_FLOAT_IMPL_DOUBLE)
 #define MICROPY_USE_INTERNAL_ERRNO  (1)
 #define MICROPY_USE_INTERNAL_PRINTF (0)
@@ -150,6 +151,9 @@ typedef long mp_off_t;
 #define MICROPY_HW_BOARD_NAME "WebAssembly"
 #define MICROPY_HW_MCU_NAME "Emscripten"
 
+// CIRCUITPY-CHANGE: Single processor for WASM
+#define CIRCUITPY_PROCESSOR_COUNT (1)
+
 #define MP_STATE_PORT MP_STATE_VM
 
 #if MICROPY_VFS
@@ -157,6 +161,8 @@ typedef long mp_off_t;
 #define _GNU_SOURCE
 #endif
 
-extern const struct _mp_print_t mp_stderr_print;
+// CIRCUITPY-CHANGE: Separate stdout (Python) from stderr (JS/TS infrastructure)
+extern const struct _mp_print_t mp_plat_print;   // stdout - for all Python output
+extern const struct _mp_print_t mp_stderr_print; // stderr - for JS/TS messages
 
 uint32_t mp_js_random_u32(void);

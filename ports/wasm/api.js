@@ -34,10 +34,13 @@
 //   and in a browser goes to console, in node goes to process.stdout.write.
 // - stderr: same behaviour as stdout but for error output.
 // - linebuffer: whether to buffer line-by-line to stdout/stderr.
-export async function loadMicroPython(options) {
-    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer } =
+// - verbose: whether to log infrastructure messages (VirtualClock, init). Default: false
+// CIRCUITPY_CHANGE: export function name change
+// - virtual clock: initialize virtual clock for timing control
+export async function loadCircuitPython(options) {
+    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer, verbose } =
         Object.assign(
-            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true },
+            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true, verbose: false },
             options,
         );
     let Module = {};
@@ -106,8 +109,38 @@ export async function loadMicroPython(options) {
         [pystack, heapsize],
     );
     Module.ccall("proxy_c_init", "null", [], []);
+
+    // CIRCUITPY-CHANGE: Initialize virtual clock for timing control
+    let virtualClock = null;
+    try {
+        // Get pointer to virtual hardware
+        const virtualHardwarePtr = Module._get_virtual_hardware_ptr();
+        if (virtualHardwarePtr) {
+            // Create a simple object that looks like WASM instance for VirtualClock
+            const wasmInstance = {
+                exports: {
+                    get_virtual_hardware_ptr: () => virtualHardwarePtr
+                }
+            };
+            const wasmMemory = {
+                buffer: Module.HEAPU8.buffer
+            };
+            virtualClock = new VirtualClock(wasmInstance, wasmMemory, verbose);
+            // Start in realtime mode by default
+            virtualClock.startRealtime();
+            if (verbose) {
+                console.log('[CircuitPython] Virtual clock initialized in REALTIME mode');
+            }
+        }
+    } catch (e) {
+        if (verbose) {
+            console.warn('[CircuitPython] Virtual clock initialization failed:', e);
+        }
+    }
+
     return {
         _module: Module,
+        virtualClock: virtualClock,
         PyProxy: PyProxy,
         FS: Module.FS,
         globals: {
@@ -190,7 +223,7 @@ export async function loadMicroPython(options) {
     };
 }
 
-globalThis.loadMicroPython = loadMicroPython;
+globalThis.loadCircuitPython = loadCircuitPython;
 
 async function runCLI() {
     const fs = await import("fs");
@@ -221,18 +254,18 @@ async function runCLI() {
         repl = false;
     }
 
-    const mp = await loadMicroPython({
+    const ctpy = await loadCircuitPython({
         heapsize: heap_size,
         stdout: (data) => process.stdout.write(data),
         linebuffer: false,
     });
 
     if (repl) {
-        mp.replInit();
+        ctpy.replInit();
         process.stdin.setRawMode(true);
         process.stdin.on("data", (data) => {
             for (let i = 0; i < data.length; i++) {
-                mp.replProcessCharWithAsyncify(data[i]).then((result) => {
+                ctpy.replProcessCharWithAsyncify(data[i]).then((result) => {
                     if (result) {
                         process.exit();
                     }
@@ -244,14 +277,14 @@ async function runCLI() {
         // a simple `asyncio.run` hook that starts the main task.  This is primarily to
         // support running the standard asyncio tests.
         if (contents.endsWith("asyncio.run(main())\n")) {
-            const asyncio = mp.pyimport("asyncio");
+            const asyncio = ctpy.pyimport("asyncio");
             asyncio.run = async (task) => {
                 await asyncio.create_task(task);
             };
         }
 
         try {
-            mp.runPython(contents);
+            ctpy.runPython(contents);
         } catch (error) {
             if (error.name === "PythonError") {
                 if (error.type === "SystemExit") {

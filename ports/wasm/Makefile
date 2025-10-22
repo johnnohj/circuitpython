@@ -39,6 +39,10 @@ include mpconfigport.mk
 # Note: py.mk already includes extmod/extmod.mk, so we don't include it again
 include $(TOP)/py/py.mk
 
+# NOTE: We cannot include $(TOP)/py/circuitpy_defns.mk because it causes
+# duplicate symbol errors (uz lib, etc.). For now, only enable modules that
+# don't require additional source files or that are already in extmod.
+
 ################################################################################
 # Project specific settings and compiler/linker flags.
 
@@ -52,11 +56,12 @@ INC += -I$(TOP)
 INC += -I$(BUILD)
 INC += -I$(VARIANT_DIR)
 
-CFLAGS += -std=c99 -Wall -Werror -Wdouble-promotion -Wfloat-conversion
+CFLAGS += -std=c99 -Wall -Werror -Wno-double-promotion -Wno-float-conversion
 CFLAGS += -Os -DNDEBUG
 CFLAGS += $(INC)
 
 EXPORTED_FUNCTIONS_EXTRA += ,\
+	_get_virtual_hardware_ptr,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -78,6 +83,7 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_proxy_convert_mp_to_js_obj_cside
 
 EXPORTED_RUNTIME_METHODS_EXTRA += ,\
+	HEAPU8,\
 	PATH,\
 	PATH_FS,\
 	UTF8ToString,\
@@ -107,6 +113,7 @@ JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
 # Source files and libraries.
 
 SRC_SHARED = $(addprefix shared/,\
+	runtime/context_manager_helpers.c \
 	runtime/interrupt_char.c \
 	runtime/stdout_helpers.c \
 	runtime/pyexec.c \
@@ -118,15 +125,46 @@ SRC_SHARED = $(addprefix shared/,\
 SRC_SUPERVISOR = $(addprefix supervisor/shared/,\
 	translate/translate.c \
 	)
+SRC_SUPERVISOR += supervisor/port.c
 
-# CIRCUITPY-CHANGE: Manually add CircuitPython time module sources
+# CIRCUITPY-CHANGE: Manually add CircuitPython module sources
 SRC_BINDINGS = $(addprefix shared-bindings/,\
+	analogio/AnalogIn.c \
+	analogio/AnalogOut.c \
+	analogio/__init__.c \
 	board/__init__.c \
+	busio/I2C.c \
+	busio/SPI.c \
+	busio/UART.c \
+	busio/__init__.c \
+	digitalio/DigitalInOut.c \
+	digitalio/Direction.c \
+	digitalio/DriveMode.c \
+	digitalio/Pull.c \
+	digitalio/__init__.c \
+	microcontroller/Pin.c \
+	microcontroller/Processor.c \
+	microcontroller/ResetReason.c \
+	microcontroller/RunMode.c \
+	microcontroller/__init__.c \
 	time/__init__.c \
+	util.c \
 	)
 
 SRC_COMMON_HAL = $(addprefix common-hal/,\
+	analogio/AnalogIn.c \
+	analogio/AnalogOut.c \
+	analogio/__init__.c \
 	board/__init__.c \
+	busio/I2C.c \
+	busio/SPI.c \
+	busio/UART.c \
+	busio/__init__.c \
+	digitalio/DigitalInOut.c \
+	digitalio/__init__.c \
+	microcontroller/Pin.c \
+	microcontroller/Processor.c \
+	microcontroller/__init__.c \
 	time/__init__.c \
 	)
 
@@ -141,12 +179,13 @@ SRC_C += \
 	objjsproxy.c \
 	pins.c \
 	proxy_c.c \
-	supervisor_stubs.c \
+	shared_memory.c \
 
 # List of sources for qstr extraction.
 SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_SUPERVISOR) $(SRC_BINDINGS) $(SRC_COMMON_HAL)
 
 SRC_JS += \
+	virtual_clock.js \
 	api.js \
 	objpyproxy.js \
 	proxy_js.js \
@@ -158,19 +197,27 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_SUPERVISOR:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_BINDINGS:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
 
 ################################################################################
 # Main targets.
 
 .PHONY: all repl min test test_min
 
-# CIRCUITPY-CHANGE: Output circuitpython.mjs
+# CIRCUITPY-CHANGE: Output circuitpython.mjs with Blinka banner
 all: $(BUILD)/circuitpython.mjs
 
+# Add Blinka character (U+E000) to banner after build
 $(BUILD)/circuitpython.mjs: $(OBJ) library.js $(SRC_JS)
+	@# Add Blinka character to generated mpversion.h if it doesn't have it already
+	@if [ -f $(BUILD)/genhdr/mpversion.h ] && ! grep -q '\\uE000' $(BUILD)/genhdr/mpversion.h; then \
+		sed -i.bak 's/"Adafruit CircuitPython/"\\uE000 Adafruit CircuitPython/' $(BUILD)/genhdr/mpversion.h && \
+		rm -f $(BUILD)/genhdr/mpversion.h.bak; \
+	fi
 	$(ECHO) "LINK $@"
 	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ) $(JSFLAGS)
 	$(Q)cat $(SRC_JS) >> $@
+	$(Q)cp FreeMono-Terminal-Blinka.ttf $(BUILD)/ 2>/dev/null || true
 
 $(BUILD)/circuitpython.min.mjs: $(BUILD)/circuitpython.mjs
 	$(TERSER) $< --compress --module -o $@

@@ -28,9 +28,11 @@
 #include "py/mphal.h"
 #include "library.h"
 
+// CIRCUITPY-CHANGE: Keep stderr printer for JavaScript/TypeScript infrastructure messages
+// Note: mp_plat_print is defined in py/mpprint.c and routes to mp_hal_stdout_tx_strn_cooked()
 static void stderr_print_strn(void *env, const char *str, size_t len) {
     (void)env;
-    write(2, str, len);
+    write(2, str, len);  // File descriptor 2 = stderr (for JS/TS use)
 }
 
 const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};

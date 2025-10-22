@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM REPL with Blinka Font</title>
+    <style>
+        @font-face {
+            font-family: 'FreeMono-Blinka';
+            src: url('../build-standard/FreeMono-Terminal-Blinka.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        h1 {
+            color: #58a6ff;
+        }
+
+        #terminal {
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'FreeMono-Blinka', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            min-height: 300px;
+            border: 1px solid #30363d;
+        }
+
+        #input-area {
+            margin-top: 20px;
+        }
+
+        #command-input {
+            width: 100%;
+            padding: 10px;
+            font-family: 'FreeMono-Blinka', 'Courier New', monospace;
+            font-size: 14px;
+            background: #0d1117;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #238636;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #2ea043;
+        }
+
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #161b22;
+            border-left: 3px solid #58a6ff;
+            border-radius: 4px;
+        }
+
+        .blinka-demo {
+            font-family: 'FreeMono-Blinka', monospace;
+            font-size: 48px;
+            text-align: center;
+            margin: 20px 0;
+            color: #58a6ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>🐍 CircuitPython WASM REPL</h1>
+
+    <div class="blinka-demo">
+        <!-- Blinka character U+E000 -->
+
+    </div>
+
+    <div id="terminal"></div>
+
+    <div id="input-area">
+        <input type="text" id="command-input" placeholder="Enter Python code (e.g., print('Hello!'))" />
+        <button onclick="runCommand()">Run</button>
+        <button onclick="clearTerminal()">Clear</button>
+        <button onclick="showVersion()">Show Version</button>
+    </div>
+
+    <div class="info">
+        <strong>Note:</strong> The Blinka character () appears at the start of the version banner.
+        This is Unicode character U+E000 rendered with the FreeMono-Terminal-Blinka font.
+    </div>
+
+    <script type="module">
+        import { loadCircuitPython } from '../build-standard/circuitpython.mjs';
+
+        const terminal = document.getElementById('terminal');
+        const commandInput = document.getElementById('command-input');
+
+        // Load CircuitPython with custom stdout
+        let mp = null;
+
+        function appendToTerminal(text) {
+            terminal.textContent += text;
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        async function init() {
+            appendToTerminal('Loading CircuitPython WASM...\n');
+
+            mp = await loadCircuitPython({
+                stdout: (line) => appendToTerminal(line),
+                stderr: (line) => appendToTerminal('[ERROR] ' + line),
+                verbose: false  // No infrastructure messages
+            });
+
+            appendToTerminal('CircuitPython loaded!\n');
+            appendToTerminal('Type Python code below and click Run.\n\n');
+
+            // Show version banner with Blinka character
+            mp.runPython('import sys; print(sys.version)');
+            appendToTerminal('\n');
+        }
+
+        window.runCommand = function() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+
+            appendToTerminal('>>> ' + command + '\n');
+
+            try {
+                const result = mp.runPython(command);
+                if (result !== null && result !== undefined) {
+                    appendToTerminal(String(result) + '\n');
+                }
+            } catch (e) {
+                appendToTerminal('Error: ' + e.message + '\n');
+            }
+
+            commandInput.value = '';
+        };
+
+        window.clearTerminal = function() {
+            terminal.textContent = '';
+        };
+
+        window.showVersion = function() {
+            mp.runPython('import sys; print(sys.version)');
+        };
+
+        commandInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                runCommand();
+            }
+        });
+
+        // Initialize on load
+        init().catch(err => {
+            appendToTerminal('Failed to load CircuitPython: ' + err.message + '\n');
+        });
+    </script>
+</body>
+</html>

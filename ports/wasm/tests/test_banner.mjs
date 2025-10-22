@@ -1,7 +1,7 @@
 // Test the CircuitPython REPL banner
-import {loadMicroPython} from './build-standard/circuitpython.mjs';
+import {loadCircuitPython} from '../build-standard/circuitpython.mjs';
 
-const mp = await loadMicroPython({stdin: () => ''});
+const mp = await loadCircuitPython({stdin: () => ''});
 
 // Initialize REPL
 mp.replInit();
