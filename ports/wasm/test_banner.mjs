@@ -1,0 +1,13 @@
+// Test the CircuitPython REPL banner
+import {loadMicroPython} from './build-standard/circuitpython.mjs';
+
+const mp = await loadMicroPython({stdin: () => ''});
+
+// Initialize REPL
+mp.replInit();
+
+// Simulate CTRL-B to show banner
+console.log('Simulating CTRL-B to show REPL banner:');
+mp.replProcessChar(2);  // CTRL-B
+
+console.log('\nDone!');

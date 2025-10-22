@@ -61,12 +61,14 @@ MP_DEFINE_CONST_FUN_OBJ_0(time_monotonic_obj, time_monotonic);
 static mp_obj_t time_sleep(mp_obj_t seconds_o) {
     #if MICROPY_PY_BUILTINS_FLOAT
     mp_float_t seconds = mp_obj_get_float(seconds_o);
-    mp_float_t msecs = MICROPY_FLOAT_CONST(1000.0) * seconds + MICROPY_FLOAT_CONST(0.5);
+    mp_float_t msecs_float = MICROPY_FLOAT_CONST(1000.0) * seconds + MICROPY_FLOAT_CONST(0.5);
+    uint32_t msecs = (uint32_t)msecs_float;
+    mp_arg_validate_int_min(msecs, 0, MP_QSTR_seconds);
     #else
     mp_int_t seconds = mp_obj_get_int(seconds_o);
     mp_int_t msecs = 1000 * seconds;
-    #endif
     mp_arg_validate_int_min(msecs, 0, MP_QSTR_seconds);
+    #endif
     common_hal_time_delay_ms(msecs);
     return mp_const_none;
 }
