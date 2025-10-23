@@ -44,8 +44,8 @@ void common_hal_busio_uart_construct(busio_uart_obj_t *self,
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_UART_INIT;
-    req->params.uart_init.tx_pin = tx ? (uint8_t)((uintptr_t)tx) : 0xFF;
-    req->params.uart_init.rx_pin = rx ? (uint8_t)((uintptr_t)rx) : 0xFF;
+    req->params.uart_init.tx_pin = tx ? tx->number : 0xFF;
+    req->params.uart_init.rx_pin = rx ? rx->number : 0xFF;
     req->params.uart_init.baudrate = baudrate;
     req->params.uart_init.bits = bits;
     req->params.uart_init.parity = parity;
@@ -72,7 +72,7 @@ void common_hal_busio_uart_deinit(busio_uart_obj_t *self) {
     if (req_id >= 0) {
         message_request_t *req = message_queue_get(req_id);
         req->type = MSG_TYPE_UART_DEINIT;
-        req->params.uart_deinit.tx_pin = self->tx ? (uint8_t)((uintptr_t)self->tx) : 0xFF;
+        req->params.uart_deinit.tx_pin = self->tx ? self->tx->number : 0xFF;
 
         message_queue_send_to_js(req_id);
         WAIT_FOR_REQUEST_COMPLETION(req_id);

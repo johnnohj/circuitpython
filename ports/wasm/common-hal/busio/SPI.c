@@ -39,9 +39,9 @@ void common_hal_busio_spi_construct(busio_spi_obj_t *self,
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_SPI_INIT;
-    req->params.spi_init.clock_pin = (uint8_t)((uintptr_t)clock);
-    req->params.spi_init.mosi_pin = mosi ? (uint8_t)((uintptr_t)mosi) : 0xFF;
-    req->params.spi_init.miso_pin = miso ? (uint8_t)((uintptr_t)miso) : 0xFF;
+    req->params.spi_init.clock_pin = clock->number;
+    req->params.spi_init.mosi_pin = mosi ? mosi->number : 0xFF;
+    req->params.spi_init.miso_pin = miso ? miso->number : 0xFF;
 
     message_queue_send_to_js(req_id);
     WAIT_FOR_REQUEST_COMPLETION(req_id);
@@ -64,7 +64,7 @@ void common_hal_busio_spi_deinit(busio_spi_obj_t *self) {
     if (req_id >= 0) {
         message_request_t *req = message_queue_get(req_id);
         req->type = MSG_TYPE_SPI_DEINIT;
-        req->params.spi_deinit.clock_pin = (uint8_t)((uintptr_t)self->clock);
+        req->params.spi_deinit.clock_pin = self->clock->number;
 
         message_queue_send_to_js(req_id);
         WAIT_FOR_REQUEST_COMPLETION(req_id);

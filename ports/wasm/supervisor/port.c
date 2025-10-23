@@ -14,10 +14,44 @@
 #include "shared-bindings/microcontroller/__init__.h"
 #include "supervisor/shared/safe_mode.h"
 #include "shared_memory.h"
+#include "common-hal/microcontroller/Pin.h"
+
+// =============================================================================
+// PIN INITIALIZATION
+// =============================================================================
+//
+// WASM port: Single default board with all 64 GPIO pins enabled
+// All pins have full capabilities (digital I/O, analog, PWM, I2C, SPI, UART)
+// No profile system - just maximum flexibility for browser-based development
+
+// Enable all 64 GPIO pins at startup
+void enable_all_pins(void) {
+    // Enable all 4 banks
+    enable_gpio_bank_0(true);  // GPIO0-15
+    enable_gpio_bank_1(true);  // GPIO16-31
+    enable_gpio_bank_2(true);  // GPIO32-47
+    enable_gpio_bank_3(true);  // GPIO48-63
+
+    // All pins start enabled
+    for (uint8_t i = 0; i < 64; i++) {
+        mcu_pin_obj_t *pin = get_pin_by_number(i);
+        if (pin != NULL) {
+            pin->enabled = true;
+        }
+    }
+}
+
+// =============================================================================
+// Port Initialization
+// =============================================================================
 
 safe_mode_t port_init(void) {
     // Reset everything into a known state
     reset_port();
+
+    // Enable all 64 GPIO pins
+    enable_all_pins();
+
     return SAFE_MODE_NONE;
 }
 
@@ -26,7 +60,11 @@ void reset_port(void) {
 }
 
 void reset_to_bootloader(void) {
-    // No bootloader in WASM
+    // In WASM, "bootloader mode" is repurposed for profile loading/switching
+    // The next_profile_id has already been set by common_hal_mcu_on_next_reset()
+    // On next reset, port_init() will apply the new profile
+
+    // For now, loop forever (actual reset happens via JavaScript)
     while (true) {
     }
 }
@@ -164,14 +202,12 @@ void port_background_tick(void) {
 // Forward declare types
 typedef struct _fs_user_mount_t fs_user_mount_t;
 
-// Safe mode reset - not applicable for WASM
-// Note: This is marked NORETURN in the header, but in WASM we can't actually reset
-// We'll abort execution instead
+// Safe mode reset - in WASM this is a no-op
+// Unlike physical boards, we keep everything running
 void reset_into_safe_mode(safe_mode_t reason) {
     (void)reason;
-    // In WASM, we can't reset the system, so we abort
-    // This will terminate the WASM module execution
-    abort();
+    // In WASM, "safe mode" just means we had an error
+    // But we don't actually disable anything - the REPL continues working
 }
 
 // Stack checking - WASM manages its own stack

@@ -20,7 +20,7 @@
 const mcu_pin_obj_t *common_hal_digitalio_validate_pin(mp_obj_t obj) {
     // In WASM, we accept pin numbers or pin objects
     // For now, just return a dummy pin - proper validation happens in construct
-    return &pin_PA00;
+    return &pin_GPIO0;
 }
 
 // Construct a DigitalInOut object
@@ -42,7 +42,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = (uint8_t)((uintptr_t)pin);  // Pin number
+    req->params.gpio_direction.pin = pin->number;
     req->params.gpio_direction.direction = 0;  // Input
 
     message_queue_send_to_js(req_id);
@@ -86,7 +86,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = (uint8_t)((uintptr_t)self->pin);
+    req->params.gpio_direction.pin = self->pin->number;
     req->params.gpio_direction.direction = 0;  // Input
 
     message_queue_send_to_js(req_id);
@@ -108,7 +108,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
 
         req = message_queue_get(req_id);
         req->type = MSG_TYPE_GPIO_SET_PULL;
-        req->params.gpio_pull.pin = (uint8_t)((uintptr_t)self->pin);
+        req->params.gpio_pull.pin = self->pin->number;
         req->params.gpio_pull.pull = (pull == PULL_UP) ? 1 : 2;
 
         message_queue_send_to_js(req_id);
@@ -139,7 +139,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = (uint8_t)((uintptr_t)self->pin);
+    req->params.gpio_direction.pin = self->pin->number;
     req->params.gpio_direction.direction = 1;  // Output
 
     message_queue_send_to_js(req_id);
@@ -174,7 +174,7 @@ void common_hal_digitalio_digitalinout_set_value(
     // Set up the request
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_GPIO_SET;
-    req->params.gpio_set.pin = (uint8_t)((uintptr_t)self->pin);
+    req->params.gpio_set.pin = self->pin->number;
     req->params.gpio_set.value = value ? 1 : 0;
 
     // Send to JavaScript (non-blocking)
@@ -205,7 +205,7 @@ bool common_hal_digitalio_digitalinout_get_value(digitalio_digitalinout_obj_t *s
     // Set up the request
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_GPIO_GET;
-    req->params.gpio_get.pin = (uint8_t)((uintptr_t)self->pin);
+    req->params.gpio_get.pin = self->pin->number;
 
     // Send to JavaScript (non-blocking)
     message_queue_send_to_js(req_id);

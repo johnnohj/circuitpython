@@ -25,7 +25,7 @@ void common_hal_analogio_analogout_construct(analogio_analogout_obj_t *self, con
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_ANALOG_INIT;
-    req->params.analog_init.pin = (uint8_t)((uintptr_t)pin);
+    req->params.analog_init.pin = pin->number;
     req->params.analog_init.is_output = true;
 
     message_queue_send_to_js(req_id);
@@ -51,7 +51,7 @@ void common_hal_analogio_analogout_deinit(analogio_analogout_obj_t *self) {
     if (req_id >= 0) {
         message_request_t *req = message_queue_get(req_id);
         req->type = MSG_TYPE_ANALOG_DEINIT;
-        req->params.analog_deinit.pin = (uint8_t)((uintptr_t)self->pin);
+        req->params.analog_deinit.pin = self->pin->number;
 
         message_queue_send_to_js(req_id);
         WAIT_FOR_REQUEST_COMPLETION(req_id);
@@ -76,7 +76,7 @@ void common_hal_analogio_analogout_set_value(analogio_analogout_obj_t *self, uin
     // Set up request
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_ANALOG_WRITE;
-    req->params.analog_write.pin = (uint8_t)((uintptr_t)self->pin);
+    req->params.analog_write.pin = self->pin->number;
     req->params.analog_write.value = value;
 
     // Send to JavaScript (non-blocking)

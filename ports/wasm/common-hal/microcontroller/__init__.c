@@ -31,7 +31,9 @@ void common_hal_mcu_enable_interrupts(void) {
 }
 
 void common_hal_mcu_on_next_reset(mcu_runmode_t runmode) {
-    // No-op for WASM
+    // In WASM, all run modes behave the same - we just reset
+    (void)runmode;
+    // No-op: next reset will reinitialize everything normally
 }
 void common_hal_mcu_reset(void) {
     // Send reset notification to JavaScript
@@ -82,7 +84,84 @@ const mcu_processor_obj_t common_hal_mcu_processor_obj = {
 };
 
 // This maps MCU pin names to pin objects.
+// All 64 GPIO pins are always available via microcontroller.pin.GPIOxx
+// Organized into 4 banks of 16 pins for granular profile control:
+// - Bank 0: GPIO0-15   (RP2040 low, ESP32 low, SAMD mapped)
+// - Bank 1: GPIO16-31  (RP2040 high, ESP32 mid, SAMD mapped)
+// - Bank 2: GPIO32-47  (ESP32 high, unused for RP2040/SAMD)
+// - Bank 3: GPIO48-63  (ESP32 extended, reserved for future)
+// The board module will only expose pins that are enabled by the current profile
 const mp_rom_map_elem_t mcu_pin_global_dict_table[] = {
-    { MP_ROM_QSTR(MP_QSTR_PA00), MP_ROM_PTR(&pin_PA00) },
+    // Bank 0 (GPIO0-15)
+    { MP_ROM_QSTR(MP_QSTR_GPIO0), MP_ROM_PTR(&pin_GPIO0) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO1), MP_ROM_PTR(&pin_GPIO1) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO2), MP_ROM_PTR(&pin_GPIO2) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO3), MP_ROM_PTR(&pin_GPIO3) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO4), MP_ROM_PTR(&pin_GPIO4) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO5), MP_ROM_PTR(&pin_GPIO5) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO6), MP_ROM_PTR(&pin_GPIO6) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO7), MP_ROM_PTR(&pin_GPIO7) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO8), MP_ROM_PTR(&pin_GPIO8) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO9), MP_ROM_PTR(&pin_GPIO9) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO10), MP_ROM_PTR(&pin_GPIO10) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO11), MP_ROM_PTR(&pin_GPIO11) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO12), MP_ROM_PTR(&pin_GPIO12) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO13), MP_ROM_PTR(&pin_GPIO13) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO14), MP_ROM_PTR(&pin_GPIO14) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO15), MP_ROM_PTR(&pin_GPIO15) },
+
+    // Bank 1 (GPIO16-31)
+    { MP_ROM_QSTR(MP_QSTR_GPIO16), MP_ROM_PTR(&pin_GPIO16) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO17), MP_ROM_PTR(&pin_GPIO17) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO18), MP_ROM_PTR(&pin_GPIO18) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO19), MP_ROM_PTR(&pin_GPIO19) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO20), MP_ROM_PTR(&pin_GPIO20) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO21), MP_ROM_PTR(&pin_GPIO21) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO22), MP_ROM_PTR(&pin_GPIO22) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO23), MP_ROM_PTR(&pin_GPIO23) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO24), MP_ROM_PTR(&pin_GPIO24) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO25), MP_ROM_PTR(&pin_GPIO25) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO26), MP_ROM_PTR(&pin_GPIO26) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO27), MP_ROM_PTR(&pin_GPIO27) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO28), MP_ROM_PTR(&pin_GPIO28) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO29), MP_ROM_PTR(&pin_GPIO29) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO30), MP_ROM_PTR(&pin_GPIO30) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO31), MP_ROM_PTR(&pin_GPIO31) },
+
+    // Bank 2 (GPIO32-47)
+    { MP_ROM_QSTR(MP_QSTR_GPIO32), MP_ROM_PTR(&pin_GPIO32) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO33), MP_ROM_PTR(&pin_GPIO33) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO34), MP_ROM_PTR(&pin_GPIO34) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO35), MP_ROM_PTR(&pin_GPIO35) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO36), MP_ROM_PTR(&pin_GPIO36) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO37), MP_ROM_PTR(&pin_GPIO37) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO38), MP_ROM_PTR(&pin_GPIO38) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO39), MP_ROM_PTR(&pin_GPIO39) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO40), MP_ROM_PTR(&pin_GPIO40) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO41), MP_ROM_PTR(&pin_GPIO41) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO42), MP_ROM_PTR(&pin_GPIO42) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO43), MP_ROM_PTR(&pin_GPIO43) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO44), MP_ROM_PTR(&pin_GPIO44) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO45), MP_ROM_PTR(&pin_GPIO45) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO46), MP_ROM_PTR(&pin_GPIO46) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO47), MP_ROM_PTR(&pin_GPIO47) },
+
+    // Bank 3 (GPIO48-63)
+    { MP_ROM_QSTR(MP_QSTR_GPIO48), MP_ROM_PTR(&pin_GPIO48) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO49), MP_ROM_PTR(&pin_GPIO49) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO50), MP_ROM_PTR(&pin_GPIO50) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO51), MP_ROM_PTR(&pin_GPIO51) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO52), MP_ROM_PTR(&pin_GPIO52) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO53), MP_ROM_PTR(&pin_GPIO53) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO54), MP_ROM_PTR(&pin_GPIO54) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO55), MP_ROM_PTR(&pin_GPIO55) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO56), MP_ROM_PTR(&pin_GPIO56) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO57), MP_ROM_PTR(&pin_GPIO57) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO58), MP_ROM_PTR(&pin_GPIO58) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO59), MP_ROM_PTR(&pin_GPIO59) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO60), MP_ROM_PTR(&pin_GPIO60) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO61), MP_ROM_PTR(&pin_GPIO61) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO62), MP_ROM_PTR(&pin_GPIO62) },
+    { MP_ROM_QSTR(MP_QSTR_GPIO63), MP_ROM_PTR(&pin_GPIO63) },
 };
 MP_DEFINE_CONST_DICT(mcu_pin_globals, mcu_pin_global_dict_table);

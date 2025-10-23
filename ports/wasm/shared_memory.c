@@ -8,6 +8,7 @@
 
 #include "shared_memory.h"
 #include <emscripten.h>
+#include <string.h>
 
 // Global instance accessible to both WASM and JavaScript
 // Emscripten will place this in linear memory at a known address

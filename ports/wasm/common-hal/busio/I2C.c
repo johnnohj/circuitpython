@@ -32,8 +32,8 @@ void common_hal_busio_i2c_construct(busio_i2c_obj_t *self,
 
     message_request_t *req = message_queue_get(req_id);
     req->type = MSG_TYPE_I2C_INIT;
-    req->params.i2c_init.scl_pin = (uint8_t)((uintptr_t)scl);
-    req->params.i2c_init.sda_pin = (uint8_t)((uintptr_t)sda);
+    req->params.i2c_init.scl_pin = scl->number;
+    req->params.i2c_init.sda_pin = sda->number;
     req->params.i2c_init.frequency = frequency;
 
     message_queue_send_to_js(req_id);
@@ -57,7 +57,7 @@ void common_hal_busio_i2c_deinit(busio_i2c_obj_t *self) {
     if (req_id >= 0) {
         message_request_t *req = message_queue_get(req_id);
         req->type = MSG_TYPE_I2C_DEINIT;
-        req->params.i2c_deinit.scl_pin = (uint8_t)((uintptr_t)self->scl);
+        req->params.i2c_deinit.scl_pin = self->scl->number;
 
         message_queue_send_to_js(req_id);
         WAIT_FOR_REQUEST_COMPLETION(req_id);
