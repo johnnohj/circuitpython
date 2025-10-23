@@ -35,12 +35,13 @@
 // - stderr: same behaviour as stdout but for error output.
 // - linebuffer: whether to buffer line-by-line to stdout/stderr.
 // - verbose: whether to log infrastructure messages (VirtualClock, init). Default: false
+// - autoRun: whether to automatically run boot.py and code.py on load. Default: false
 // CIRCUITPY_CHANGE: export function name change
 // - virtual clock: initialize virtual clock for timing control
 export async function loadCircuitPython(options) {
-    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer, verbose } =
+    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer, verbose, autoRun } =
         Object.assign(
-            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true, verbose: false },
+            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true, verbose: false, autoRun: false },
             options,
         );
     let Module = {};
@@ -110,6 +111,28 @@ export async function loadCircuitPython(options) {
     );
     Module.ccall("proxy_c_init", "null", [], []);
 
+    // CIRCUITPY-CHANGE: Initialize persistent filesystem if requested
+    let persistentFS = null;
+    if (filesystem === 'indexeddb') {
+        try {
+            // Import filesystem module dynamically
+            const { CircuitPythonFilesystem } = await import('./filesystem.js');
+            persistentFS = new CircuitPythonFilesystem(verbose);
+            await persistentFS.init();
+
+            // Sync files from IndexedDB to VFS before running any code
+            await persistentFS.syncToVFS(Module);
+
+            if (verbose) {
+                console.log('[CircuitPython] Persistent filesystem initialized');
+            }
+        } catch (e) {
+            if (verbose) {
+                console.warn('[CircuitPython] Persistent filesystem initialization failed:', e);
+            }
+        }
+    }
+
     // CIRCUITPY-CHANGE: Initialize virtual clock for timing control
     let virtualClock = null;
     try {
@@ -138,11 +161,138 @@ export async function loadCircuitPython(options) {
         }
     }
 
+    // Helper function to run a file if it exists
+    const runFile = (filepath) => {
+        try {
+            if (Module.FS.analyzePath(filepath).exists) {
+                const content = Module.FS.readFile(filepath, { encoding: 'utf8' });
+                const len = Module.lengthBytesUTF8(content);
+                const buf = Module._malloc(len + 1);
+                Module.stringToUTF8(content, buf, len + 1);
+                const value = Module._malloc(3 * 4);
+                Module.ccall(
+                    "mp_js_do_exec",
+                    "number",
+                    ["pointer", "number", "pointer"],
+                    [buf, len, value],
+                );
+                Module._free(buf);
+                const ret = proxy_convert_mp_to_js_obj_jsside_with_free(value);
+                return ret;
+            }
+            return null;
+        } catch (error) {
+            if (verbose) {
+                console.error(`[CircuitPython] Error running ${filepath}:`, error);
+            }
+            throw error;
+        }
+    };
+
+    // Run CircuitPython boot workflow (boot.py then code.py)
+    const runWorkflow = () => {
+        try {
+            // Run boot.py if it exists
+            if (Module.FS.analyzePath('/boot.py').exists) {
+                if (verbose) {
+                    console.log('[CircuitPython] Running /boot.py');
+                }
+                runFile('/boot.py');
+            }
+
+            // Run code.py if it exists
+            if (Module.FS.analyzePath('/code.py').exists) {
+                if (verbose) {
+                    console.log('[CircuitPython] Running /code.py');
+                }
+                runFile('/code.py');
+            } else if (verbose) {
+                console.log('[CircuitPython] No code.py found');
+            }
+        } catch (error) {
+            if (verbose) {
+                console.error('[CircuitPython] Workflow error:', error);
+            }
+            throw error;
+        }
+    };
+
+    // Helper to save a file to both VFS and IndexedDB
+    const saveFile = async (filepath, content) => {
+        // Write to VFS
+        Module.FS.writeFile(filepath, content);
+
+        // Also persist to IndexedDB if available
+        if (persistentFS) {
+            await persistentFS.writeFile(filepath, content);
+        }
+    };
+
+    // Helper to save binary data from various sources
+    const saveBinaryFile = async (filepath, data) => {
+        let uint8Array;
+
+        // Convert different data types to Uint8Array
+        if (data instanceof Uint8Array) {
+            uint8Array = data;
+        } else if (data instanceof ArrayBuffer) {
+            uint8Array = new Uint8Array(data);
+        } else if (data instanceof Blob) {
+            const arrayBuffer = await data.arrayBuffer();
+            uint8Array = new Uint8Array(arrayBuffer);
+        } else if (typeof data === 'string') {
+            // Assume base64 encoded string
+            const binaryString = atob(data);
+            uint8Array = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                uint8Array[i] = binaryString.charCodeAt(i);
+            }
+        } else {
+            throw new Error('Unsupported data type for saveBinaryFile');
+        }
+
+        await saveFile(filepath, uint8Array);
+    };
+
+    // Helper to fetch and save a remote file (e.g., fonts, images)
+    const fetchAndSaveFile = async (filepath, url) => {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
+        }
+        const data = await response.arrayBuffer();
+        await saveBinaryFile(filepath, data);
+        if (verbose) {
+            console.log(`[CircuitPython] Fetched and saved ${filepath} (${data.byteLength} bytes)`);
+        }
+    };
+
+    // Auto-run boot.py and code.py if requested
+    if (autoRun) {
+        if (verbose) {
+            console.log('[CircuitPython] Auto-running boot/code workflow');
+        }
+        try {
+            runWorkflow();
+        } catch (error) {
+            if (verbose) {
+                console.error('[CircuitPython] Auto-run failed:', error);
+            }
+            // Don't throw - let the runtime continue
+        }
+    }
+
     return {
         _module: Module,
         virtualClock: virtualClock,
+        filesystem: persistentFS,
         PyProxy: PyProxy,
         FS: Module.FS,
+        runFile: runFile,
+        runWorkflow: runWorkflow,
+        saveFile: saveFile,
+        saveBinaryFile: saveBinaryFile,
+        fetchAndSaveFile: fetchAndSaveFile,
         globals: {
             __dict__: pyimport("__main__").__dict__,
             get(key) {
@@ -219,6 +369,73 @@ export async function loadCircuitPython(options) {
                 [chr],
                 { async: true },
             );
+        },
+        // CIRCUITPY-CHANGE: String-based REPL helpers for easier xterm.js integration
+        serial: {
+            // Write a string to the REPL input buffer
+            writeInput(text) {
+                const len = Module.lengthBytesUTF8(text);
+                const buf = Module._malloc(len + 1);
+                Module.stringToUTF8(text, buf, len + 1);
+                const written = Module.ccall(
+                    "board_serial_write_input",
+                    "number",
+                    ["pointer", "number"],
+                    [buf, len]
+                );
+                Module._free(buf);
+                return written;
+            },
+            // Write a single character to the REPL input buffer
+            writeChar(char) {
+                const charCode = typeof char === 'string' ? char.charCodeAt(0) : char;
+                return Module.ccall(
+                    "board_serial_write_input_char",
+                    "number",
+                    ["number"],
+                    [charCode]
+                );
+            },
+            // Clear the input buffer
+            clearInput() {
+                Module.ccall("board_serial_clear_input", "null", []);
+            },
+            // Get number of bytes available in input buffer
+            inputAvailable() {
+                return Module.ccall("board_serial_input_available", "number", []);
+            },
+            // Process a string through the REPL (writes to buffer)
+            processString(text) {
+                const len = Module.lengthBytesUTF8(text);
+                const buf = Module._malloc(len + 1);
+                Module.stringToUTF8(text, buf, len + 1);
+                const result = Module.ccall(
+                    "board_serial_repl_process_string",
+                    "number",
+                    ["pointer", "number"],
+                    [buf, len]
+                );
+                Module._free(buf);
+                return result;
+            },
+            // Set output callback for REPL output (easier than hooking stdout)
+            onOutput(callback) {
+                // Store callback in Module for C code to call
+                Module._serialOutputCallback = callback;
+
+                // Create a wrapper function that C can call
+                const wrapperPtr = Module.addFunction((textPtr, length) => {
+                    const text = Module.UTF8ToString(textPtr, length);
+                    callback(text);
+                }, 'vii');
+
+                Module.ccall(
+                    "board_serial_set_output_callback",
+                    "null",
+                    ["number"],
+                    [wrapperPtr]
+                );
+            }
         },
     };
 }

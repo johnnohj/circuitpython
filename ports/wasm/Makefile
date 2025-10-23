@@ -61,6 +61,12 @@ CFLAGS += -Os -DNDEBUG
 CFLAGS += $(INC)
 
 EXPORTED_FUNCTIONS_EXTRA += ,\
+	_board_serial_write_input,\
+	_board_serial_write_input_char,\
+	_board_serial_clear_input,\
+	_board_serial_input_available,\
+	_board_serial_set_output_callback,\
+	_board_serial_repl_process_string,\
 	_get_virtual_hardware_ptr,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
@@ -170,6 +176,7 @@ SRC_COMMON_HAL = $(addprefix common-hal/,\
 
 SRC_C += \
 	background.c \
+	board_serial.c \
 	lexer_dedent.c \
 	main.c \
 	message_queue.c \
