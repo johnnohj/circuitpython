@@ -202,12 +202,11 @@ void port_background_tick(void) {
 // Forward declare types
 typedef struct _fs_user_mount_t fs_user_mount_t;
 
-// Safe mode reset - in WASM this is a no-op
-// Unlike physical boards, we keep everything running
+// Safe mode reset - in WASM this triggers a controlled abort
 void reset_into_safe_mode(safe_mode_t reason) {
     (void)reason;
-    // In WASM, "safe mode" just means we had an error
-    // But we don't actually disable anything - the REPL continues working
+    // In WASM, we abort the execution to match the noreturn contract
+    abort();
 }
 
 // Stack checking - WASM manages its own stack
