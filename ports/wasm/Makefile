@@ -209,9 +209,10 @@ all: $(BUILD)/circuitpython.mjs
 
 # Add Blinka character (U+E000) to banner after build
 $(BUILD)/circuitpython.mjs: $(OBJ) library.js $(SRC_JS)
-	@# Add Blinka character to generated mpversion.h if it doesn't have it already
-	@if [ -f $(BUILD)/genhdr/mpversion.h ] && ! grep -q '\\uE000' $(BUILD)/genhdr/mpversion.h; then \
-		sed -i.bak 's/"Adafruit CircuitPython/"\\uE000 Adafruit CircuitPython/' $(BUILD)/genhdr/mpversion.h && \
+	@# Add Blinka character (U+E000) to generated mpversion.h if it doesn't have it already
+	@# U+E000 in UTF-8 is: 0xEE 0x80 0x80
+	@if [ -f $(BUILD)/genhdr/mpversion.h ] && ! grep -q '\\xEE\\x80\\x80' $(BUILD)/genhdr/mpversion.h; then \
+		sed -i.bak 's/"Adafruit CircuitPython/"\\xEE\\x80\\x80 Adafruit CircuitPython/' $(BUILD)/genhdr/mpversion.h && \
 		rm -f $(BUILD)/genhdr/mpversion.h.bak; \
 	fi
 	$(ECHO) "LINK $@"
