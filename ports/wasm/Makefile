@@ -68,6 +68,16 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_board_serial_set_output_callback,\
 	_board_serial_repl_process_string,\
 	_get_virtual_hardware_ptr,\
+	_virtual_gpio_set_input_value,\
+	_virtual_gpio_get_output_value,\
+	_virtual_gpio_get_direction,\
+	_virtual_gpio_get_pull,\
+	_virtual_gpio_get_state_array,\
+	_virtual_analog_set_input_value,\
+	_virtual_analog_get_output_value,\
+	_virtual_analog_is_enabled,\
+	_virtual_analog_is_output,\
+	_virtual_analog_get_state_array,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -187,12 +197,14 @@ SRC_C += \
 	pins.c \
 	proxy_c.c \
 	shared_memory.c \
+	virtual_hardware.c \
 
 # List of sources for qstr extraction.
 SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_SUPERVISOR) $(SRC_BINDINGS) $(SRC_COMMON_HAL)
 
 SRC_JS += \
 	virtual_clock.js \
+	filesystem.js \
 	api.js \
 	objpyproxy.js \
 	proxy_js.js \

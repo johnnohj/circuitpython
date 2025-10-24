@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-// DigitalInOut implementation for WASM port using message queue and yielding
+// DigitalInOut implementation for WASM port using virtual hardware
 
 #include "common-hal/digitalio/DigitalInOut.h"
 #include "shared-bindings/digitalio/DigitalInOut.h"
@@ -13,8 +13,7 @@
 #include "shared-bindings/digitalio/Direction.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "py/runtime.h"
-#include "supervisor/shared/tick.h"
-#include "message_queue.h"
+#include "virtual_hardware.h"
 
 // Validate that an object is a valid pin
 const mcu_pin_obj_t *common_hal_digitalio_validate_pin(mp_obj_t obj) {
@@ -28,32 +27,15 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
     digitalio_digitalinout_obj_t *self,
     const mcu_pin_obj_t *pin) {
 
-    // Initialize the object
+    // Initialize the object - only store which pin
     self->pin = pin;
-    self->input = true;  // Default to input
-    self->open_drain = false;
-    self->pull = PULL_NONE;
 
-    // Send initialization request to JavaScript
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return DIGITALINOUT_PIN_BUSY;  // Queue full
-    }
+    // Initialize virtual hardware to input mode (default)
+    virtual_gpio_set_direction(pin->number, 0);  // 0 = input
+    virtual_gpio_set_pull(pin->number, 0);       // 0 = PULL_NONE
+    virtual_gpio_set_open_drain(pin->number, false);  // Push-pull by default
 
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = pin->number;
-    req->params.gpio_direction.direction = 0;  // Input
-
-    message_queue_send_to_js(req_id);
-
-    // Yield until JavaScript completes initialization
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    bool success = !message_queue_has_error(req_id);
-    message_queue_free(req_id);
-
-    return success ? DIGITALINOUT_OK : DIGITALINOUT_PIN_BUSY;
+    return DIGITALINOUT_OK;
 }
 
 // Deinitialize the pin
@@ -75,46 +57,17 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
     digitalio_digitalinout_obj_t *self,
     digitalio_pull_t pull) {
 
-    self->input = true;
-    self->pull = pull;
+    // Update virtual hardware - single source of truth
+    virtual_gpio_set_direction(self->pin->number, 0);  // 0 = input
 
-    // Send direction change request
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return DIGITALINOUT_PIN_BUSY;
+    // Set pull resistor
+    uint8_t pull_mode = 0;  // PULL_NONE
+    if (pull == PULL_UP) {
+        pull_mode = 1;
+    } else if (pull == PULL_DOWN) {
+        pull_mode = 2;
     }
-
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = self->pin->number;
-    req->params.gpio_direction.direction = 0;  // Input
-
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    bool success = !message_queue_has_error(req_id);
-    message_queue_free(req_id);
-
-    if (!success) {
-        return DIGITALINOUT_PIN_BUSY;
-    }
-
-    // Set pull resistor if needed
-    if (pull != PULL_NONE) {
-        req_id = message_queue_alloc();
-        if (req_id < 0) {
-            return DIGITALINOUT_OK;  // Direction set, but pull failed
-        }
-
-        req = message_queue_get(req_id);
-        req->type = MSG_TYPE_GPIO_SET_PULL;
-        req->params.gpio_pull.pin = self->pin->number;
-        req->params.gpio_pull.pull = (pull == PULL_UP) ? 1 : 2;
-
-        message_queue_send_to_js(req_id);
-        WAIT_FOR_REQUEST_COMPLETION(req_id);
-        message_queue_free(req_id);
-    }
+    virtual_gpio_set_pull(self->pin->number, pull_mode);
 
     return DIGITALINOUT_OK;
 }
@@ -125,36 +78,20 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
     bool value,
     digitalio_drive_mode_t drive_mode) {
 
-    self->input = false;
-    self->open_drain = (drive_mode == DRIVE_MODE_OPEN_DRAIN);
+    // Update virtual hardware - single source of truth
+    virtual_gpio_set_direction(self->pin->number, 1);  // 1 = output
+    virtual_gpio_set_value(self->pin->number, value);
+    virtual_gpio_set_open_drain(self->pin->number, drive_mode == DRIVE_MODE_OPEN_DRAIN);
 
-    // Set output value first
-    common_hal_digitalio_digitalinout_set_value(self, value);
-
-    // Then change direction
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return DIGITALINOUT_PIN_BUSY;
-    }
-
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_SET_DIRECTION;
-    req->params.gpio_direction.pin = self->pin->number;
-    req->params.gpio_direction.direction = 1;  // Output
-
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    bool success = !message_queue_has_error(req_id);
-    message_queue_free(req_id);
-
-    return success ? DIGITALINOUT_OK : DIGITALINOUT_PIN_BUSY;
+    return DIGITALINOUT_OK;
 }
 
 // Get direction
 digitalio_direction_t common_hal_digitalio_digitalinout_get_direction(
     digitalio_digitalinout_obj_t *self) {
-    return self->input ? DIRECTION_INPUT : DIRECTION_OUTPUT;
+    // Read from virtual hardware
+    uint8_t dir = virtual_gpio_get_direction(self->pin->number);
+    return (dir == 0) ? DIRECTION_INPUT : DIRECTION_OUTPUT;
 }
 
 // Set pin value (output mode)
@@ -162,64 +99,16 @@ void common_hal_digitalio_digitalinout_set_value(
     digitalio_digitalinout_obj_t *self,
     bool value) {
 
-    // THIS IS THE KEY FUNCTION - Shows the yielding pattern!
-
-    // Allocate a message queue slot
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        // Queue full - could raise an exception or just return
-        return;
-    }
-
-    // Set up the request
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_SET;
-    req->params.gpio_set.pin = self->pin->number;
-    req->params.gpio_set.value = value ? 1 : 0;
-
-    // Send to JavaScript (non-blocking)
-    message_queue_send_to_js(req_id);
-
-    // Yield until JavaScript completes the operation
-    // This is where the magic happens - looks synchronous to Python,
-    // but actually yields control to JavaScript via RUN_BACKGROUND_TASKS
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    // Check for errors (optional)
-    if (message_queue_has_error(req_id)) {
-        // Could raise an exception here
-    }
-
-    // Free the message queue slot
-    message_queue_free(req_id);
+    // Update virtual hardware directly - no message queue needed!
+    virtual_gpio_set_value(self->pin->number, value);
 }
 
-// Get pin value (input mode)
-bool common_hal_digitalio_digitalinout_get_value(digitalio_digitalinout_obj_t *self) {
-    // Allocate a message queue slot
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return false;  // Queue full
-    }
+// Get pin value
+bool common_hal_digitalio_digitalinout_get_value(
+    digitalio_digitalinout_obj_t *self) {
 
-    // Set up the request
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_GET;
-    req->params.gpio_get.pin = self->pin->number;
-
-    // Send to JavaScript (non-blocking)
-    message_queue_send_to_js(req_id);
-
-    // Yield until JavaScript completes the read
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    // Get the result
-    bool value = req->response.gpio_value.value != 0;
-
-    // Free the message queue slot
-    message_queue_free(req_id);
-
-    return value;
+    // Read from virtual hardware directly
+    return virtual_gpio_get_value(self->pin->number);
 }
 
 // Set drive mode
@@ -227,14 +116,17 @@ digitalinout_result_t common_hal_digitalio_digitalinout_set_drive_mode(
     digitalio_digitalinout_obj_t *self,
     digitalio_drive_mode_t drive_mode) {
 
-    self->open_drain = (drive_mode == DRIVE_MODE_OPEN_DRAIN);
+    // Update virtual hardware
+    virtual_gpio_set_open_drain(self->pin->number, drive_mode == DRIVE_MODE_OPEN_DRAIN);
     return DIGITALINOUT_OK;
 }
 
 // Get drive mode
 digitalio_drive_mode_t common_hal_digitalio_digitalinout_get_drive_mode(
     digitalio_digitalinout_obj_t *self) {
-    return self->open_drain ? DRIVE_MODE_OPEN_DRAIN : DRIVE_MODE_PUSH_PULL;
+    // Read from virtual hardware
+    bool open_drain = virtual_gpio_get_open_drain(self->pin->number);
+    return open_drain ? DRIVE_MODE_OPEN_DRAIN : DRIVE_MODE_PUSH_PULL;
 }
 
 // Set pull resistor
@@ -242,22 +134,14 @@ digitalinout_result_t common_hal_digitalio_digitalinout_set_pull(
     digitalio_digitalinout_obj_t *self,
     digitalio_pull_t pull) {
 
-    self->pull = pull;
-
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return DIGITALINOUT_OK;
+    // Update virtual hardware
+    uint8_t pull_mode = 0;  // PULL_NONE
+    if (pull == PULL_UP) {
+        pull_mode = 1;
+    } else if (pull == PULL_DOWN) {
+        pull_mode = 2;
     }
-
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_GPIO_SET_PULL;
-    req->params.gpio_pull.pin = (uint8_t)((uintptr_t)self->pin);
-    req->params.gpio_pull.pull = (pull == PULL_UP) ? 1 :
-                                  (pull == PULL_DOWN) ? 2 : 0;
-
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-    message_queue_free(req_id);
+    virtual_gpio_set_pull(self->pin->number, pull_mode);
 
     return DIGITALINOUT_OK;
 }
@@ -265,7 +149,11 @@ digitalinout_result_t common_hal_digitalio_digitalinout_set_pull(
 // Get pull resistor
 digitalio_pull_t common_hal_digitalio_digitalinout_get_pull(
     digitalio_digitalinout_obj_t *self) {
-    return self->pull;
+    // Read from virtual hardware
+    uint8_t pull = virtual_gpio_get_pull(self->pin->number);
+    if (pull == 1) return PULL_UP;
+    if (pull == 2) return PULL_DOWN;
+    return PULL_NONE;
 }
 
 // Never reset (no-op in WASM)

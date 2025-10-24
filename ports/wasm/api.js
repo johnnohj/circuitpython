@@ -39,9 +39,9 @@
 // CIRCUITPY_CHANGE: export function name change
 // - virtual clock: initialize virtual clock for timing control
 export async function loadCircuitPython(options) {
-    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer, verbose, autoRun } =
+    const { pystack, heapsize, url, stdin, stdout, stderr, linebuffer, verbose, autoRun, filesystem } =
         Object.assign(
-            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true, verbose: false, autoRun: false },
+            { pystack: 2 * 1024, heapsize: 1024 * 1024, linebuffer: true, verbose: false, autoRun: false, filesystem: 'memory' },
             options,
         );
     let Module = {};
@@ -437,6 +437,16 @@ export async function loadCircuitPython(options) {
                 );
             }
         },
+        // CIRCUITPY-CHANGE: Virtual hardware interface for input simulation and output observation
+        // Allows JavaScript to interact with the WASM runtime like the physical world interacts with a board
+        _virtual_gpio_set_input_value: Module._virtual_gpio_set_input_value,
+        _virtual_gpio_get_output_value: Module._virtual_gpio_get_output_value,
+        _virtual_gpio_get_direction: Module._virtual_gpio_get_direction,
+        _virtual_gpio_get_pull: Module._virtual_gpio_get_pull,
+        _virtual_analog_set_input_value: Module._virtual_analog_set_input_value,
+        _virtual_analog_get_output_value: Module._virtual_analog_get_output_value,
+        _virtual_analog_is_enabled: Module._virtual_analog_is_enabled,
+        _virtual_analog_is_output: Module._virtual_analog_is_output,
     };
 }
 

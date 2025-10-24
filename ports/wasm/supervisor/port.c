@@ -15,6 +15,7 @@
 #include "supervisor/shared/safe_mode.h"
 #include "shared_memory.h"
 #include "common-hal/microcontroller/Pin.h"
+#include "virtual_hardware.h"
 
 // =============================================================================
 // PIN INITIALIZATION
@@ -51,6 +52,9 @@ safe_mode_t port_init(void) {
 
     // Enable all 64 GPIO pins
     enable_all_pins();
+
+    // Initialize virtual hardware state
+    virtual_hardware_init();
 
     return SAFE_MODE_NONE;
 }
