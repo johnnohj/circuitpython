@@ -137,8 +137,10 @@ SRC_SHARED = $(addprefix shared/,\
 	timeutils/timeutils.c \
 	)
 
-# CIRCUITPY-CHANGE: Add supervisor sources for translation/decompression
+# CIRCUITPY-CHANGE: Add supervisor sources for core functionality
 SRC_SUPERVISOR = $(addprefix supervisor/shared/,\
+	background_callback.c \
+	tick.c \
 	translate/translate.c \
 	)
 SRC_SUPERVISOR += supervisor/port.c
@@ -217,6 +219,9 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_BINDINGS:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
+
+# Per-file compiler flags (to handle upstream CircuitPython code quirks)
+$(BUILD)/supervisor/shared/tick.o: CFLAGS += -Wno-unused-variable
 
 ################################################################################
 # Main targets.

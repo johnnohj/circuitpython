@@ -41,11 +41,8 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     return write(1, str, len);
 }
 
-void mp_hal_delay_ms(mp_uint_t ms) {
-    uint32_t start = mp_hal_ticks_ms();
-    while (mp_hal_ticks_ms() - start < ms) {
-    }
-}
+// CIRCUITPY-CHANGE: mp_hal_delay_ms is provided by supervisor/shared/tick.c
+// Only mp_hal_delay_us needs to be implemented by the port
 
 void mp_hal_delay_us(mp_uint_t us) {
     uint32_t start = mp_hal_ticks_us();
