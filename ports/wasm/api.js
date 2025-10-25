@@ -115,16 +115,20 @@ export async function loadCircuitPython(options) {
     let persistentFS = null;
     if (filesystem === 'indexeddb') {
         try {
-            // Import filesystem module dynamically
-            const { CircuitPythonFilesystem } = await import('./filesystem.js');
-            persistentFS = new CircuitPythonFilesystem(verbose);
-            await persistentFS.init();
+            // CircuitPythonFilesystem is available globally after concatenation
+            // (filesystem.js is concatenated into the .mjs file)
+            if (typeof CircuitPythonFilesystem !== 'undefined') {
+                persistentFS = new CircuitPythonFilesystem(verbose);
+                await persistentFS.init();
 
-            // Sync files from IndexedDB to VFS before running any code
-            await persistentFS.syncToVFS(Module);
+                // Sync files from IndexedDB to VFS before running any code
+                await persistentFS.syncToVFS(Module);
 
-            if (verbose) {
-                console.log('[CircuitPython] Persistent filesystem initialized');
+                if (verbose) {
+                    console.log('[CircuitPython] Persistent filesystem initialized');
+                }
+            } else {
+                throw new Error('CircuitPythonFilesystem not available');
             }
         } catch (e) {
             if (verbose) {

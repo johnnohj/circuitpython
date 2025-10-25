@@ -144,6 +144,8 @@ SRC_SUPERVISOR = $(addprefix supervisor/shared/,\
 	translate/translate.c \
 	)
 SRC_SUPERVISOR += supervisor/port.c
+SRC_SUPERVISOR += supervisor/serial.c
+SRC_SUPERVISOR += supervisor/filesystem_wasm.c
 
 # CIRCUITPY-CHANGE: Manually add CircuitPython module sources
 SRC_BINDINGS = $(addprefix shared-bindings/,\
@@ -183,12 +185,12 @@ SRC_COMMON_HAL = $(addprefix common-hal/,\
 	microcontroller/Pin.c \
 	microcontroller/Processor.c \
 	microcontroller/__init__.c \
+	peripherals/pins.c \
 	time/__init__.c \
 	)
 
 SRC_C += \
 	background.c \
-	board_serial.c \
 	lexer_dedent.c \
 	main.c \
 	message_queue.c \
@@ -196,7 +198,6 @@ SRC_C += \
 	modjsffi.c \
 	mphalport.c \
 	objjsproxy.c \
-	pins.c \
 	proxy_c.c \
 	shared_memory.c \
 	virtual_hardware.c \
@@ -233,16 +234,10 @@ all: $(BUILD)/circuitpython.mjs
 
 # Add Blinka character (U+E000) to banner after build
 $(BUILD)/circuitpython.mjs: $(OBJ) library.js $(SRC_JS)
-	@# Add Blinka character (U+E000) to generated mpversion.h if it doesn't have it already
-	@# U+E000 in UTF-8 is: 0xEE 0x80 0x80
-	@if [ -f $(BUILD)/genhdr/mpversion.h ] && ! grep -q '\\xEE\\x80\\x80' $(BUILD)/genhdr/mpversion.h; then \
-		sed -i.bak 's/"Adafruit CircuitPython/"\\xEE\\x80\\x80 Adafruit CircuitPython/' $(BUILD)/genhdr/mpversion.h && \
-		rm -f $(BUILD)/genhdr/mpversion.h.bak; \
-	fi
 	$(ECHO) "LINK $@"
 	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ) $(JSFLAGS)
 	$(Q)cat $(SRC_JS) >> $@
-	$(Q)cp FreeMono-Terminal-Blinka.ttf $(BUILD)/ 2>/dev/null || true
+# 	$(Q)cp FreeMono-Terminal-Blinka.ttf $(BUILD)/ 2>/dev/null || true
 
 $(BUILD)/circuitpython.min.mjs: $(BUILD)/circuitpython.mjs
 	$(TERSER) $< --compress --module -o $@

@@ -95,8 +95,8 @@ void mp_js_init(int pystack_size, int heap_size) {
 
     mp_init();
 
-    // CIRCUITPY-CHANGE: Initialize background task system for yielding
-    port_background_hook_init();
+    // CIRCUITPY-CHANGE: Background task system initialized in port_init()
+    // (supervisor/port.c) per CircuitPython architecture
 
     #if MICROPY_VFS_POSIX
     {

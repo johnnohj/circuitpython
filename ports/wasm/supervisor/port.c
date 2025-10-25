@@ -56,6 +56,10 @@ safe_mode_t port_init(void) {
     // Initialize virtual hardware state
     virtual_hardware_init();
 
+    // Initialize message queue for JavaScript communication
+    extern void message_queue_init(void);
+    message_queue_init();
+
     return SAFE_MODE_NONE;
 }
 
@@ -195,6 +199,16 @@ void port_background_tick(void) {
     // JavaScript can process events here
 }
 
+void port_background_task(void) {
+    // Called by background_callback_run_all() in supervisor/shared/background_callback.c
+    // This is called BEFORE running the callback queue and happens *very* often
+    // Use port_background_tick() when possible
+
+    // Process any completed messages from JavaScript
+    extern void message_queue_process(void);
+    message_queue_process();
+}
+
 // =============================================================================
 // SUPERVISOR UTILITY FUNCTIONS (from supervisor_stubs.c)
 // =============================================================================
@@ -223,17 +237,8 @@ void assert_heap_ok(void) {
     // No-op in WASM
 }
 
-// Filesystem writable stubs - Emscripten VFS is always writable
-bool filesystem_is_writable_by_python(fs_user_mount_t *vfs) {
-    (void)vfs;
-    return true;
-}
-
-void filesystem_set_writable_by_usb(fs_user_mount_t *vfs, bool writable) {
-    (void)vfs;
-    (void)writable;
-    // No-op in WASM
-}
+// Note: Filesystem functions (filesystem_is_writable_by_python, filesystem_set_writable_by_usb, etc.)
+// are now provided by supervisor/filesystem_wasm.c
 
 // FAT filesystem timestamp function
 // Returns a packed date/time value in FAT format
