@@ -67,7 +67,7 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_board_serial_input_available,\
 	_board_serial_set_output_callback,\
 	_board_serial_repl_process_string,\
-	_get_virtual_hardware_ptr,\
+	_get_virtual_clock_hw_ptr,\
 	_virtual_gpio_set_input_value,\
 	_virtual_gpio_get_output_value,\
 	_virtual_gpio_get_direction,\

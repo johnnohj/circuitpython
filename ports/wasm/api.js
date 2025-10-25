@@ -136,13 +136,13 @@ export async function loadCircuitPython(options) {
     // CIRCUITPY-CHANGE: Initialize virtual clock for timing control
     let virtualClock = null;
     try {
-        // Get pointer to virtual hardware
-        const virtualHardwarePtr = Module._get_virtual_hardware_ptr();
-        if (virtualHardwarePtr) {
+        // Get pointer to virtual clock hardware (timing, not I/O)
+        const virtualClockHwPtr = Module._get_virtual_clock_hw_ptr();
+        if (virtualClockHwPtr) {
             // Create a simple object that looks like WASM instance for VirtualClock
             const wasmInstance = {
                 exports: {
-                    get_virtual_hardware_ptr: () => virtualHardwarePtr
+                    get_virtual_clock_hw_ptr: () => virtualClockHwPtr
                 }
             };
             const wasmMemory = {
@@ -489,17 +489,29 @@ async function runCLI() {
 
     if (repl) {
         ctpy.replInit();
-        process.stdin.setRawMode(true);
+        if (process.stdin.setRawMode) {
+            process.stdin.setRawMode(true);
+        }
+
+        // Process input character by character through the REPL
+        // The event-driven REPL expects characters to be pushed to it
         process.stdin.on("data", (data) => {
-            for (let i = 0; i < data.length; i++) {
-                ctpy.replProcessCharWithAsyncify(data[i]).then((result) => {
-                    if (result) {
-                        process.exit();
-                    }
-                });
+            const text = data.toString('utf8');
+
+            // Check for Ctrl+D to exit
+            for (let i = 0; i < text.length; i++) {
+                const charCode = text.charCodeAt(i);
+                if (charCode === 0x04) {  // Ctrl+D
+                    process.exit();
+                }
+                // Pass each character to the REPL
+                const result = ctpy.replProcessChar(charCode);
+                if (result !== 0) {
+                    process.exit();
+                }
             }
         });
-    } else {
+    } else{
         // If the script to run ends with a running of the asyncio main loop, then inject
         // a simple `asyncio.run` hook that starts the main task.  This is primarily to
         // support running the standard asyncio tests.

@@ -34,7 +34,7 @@ mergeInto(LibraryManager.library, {
         function initVirtualHardware() {
             if (virtualHardwarePtr === null) {
                 try {
-                    virtualHardwarePtr = Module.ccall('get_virtual_hardware_ptr', 'number', [], []);
+                    virtualHardwarePtr = Module.ccall('get_virtual_clock_hw_ptr', 'number', [], []);
                 } catch (e) {
                     console.warn('Virtual hardware not available, falling back to Date.now():', e);
                 }

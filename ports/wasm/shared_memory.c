@@ -4,7 +4,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-// Shared memory region for virtual hardware
+// Shared memory region for virtual clock hardware (timing)
+// NOTE: This is separate from virtual_hardware.c which handles GPIO/analog I/O
 
 #include "shared_memory.h"
 #include <emscripten.h>
@@ -12,7 +13,7 @@
 
 // Global instance accessible to both WASM and JavaScript
 // Emscripten will place this in linear memory at a known address
-EMSCRIPTEN_KEEPALIVE volatile virtual_hardware_t virtual_hardware = {
+EMSCRIPTEN_KEEPALIVE volatile virtual_clock_hw_t virtual_clock_hw = {
     .ticks_32khz = 0,
     .cpu_frequency_hz = 120000000,  // Default 120 MHz
     .time_mode = TIME_MODE_REALTIME,
@@ -20,18 +21,18 @@ EMSCRIPTEN_KEEPALIVE volatile virtual_hardware_t virtual_hardware = {
     .js_ticks_count = 0,
 };
 
-// JavaScript can get the address of virtual_hardware via this function
+// JavaScript can get the address of virtual clock hardware via this function
 EMSCRIPTEN_KEEPALIVE
-void* get_virtual_hardware_ptr(void) {
-    return (void*)&virtual_hardware;
+void* get_virtual_clock_hw_ptr(void) {
+    return (void*)&virtual_clock_hw;
 }
 
 // Helper for WASM to read ticks (fast, no message queue)
 uint64_t read_virtual_ticks_32khz(void) {
-    return virtual_hardware.ticks_32khz;
+    return virtual_clock_hw.ticks_32khz;
 }
 
 // Helper to check timing mode
 uint8_t get_time_mode(void) {
-    return virtual_hardware.time_mode;
+    return virtual_clock_hw.time_mode;
 }

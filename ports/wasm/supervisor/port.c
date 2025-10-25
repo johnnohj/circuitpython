@@ -125,7 +125,7 @@ uint32_t port_get_saved_word(void) {
 
 uint64_t port_get_raw_ticks(uint8_t *subticks) {
     // Read from shared memory - instant, no yielding!
-    // JavaScript increments virtual_hardware.ticks_32khz
+    // JavaScript increments virtual_clock_hw.ticks_32khz
     uint64_t ticks_32khz = read_virtual_ticks_32khz();
 
     // Convert 32kHz to 1024Hz (like all CircuitPython ports)
@@ -187,7 +187,7 @@ void port_start_background_tick(void) {
 
 void port_finish_background_tick(void) {
     // Update yield statistics
-    virtual_hardware.wasm_yields_count++;
+    virtual_clock_hw.wasm_yields_count++;
 }
 
 void port_background_tick(void) {

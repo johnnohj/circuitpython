@@ -19,8 +19,8 @@ class VirtualClock {
         this.wasmMemory = wasmMemory;
         this.verbose = verbose;
 
-        // Get pointer to shared virtual_hardware struct
-        this.virtualHardwarePtr = wasmInstance.exports.get_virtual_hardware_ptr();
+        // Get pointer to shared virtual_clock_hw struct
+        this.virtualHardwarePtr = wasmInstance.exports.get_virtual_clock_hw_ptr();
 
         // Create DataView for direct memory access
         this.hardware = new DataView(wasmMemory.buffer, this.virtualHardwarePtr);

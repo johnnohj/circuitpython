@@ -12,8 +12,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Memory-mapped virtual hardware (like Renode's 0x40001000)
+// Memory-mapped virtual clock hardware (like Renode's 0x40001000)
 // This struct is allocated by Emscripten and shared with JavaScript
+// NOTE: This is separate from virtual_hardware.c which handles GPIO/analog I/O
 typedef struct {
     // Virtual 32kHz crystal tick counter
     // JavaScript increments this, CircuitPython reads it
@@ -33,11 +34,11 @@ typedef struct {
     // Statistics (read-only for WASM)
     volatile uint64_t wasm_yields_count;
     volatile uint64_t js_ticks_count;
-} virtual_hardware_t;
+} virtual_clock_hw_t;
 
 // Export for JavaScript to access
 // Emscripten will create this in linear memory
-extern volatile virtual_hardware_t virtual_hardware;
+extern volatile virtual_clock_hw_t virtual_clock_hw;
 
 // Timing modes
 #define TIME_MODE_REALTIME     0
@@ -45,6 +46,6 @@ extern volatile virtual_hardware_t virtual_hardware;
 #define TIME_MODE_FAST_FORWARD 2  // Skip delays instantly
 
 // Function declarations
-void* get_virtual_hardware_ptr(void);
+void* get_virtual_clock_hw_ptr(void);
 uint64_t read_virtual_ticks_32khz(void);
 uint8_t get_time_mode(void);

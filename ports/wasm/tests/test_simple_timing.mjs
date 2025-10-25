@@ -13,9 +13,9 @@ async function testBasicTiming() {
 
     console.log("✓ Module loaded successfully");
 
-    // Check if virtual hardware pointer is accessible
-    if (typeof mp._get_virtual_hardware_ptr === 'function') {
-        const ptr = mp._get_virtual_hardware_ptr();
+    // Check if virtual clock hardware pointer is accessible
+    if (typeof mp._get_virtual_clock_hw_ptr === 'function') {
+        const ptr = mp._get_virtual_clock_hw_ptr();
         console.log(`✓ Virtual hardware pointer: 0x${ptr.toString(16)}`);
 
         // Access the shared memory
@@ -37,7 +37,7 @@ async function testBasicTiming() {
         console.log(`✓ Time mode: ${modes[timeMode] || timeMode}`);
 
     } else {
-        console.error("✗ get_virtual_hardware_ptr not found");
+        console.error("✗ get_virtual_clock_hw_ptr not found");
         console.log("Available functions:", Object.keys(mp).filter(k => k.startsWith('_')).slice(0, 10));
         return;
     }
