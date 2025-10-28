@@ -140,7 +140,11 @@ MP_DEFINE_CONST_FUN_OBJ_1(busio_spi_deinit_obj, busio_spi_obj_deinit);
 //  Provided by context manager helper.
 
 static void check_lock(busio_spi_obj_t *self) {
+    // WASM-COMPATIBILITY-FIX: asm("") is a compiler barrier to prevent optimization
+    // but it's not available in Emscripten. The check still works correctly without it.
+    #ifndef __EMSCRIPTEN__
     asm ("");
+    #endif
     if (!common_hal_busio_spi_has_lock(self)) {
         mp_raise_RuntimeError(MP_ERROR_TEXT("Function requires lock"));
     }

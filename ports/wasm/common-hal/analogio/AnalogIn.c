@@ -4,41 +4,50 @@
 //
 // SPDX-License-Identifier: MIT
 
-// WASM port - AnalogIn using message queue with native yielding
+// AnalogIn implementation for WASM port
+// This is common-hal - the hardware abstraction layer
+// For WASM, "hardware" = in-memory state arrays accessible to JavaScript
 
 #include "common-hal/analogio/AnalogIn.h"
 #include "shared-bindings/analogio/AnalogIn.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "py/runtime.h"
 #include "supervisor/shared/translate/translate.h"
-#include "message_queue.h"
+#include <emscripten.h>
+#include <string.h>
+
+// Analog state array - this is the "virtual hardware" for the WASM port
+// JavaScript accesses this via library.js to write simulated ADC values
+analog_pin_state_t analog_state[64];
+
+// Expose pointer to JavaScript via library.js
+EMSCRIPTEN_KEEPALIVE
+analog_pin_state_t* get_analog_state_ptr(void) {
+    return analog_state;
+}
+
+// Initialize analog state (called during port initialization)
+void analogio_reset_analog_state(void) {
+    for (int i = 0; i < 64; i++) {
+        analog_state[i].value = 32768;  // Mid-range default
+        analog_state[i].is_output = false;
+        analog_state[i].enabled = false;
+    }
+}
+
+const mcu_pin_obj_t *common_hal_analogio_analogin_validate_pin(mp_obj_t obj) {
+    return validate_obj_is_free_pin(obj, MP_QSTR_pin);
+}
 
 void common_hal_analogio_analogin_construct(analogio_analogin_obj_t *self, const mcu_pin_obj_t *pin) {
     self->pin = pin;
     claim_pin(pin);
 
-    // Send initialization request to JavaScript
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("Message queue full"));
-    }
-
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_ANALOG_INIT;
-    req->params.analog_init.pin = pin->number;
-    req->params.analog_init.is_output = false;
-
-    message_queue_send_to_js(req_id);
-
-    // Yield until JavaScript completes initialization
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    if (message_queue_has_error(req_id)) {
-        message_queue_free(req_id);
-        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("AnalogIn init failed"));
-    }
-
-    message_queue_free(req_id);
+    // Initialize analog state
+    uint8_t pin_num = pin->number;
+    analog_state[pin_num].is_output = false;  // ADC input
+    analog_state[pin_num].enabled = true;
+    analog_state[pin_num].value = 32768;  // Mid-range default
 }
 
 void common_hal_analogio_analogin_deinit(analogio_analogin_obj_t *self) {
@@ -46,17 +55,8 @@ void common_hal_analogio_analogin_deinit(analogio_analogin_obj_t *self) {
         return;
     }
 
-    // Send deinit request to JavaScript
-    int32_t req_id = message_queue_alloc();
-    if (req_id >= 0) {
-        message_request_t *req = message_queue_get(req_id);
-        req->type = MSG_TYPE_ANALOG_DEINIT;
-        req->params.analog_deinit.pin = self->pin->number;
-
-        message_queue_send_to_js(req_id);
-        WAIT_FOR_REQUEST_COMPLETION(req_id);
-        message_queue_free(req_id);
-    }
+    // Disable analog pin
+    analog_state[self->pin->number].enabled = false;
 
     reset_pin_number(self->pin->number);
     self->pin = NULL;
@@ -67,30 +67,9 @@ bool common_hal_analogio_analogin_deinited(analogio_analogin_obj_t *self) {
 }
 
 uint16_t common_hal_analogio_analogin_get_value(analogio_analogin_obj_t *self) {
-    // Allocate message queue slot
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return 0;  // Queue full
-    }
-
-    // Set up request
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_ANALOG_READ;
-    req->params.analog_read.pin = self->pin->number;
-
-    // Send to JavaScript (non-blocking)
-    message_queue_send_to_js(req_id);
-
-    // Yield until complete (THE MAGIC!)
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    // Get response
-    uint16_t value = req->response.analog_value.value;
-
-    // Free slot
-    message_queue_free(req_id);
-
-    return value;
+    // Read directly from analog state array
+    // JavaScript can write to this array to simulate sensor readings
+    return analog_state[self->pin->number].value;
 }
 
 float common_hal_analogio_analogin_get_reference_voltage(analogio_analogin_obj_t *self) {

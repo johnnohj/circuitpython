@@ -15,8 +15,11 @@ typedef struct {
     mp_obj_base_t base;
     const mcu_pin_obj_t *tx;
     const mcu_pin_obj_t *rx;
+    bool enabled;
+    bool has_lock;
     uint32_t baudrate;
-    uint8_t character_bits;
+    uint8_t parity;
+    uint8_t bits;
     bool rx_ongoing;
     uint32_t timeout_ms;
 } busio_uart_obj_t;

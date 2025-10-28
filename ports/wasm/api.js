@@ -456,6 +456,11 @@ export async function loadCircuitPython(options) {
 
 globalThis.loadCircuitPython = loadCircuitPython;
 
+// Export worker-based loader for browser environments
+// This runs CircuitPython in a Web Worker to prevent blocking the main thread
+// Worker export disabled for command-line testing
+// export { loadCircuitPythonWorker } from './circuitpython-worker-proxy.js';
+
 async function runCLI() {
     const fs = await import("fs");
     let heap_size = 128 * 1024;

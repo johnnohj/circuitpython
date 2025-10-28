@@ -76,6 +76,10 @@ typedef struct _mp_stream_p_t {
     // are implementation-dependent, but will be exposed to user, e.g. via exception).
     mp_uint_t (*read)(mp_obj_t obj, void *buf, mp_uint_t size, int *errcode);
     mp_uint_t (*write)(mp_obj_t obj, const void *buf, mp_uint_t size, int *errcode);
+    // IMPORTANT: ioctl 'arg' parameter MUST be uintptr_t (not mp_uint_t) to safely
+    // hold both integer values and pointer values on all architectures. Do not change
+    // this to mp_uint_t as it will break on platforms where pointers are larger than
+    // mp_uint_t, and causes type incompatibility errors on strict compilers (e.g. WASM).
     mp_uint_t (*ioctl)(mp_obj_t obj, mp_uint_t request, uintptr_t arg, int *errcode);
     mp_uint_t is_text : 1; // default is bytes, set this for text stream
     // CIRCUITPY-CHANGE: pyserial compatibility

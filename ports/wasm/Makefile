@@ -68,16 +68,13 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_board_serial_set_output_callback,\
 	_board_serial_repl_process_string,\
 	_get_virtual_clock_hw_ptr,\
-	_virtual_gpio_set_input_value,\
-	_virtual_gpio_get_output_value,\
-	_virtual_gpio_get_direction,\
-	_virtual_gpio_get_pull,\
-	_virtual_gpio_get_state_array,\
-	_virtual_analog_set_input_value,\
-	_virtual_analog_get_output_value,\
-	_virtual_analog_is_enabled,\
-	_virtual_analog_is_output,\
-	_virtual_analog_get_state_array,\
+	_get_gpio_state_ptr,\
+	_get_analog_state_ptr,\
+	_get_pwm_state_ptr,\
+	_get_neopixel_state_ptr,\
+	_get_i2c_state_ptr,\
+	_get_uart_state_ptr,\
+	_get_spi_state_ptr,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -116,11 +113,23 @@ JSFLAGS += -s EXPORTED_FUNCTIONS="\
 	_mp_js_repl_process_char,\
 	_mp_hal_get_interrupt_char,\
 	_mp_sched_keyboard_interrupt$(EXPORTED_FUNCTIONS_EXTRA)"
+
 JSFLAGS += -s EXPORTED_RUNTIME_METHODS="\
 	ccall,\
 	cwrap,\
 	FS$(EXPORTED_RUNTIME_METHODS_EXTRA)"
-JSFLAGS += --js-library library.js
+
+# Library modules - JavaScript bridge for C↔JS communication
+# Organized by CircuitPython module (supervisor, digitalio, analogio, etc.)
+SRC_LIB = \
+	library_supervisor.js \
+	library_digitalio.js \
+	library_analogio.js \
+	library_pwmio.js \
+	library_neopixel.js \
+	library_busio.js
+
+JSFLAGS += $(addprefix --js-library ,$(SRC_LIB))
 JSFLAGS += -s SUPPORT_LONGJMP=emscripten
 # CIRCUITPY-CHANGE: Use CircuitPython module name
 JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
@@ -129,6 +138,7 @@ JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
 # Source files and libraries.
 
 SRC_SHARED = $(addprefix shared/,\
+	runtime/buffer_helper.c \
 	runtime/context_manager_helpers.c \
 	runtime/interrupt_char.c \
 	runtime/stdout_helpers.c \
@@ -167,6 +177,9 @@ SRC_BINDINGS = $(addprefix shared-bindings/,\
 	microcontroller/ResetReason.c \
 	microcontroller/RunMode.c \
 	microcontroller/__init__.c \
+	neopixel_write/__init__.c \
+	pwmio/PWMOut.c \
+	pwmio/__init__.c \
 	time/__init__.c \
 	util.c \
 	)
@@ -185,22 +198,21 @@ SRC_COMMON_HAL = $(addprefix common-hal/,\
 	microcontroller/Pin.c \
 	microcontroller/Processor.c \
 	microcontroller/__init__.c \
+	neopixel_write/__init__.c \
 	peripherals/pins.c \
+	pwmio/PWMOut.c \
+	pwmio/__init__.c \
 	time/__init__.c \
 	)
 
 SRC_C += \
-	background.c \
 	lexer_dedent.c \
 	main.c \
-	message_queue.c \
 	modjs.c \
 	modjsffi.c \
 	mphalport.c \
 	objjsproxy.c \
 	proxy_c.c \
-	shared_memory.c \
-	virtual_hardware.c \
 
 # List of sources for qstr extraction.
 SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_SUPERVISOR) $(SRC_BINDINGS) $(SRC_COMMON_HAL)
@@ -233,7 +245,7 @@ $(BUILD)/supervisor/shared/tick.o: CFLAGS += -Wno-unused-variable
 all: $(BUILD)/circuitpython.mjs
 
 # Add Blinka character (U+E000) to banner after build
-$(BUILD)/circuitpython.mjs: $(OBJ) library.js $(SRC_JS)
+$(BUILD)/circuitpython.mjs: $(OBJ) $(SRC_LIB) $(SRC_JS)
 	$(ECHO) "LINK $@"
 	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ) $(JSFLAGS)
 	$(Q)cat $(SRC_JS) >> $@

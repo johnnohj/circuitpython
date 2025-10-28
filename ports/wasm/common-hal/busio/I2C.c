@@ -4,47 +4,131 @@
 //
 // SPDX-License-Identifier: MIT
 
-// WASM port - I2C using message queue with native yielding
+// I2C implementation for WASM port
 
 #include "common-hal/busio/I2C.h"
 #include "shared-bindings/busio/I2C.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "py/mperrno.h"
 #include "py/runtime.h"
-#include "supervisor/shared/translate/translate.h"
-#include "message_queue.h"
+#include <emscripten.h>
+#include <string.h>
+
+// Maximum number of I2C buses
+#define MAX_I2C_BUSES 8
+
+// Maximum buffer size for I2C transactions
+#define I2C_BUFFER_SIZE 256
+
+// I2C device state - tracks data for each device address
+typedef struct {
+    uint8_t registers[256];  // 256 byte register space per device
+    bool active;              // Whether this device exists/responds
+} i2c_device_state_t;
+
+// I2C bus state
+typedef struct {
+    uint8_t scl_pin;
+    uint8_t sda_pin;
+    uint32_t frequency;
+    bool enabled;
+    bool locked;
+    bool never_reset;  // If true, don't reset this bus during soft reset
+
+    // Virtual I2C devices on this bus (128 possible 7-bit addresses)
+    i2c_device_state_t devices[128];
+
+    // Last transaction buffers (for JavaScript to read/modify)
+    uint8_t last_write_addr;
+    uint8_t last_write_data[I2C_BUFFER_SIZE];
+    uint16_t last_write_len;
+
+    uint8_t last_read_addr;
+    uint8_t last_read_data[I2C_BUFFER_SIZE];
+    uint16_t last_read_len;
+} i2c_bus_state_t;
+
+// Global I2C bus state array
+i2c_bus_state_t i2c_buses[MAX_I2C_BUSES];
+
+EMSCRIPTEN_KEEPALIVE
+i2c_bus_state_t* get_i2c_state_ptr(void) {
+    return i2c_buses;
+}
+
+void busio_reset_i2c_state(void) {
+    for (int i = 0; i < MAX_I2C_BUSES; i++) {
+        // Skip buses marked as never_reset (e.g., used by displayio or supervisor)
+        if (i2c_buses[i].never_reset) {
+            continue;
+        }
+
+        i2c_buses[i].scl_pin = 0xFF;
+        i2c_buses[i].sda_pin = 0xFF;
+        i2c_buses[i].frequency = 100000;  // 100kHz default
+        i2c_buses[i].enabled = false;
+        i2c_buses[i].locked = false;
+        i2c_buses[i].last_write_len = 0;
+        i2c_buses[i].last_read_len = 0;
+
+        // Reset all devices on this bus
+        for (int j = 0; j < 128; j++) {
+            i2c_buses[i].devices[j].active = false;
+            memset(i2c_buses[i].devices[j].registers, 0, 256);
+        }
+    }
+}
+
+// Find an I2C bus by pin pair, or return -1 if not found
+static int8_t find_i2c_bus(uint8_t scl_pin, uint8_t sda_pin) {
+    for (int i = 0; i < MAX_I2C_BUSES; i++) {
+        if (i2c_buses[i].enabled &&
+            i2c_buses[i].scl_pin == scl_pin &&
+            i2c_buses[i].sda_pin == sda_pin) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Find a free I2C bus slot
+static int8_t find_free_i2c_bus(void) {
+    for (int i = 0; i < MAX_I2C_BUSES; i++) {
+        if (!i2c_buses[i].enabled) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 void common_hal_busio_i2c_construct(busio_i2c_obj_t *self,
-    const mcu_pin_obj_t *scl, const mcu_pin_obj_t *sda, uint32_t frequency, uint32_t timeout) {
+    const mcu_pin_obj_t *scl, const mcu_pin_obj_t *sda,
+    uint32_t frequency, uint32_t timeout) {
+
+    // Claim the pins
+    claim_pin(scl);
+    claim_pin(sda);
 
     self->scl = scl;
     self->sda = sda;
     self->has_lock = false;
 
-    claim_pin(scl);
-    claim_pin(sda);
+    // Find or create I2C bus for these pins
+    int8_t bus_idx = find_i2c_bus(scl->number, sda->number);
+    if (bus_idx < 0) {
+        bus_idx = find_free_i2c_bus();
+        if (bus_idx < 0) {
+            mp_raise_RuntimeError(MP_ERROR_TEXT("All I2C buses in use"));
+        }
 
-    // Send I2C initialization request to JavaScript
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("Message queue full"));
+        // Initialize new bus
+        i2c_buses[bus_idx].scl_pin = scl->number;
+        i2c_buses[bus_idx].sda_pin = sda->number;
+        i2c_buses[bus_idx].frequency = frequency;
+        i2c_buses[bus_idx].enabled = true;
+        i2c_buses[bus_idx].locked = false;
+        i2c_buses[bus_idx].never_reset = false;
     }
-
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_I2C_INIT;
-    req->params.i2c_init.scl_pin = scl->number;
-    req->params.i2c_init.sda_pin = sda->number;
-    req->params.i2c_init.frequency = frequency;
-
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    if (message_queue_has_error(req_id)) {
-        message_queue_free(req_id);
-        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("I2C init failed"));
-    }
-
-    message_queue_free(req_id);
 }
 
 void common_hal_busio_i2c_deinit(busio_i2c_obj_t *self) {
@@ -52,16 +136,10 @@ void common_hal_busio_i2c_deinit(busio_i2c_obj_t *self) {
         return;
     }
 
-    // Send deinit request
-    int32_t req_id = message_queue_alloc();
-    if (req_id >= 0) {
-        message_request_t *req = message_queue_get(req_id);
-        req->type = MSG_TYPE_I2C_DEINIT;
-        req->params.i2c_deinit.scl_pin = self->scl->number;
-
-        message_queue_send_to_js(req_id);
-        WAIT_FOR_REQUEST_COMPLETION(req_id);
-        message_queue_free(req_id);
+    // Find and disable the bus if no other objects are using it
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx >= 0) {
+        i2c_buses[bus_idx].enabled = false;
     }
 
     reset_pin_number(self->scl->number);
@@ -71,21 +149,26 @@ void common_hal_busio_i2c_deinit(busio_i2c_obj_t *self) {
 }
 
 bool common_hal_busio_i2c_deinited(busio_i2c_obj_t *self) {
-    return self->sda == NULL;
+    return self->scl == NULL;
 }
 
 void common_hal_busio_i2c_mark_deinit(busio_i2c_obj_t *self) {
-    self->sda = NULL;
     self->scl = NULL;
+    self->sda = NULL;
 }
 
 bool common_hal_busio_i2c_try_lock(busio_i2c_obj_t *self) {
-    bool grabbed_lock = false;
-    if (!self->has_lock) {
-        grabbed_lock = true;
-        self->has_lock = true;
+    if (self->has_lock) {
+        return false;
     }
-    return grabbed_lock;
+
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx >= 0 && !i2c_buses[bus_idx].locked) {
+        i2c_buses[bus_idx].locked = true;
+        self->has_lock = true;
+        return true;
+    }
+    return false;
 }
 
 bool common_hal_busio_i2c_has_lock(busio_i2c_obj_t *self) {
@@ -93,97 +176,159 @@ bool common_hal_busio_i2c_has_lock(busio_i2c_obj_t *self) {
 }
 
 void common_hal_busio_i2c_unlock(busio_i2c_obj_t *self) {
+    if (!self->has_lock) {
+        return;
+    }
+
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx >= 0) {
+        i2c_buses[bus_idx].locked = false;
+    }
     self->has_lock = false;
 }
 
 bool common_hal_busio_i2c_probe(busio_i2c_obj_t *self, uint8_t addr) {
-    // Allocate message queue slot
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
+    if (addr >= 128) {
         return false;
     }
 
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_I2C_PROBE;
-    req->params.i2c_probe.address = addr;
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx < 0) {
+        return false;
+    }
 
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    bool found = !message_queue_has_error(req_id);
-    message_queue_free(req_id);
-
-    return found;
+    // Check if device is active
+    return i2c_buses[bus_idx].devices[addr].active;
 }
 
-uint8_t common_hal_busio_i2c_write(busio_i2c_obj_t *self, uint16_t addr,
+uint8_t common_hal_busio_i2c_write(busio_i2c_obj_t *self, uint16_t address,
     const uint8_t *data, size_t len) {
 
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return MP_EBUSY;
+    if (address >= 128) {
+        return MP_EINVAL;
     }
 
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_I2C_WRITE;
-    req->params.i2c_write.address = addr;
-    req->params.i2c_write.length = len;
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx < 0) {
+        return MP_ENODEV;
+    }
 
-    // Copy data to request payload (up to max size)
-    size_t copy_len = len < MESSAGE_QUEUE_MAX_PAYLOAD ? len : MESSAGE_QUEUE_MAX_PAYLOAD;
-    memcpy(req->params.i2c_write.data, data, copy_len);
+    // Check if device exists
+    if (!i2c_buses[bus_idx].devices[address].active) {
+        return MP_ENODEV;
+    }
 
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
+    // Limit write length
+    if (len > I2C_BUFFER_SIZE) {
+        len = I2C_BUFFER_SIZE;
+    }
 
-    uint8_t status = message_queue_has_error(req_id) ? MP_EIO : 0;
-    message_queue_free(req_id);
+    // Store last write for JavaScript access
+    i2c_buses[bus_idx].last_write_addr = address;
+    memcpy(i2c_buses[bus_idx].last_write_data, data, len);
+    i2c_buses[bus_idx].last_write_len = len;
 
-    return status;
+    // If data starts with register address, write to that register
+    if (len >= 2) {
+        uint8_t reg_addr = data[0];
+        memcpy(&i2c_buses[bus_idx].devices[address].registers[reg_addr],
+               &data[1], len - 1);
+    }
+
+    return 0;  // Success
 }
 
-uint8_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t addr,
+uint8_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t address,
     uint8_t *data, size_t len) {
 
-    int32_t req_id = message_queue_alloc();
-    if (req_id < 0) {
-        return MP_EBUSY;
+    if (address >= 128) {
+        return MP_EINVAL;
     }
 
-    message_request_t *req = message_queue_get(req_id);
-    req->type = MSG_TYPE_I2C_READ;
-    req->params.i2c_read.address = addr;
-    req->params.i2c_read.length = len;
-
-    message_queue_send_to_js(req_id);
-    WAIT_FOR_REQUEST_COMPLETION(req_id);
-
-    if (!message_queue_has_error(req_id)) {
-        // Copy response data
-        size_t copy_len = len < MESSAGE_QUEUE_MAX_PAYLOAD ? len : MESSAGE_QUEUE_MAX_PAYLOAD;
-        memcpy(data, req->response.data, copy_len);
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx < 0) {
+        return MP_ENODEV;
     }
 
-    uint8_t status = message_queue_has_error(req_id) ? MP_EIO : 0;
-    message_queue_free(req_id);
+    // Check if device exists
+    if (!i2c_buses[bus_idx].devices[address].active) {
+        return MP_ENODEV;
+    }
 
-    return status;
+    // Limit read length
+    if (len > I2C_BUFFER_SIZE) {
+        len = I2C_BUFFER_SIZE;
+    }
+
+    // Read from device registers (starting from register 0)
+    memcpy(data, i2c_buses[bus_idx].devices[address].registers, len);
+
+    // Store last read for JavaScript access
+    i2c_buses[bus_idx].last_read_addr = address;
+    memcpy(i2c_buses[bus_idx].last_read_data, data, len);
+    i2c_buses[bus_idx].last_read_len = len;
+
+    return 0;  // Success
 }
 
-uint8_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t addr,
+uint8_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t address,
     uint8_t *out_data, size_t out_len, uint8_t *in_data, size_t in_len) {
 
-    // First write
-    uint8_t status = common_hal_busio_i2c_write(self, addr, out_data, out_len);
-    if (status != 0) {
-        return status;
+    if (address >= 128) {
+        return MP_EINVAL;
     }
 
-    // Then read
-    return common_hal_busio_i2c_read(self, addr, in_data, in_len);
+    int8_t bus_idx = find_i2c_bus(self->scl->number, self->sda->number);
+    if (bus_idx < 0) {
+        return MP_ENODEV;
+    }
+
+    // Check if device exists
+    if (!i2c_buses[bus_idx].devices[address].active) {
+        return MP_ENODEV;
+    }
+
+    // Typical I2C pattern: write register address, then read data
+    uint8_t reg_addr = (out_len > 0) ? out_data[0] : 0;
+
+    // Limit read length
+    if (in_len > I2C_BUFFER_SIZE) {
+        in_len = I2C_BUFFER_SIZE;
+    }
+
+    // Read from specified register
+    memcpy(in_data, &i2c_buses[bus_idx].devices[address].registers[reg_addr], in_len);
+
+    // Store transaction info
+    i2c_buses[bus_idx].last_write_addr = address;
+    if (out_len <= I2C_BUFFER_SIZE) {
+        memcpy(i2c_buses[bus_idx].last_write_data, out_data, out_len);
+        i2c_buses[bus_idx].last_write_len = out_len;
+    }
+
+    i2c_buses[bus_idx].last_read_addr = address;
+    memcpy(i2c_buses[bus_idx].last_read_data, in_data, in_len);
+    i2c_buses[bus_idx].last_read_len = in_len;
+
+    return 0;  // Success
 }
 
 void common_hal_busio_i2c_never_reset(busio_i2c_obj_t *self) {
-    never_reset_pin_number(self->scl->number);
-    never_reset_pin_number(self->sda->number);
+    // Mark this I2C bus as never_reset so it persists across soft resets
+    // This is important for displays and other supervisor-managed peripherals
+    uint8_t tx_pin = (self->scl != NULL) ? self->scl->number : 0xFF;
+    uint8_t rx_pin = (self->sda != NULL) ? self->sda->number : 0xFF;
+
+    int8_t bus_idx = find_i2c_bus(tx_pin, rx_pin);
+    if (bus_idx >= 0) {
+        i2c_buses[bus_idx].never_reset = true;
+
+        // Also mark the pins as never_reset
+        if (self->scl != NULL) {
+            never_reset_pin_number(self->scl->number);
+        }
+        if (self->sda != NULL) {
+            never_reset_pin_number(self->sda->number);
+        }
+    }
 }

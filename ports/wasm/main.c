@@ -39,8 +39,8 @@
 #include "extmod/vfs_posix.h"
 #include "shared/runtime/pyexec.h"
 
-// CIRCUITPY-CHANGE: Background task support
-#include "background.h"
+// // CIRCUITPY-CHANGE: Background task support
+// #include "background.h"
 
 #include "emscripten.h"
 #include "lexer_dedent.h"

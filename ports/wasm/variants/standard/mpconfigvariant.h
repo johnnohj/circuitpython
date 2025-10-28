@@ -27,5 +27,8 @@
 // Set base feature level.
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 
+// WASM has no physical status LEDs, disable status bar features
+#define CIRCUITPY_STATUS_BAR 0
+
 // Enable extra Unix features.
 #include "../mpconfigvariant_common.h"

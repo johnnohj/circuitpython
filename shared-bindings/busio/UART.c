@@ -277,12 +277,18 @@ static mp_uint_t busio_uart_write(mp_obj_t self_in, const void *buf_in, mp_uint_
     return common_hal_busio_uart_write(self, buf, size, errcode);
 }
 
-static mp_uint_t busio_uart_ioctl(mp_obj_t self_in, mp_uint_t request, mp_uint_t arg, int *errcode) {
+// WASM-COMPATIBILITY-FIX: Changed third parameter from mp_uint_t to uintptr_t to match
+// the mp_stream_p_t protocol definition in py/stream.h:79. This ensures the parameter
+// can safely hold pointer values on all architectures. The bug was previously undetected
+// on 32-bit ARM platforms where mp_uint_t and uintptr_t are both 32-bit types, but
+// causes compilation errors on WASM and other platforms with stricter type checking.
+// See: py/stream.h line 79 for the correct signature.
+static mp_uint_t busio_uart_ioctl(mp_obj_t self_in, mp_uint_t request, uintptr_t arg, int *errcode) {
     busio_uart_obj_t *self = native_uart(self_in);
     check_for_deinit(self);
     mp_uint_t ret;
     if (request == MP_STREAM_POLL) {
-        mp_uint_t flags = arg;
+        uintptr_t flags = arg;
         ret = 0;
         if ((flags & MP_STREAM_POLL_RD) && common_hal_busio_uart_rx_characters_available(self) > 0) {
             ret |= MP_STREAM_POLL_RD;

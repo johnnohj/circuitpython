@@ -249,6 +249,13 @@ void common_hal_mcu_pin_claim(const mcu_pin_obj_t *pin) {
     claim_pin(pin);
 }
 
+void common_hal_mcu_pin_claim_number(uint8_t pin_no) {
+    if (pin_no >= 64) {
+        return;
+    }
+    all_pins[pin_no]->claimed = true;
+}
+
 void common_hal_mcu_pin_reset_number(uint8_t pin_no) {
     reset_pin_number(pin_no);
 }

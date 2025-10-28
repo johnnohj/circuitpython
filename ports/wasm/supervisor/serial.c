@@ -51,6 +51,12 @@ uint32_t board_serial_bytes_available(void) {
     return ringbuf_num_filled(&serial_input_buffer);
 }
 
+bool board_serial_connected(void) {
+    // In WASM, serial is always "connected" once initialized
+    // JavaScript handles the actual I/O, so we just need to indicate availability
+    return serial_initialized;
+}
+
 void board_serial_write_substring(const char *text, uint32_t length) {
     // Send output to JavaScript callback if registered
     if (js_output_callback != NULL) {

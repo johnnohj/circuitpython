@@ -12,7 +12,6 @@
 #include "shared-bindings/microcontroller/__init__.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "shared-bindings/microcontroller/Processor.h"
-#include "message_queue.h"
 
 void common_hal_mcu_delay_us(uint32_t delay) {
     mp_hal_delay_us(delay);
@@ -36,17 +35,8 @@ void common_hal_mcu_on_next_reset(mcu_runmode_t runmode) {
     // No-op: next reset will reinitialize everything normally
 }
 void common_hal_mcu_reset(void) {
-    // Send reset notification to JavaScript
-    int32_t req_id = message_queue_alloc();
-    if (req_id >= 0) {
-        message_request_t *req = message_queue_get(req_id);
-        req->type = MSG_TYPE_MCU_RESET;
-        message_queue_send_to_js(req_id);
-        // Don't wait for response - just send the notification
-        message_queue_free(req_id);
-    }
-
-    // Loop forever (function declared noreturn)
+    // TODO: Implement reset notification via library.js
+    // For now, just loop forever (function declared noreturn)
     while (1) {
         RUN_BACKGROUND_TASKS;
     }

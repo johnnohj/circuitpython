@@ -8,14 +8,49 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <emscripten.h>
 
 #include "supervisor/background_callback.h"
 #include "supervisor/port.h"
 #include "shared-bindings/microcontroller/__init__.h"
 #include "supervisor/shared/safe_mode.h"
-#include "shared_memory.h"
 #include "common-hal/microcontroller/Pin.h"
-#include "virtual_hardware.h"
+#include "common-hal/digitalio/DigitalInOut.h"
+#include "common-hal/analogio/AnalogIn.h"
+
+// =============================================================================
+// VIRTUAL CLOCK - The "hardware" for WASM timing
+// =============================================================================
+// This represents the virtual crystal oscillator, accessible to JavaScript
+// JavaScript writes to ticks_32khz to advance virtual time
+
+typedef struct {
+    uint64_t ticks_32khz;         // Virtual 32kHz crystal counter
+    uint32_t cpu_frequency_hz;    // Simulated CPU frequency
+    uint8_t time_mode;            // 0=realtime, 1=controlled
+    uint64_t wasm_yields_count;   // Statistics
+    uint64_t js_ticks_count;      // Statistics
+} virtual_clock_hw_t;
+
+// Global instance accessible to both WASM and JavaScript
+EMSCRIPTEN_KEEPALIVE volatile virtual_clock_hw_t virtual_clock_hw = {
+    .ticks_32khz = 0,
+    .cpu_frequency_hz = 120000000,  // Default 120 MHz
+    .time_mode = 0,  // Realtime by default
+    .wasm_yields_count = 0,
+    .js_ticks_count = 0,
+};
+
+// Expose pointer for JavaScript/library.js
+EMSCRIPTEN_KEEPALIVE
+void* get_virtual_clock_hw_ptr(void) {
+    return (void*)&virtual_clock_hw;
+}
+
+// Helper to read ticks
+static inline uint64_t read_virtual_ticks_32khz(void) {
+    return virtual_clock_hw.ticks_32khz;
+}
 
 // =============================================================================
 // PIN INITIALIZATION
@@ -47,24 +82,39 @@ void enable_all_pins(void) {
 // =============================================================================
 
 safe_mode_t port_init(void) {
-    // Reset everything into a known state
-    reset_port();
-
-    // Enable all 64 GPIO pins
+    // Enable all 64 GPIO pins (only needed once at startup)
     enable_all_pins();
 
-    // Initialize virtual hardware state
-    virtual_hardware_init();
-
-    // Initialize message queue for JavaScript communication
-    extern void message_queue_init(void);
-    message_queue_init();
+    // Reset peripherals to safe state
+    reset_port();
 
     return SAFE_MODE_NONE;
 }
 
 void reset_port(void) {
-    // Nothing to reset in WASM - JavaScript handles hardware state
+    // Reset all peripherals to safe defaults
+    // This is called at startup AND between REPL runs (soft reset)
+
+    extern void digitalio_reset_gpio_state(void);
+    extern void analogio_reset_analog_state(void);
+    extern void pwmio_reset_pwm_state(void);
+    extern void neopixel_reset_state(void);
+    extern void busio_reset_i2c_state(void);
+    extern void busio_reset_uart_state(void);
+    extern void busio_reset_spi_state(void);
+
+    digitalio_reset_gpio_state();   // All GPIO → input mode
+    analogio_reset_analog_state();  // All analog → disabled
+    pwmio_reset_pwm_state();        // All PWM → disabled, 500Hz
+    neopixel_reset_state();         // All NeoPixels → off
+    busio_reset_i2c_state();        // All I2C buses → disabled
+    busio_reset_uart_state();       // All UART ports → disabled
+    busio_reset_spi_state();        // All SPI buses → disabled
+
+    // NOTE: We don't reset virtual_clock_hw.ticks_32khz
+    // The tick counter is like a hardware crystal oscillator that keeps
+    // running across resets. Resetting it would break time.monotonic()
+    // continuity between REPL sessions.
 }
 
 void reset_to_bootloader(void) {
@@ -204,9 +254,7 @@ void port_background_task(void) {
     // This is called BEFORE running the callback queue and happens *very* often
     // Use port_background_tick() when possible
 
-    // Process any completed messages from JavaScript
-    extern void message_queue_process(void);
-    message_queue_process();
+    // No message queue - JavaScript reads/writes state arrays directly
 }
 
 // =============================================================================

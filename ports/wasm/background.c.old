@@ -8,7 +8,6 @@
 // Hooks into CircuitPython's native yielding mechanism (RUN_BACKGROUND_TASKS)
 
 #include "background.h"
-#include "message_queue.h"
 #include "supervisor/shared/tick.h"
 
 // Note: port_background_task() has been moved to supervisor/port.c
