@@ -38,6 +38,74 @@
 // Variant-specific definitions.
 #include "mpconfigvariant.h"
 
+// ============================================================================
+// PORT-WIDE MICROPYTHON CONFIGURATION
+// These settings apply to all WASM variants and define the MicroPython
+// feature set available on the WebAssembly platform.
+// ============================================================================
+
+// --- Compiler optimizations (port-wide) ---
+#define MICROPY_COMP_CONST_FOLDING  (1)
+#define MICROPY_COMP_CONST_LITERAL  (1)
+#define MICROPY_COMP_DOUBLE_TUPLE_ASSIGN (1)
+#define MICROPY_OPT_CACHE_MAP_LOOKUP_IN_BYTECODE (1)
+#define MICROPY_OPT_MPZ_BITWISE     (1)
+
+// --- Reader configuration (port-wide) ---
+#define MICROPY_READER_POSIX        (1)
+#define MICROPY_READER_VFS          (1)
+
+// --- Built-in help system (port-wide) ---
+#define MICROPY_PY_BUILTINS_HELP    (1)
+#define MICROPY_PY_BUILTINS_HELP_TEXT circuitpython_help_text
+#define MICROPY_PY_BUILTINS_HELP_MODULES (1)
+
+// --- I/O and string features (port-wide) ---
+#define MICROPY_PY_IO_BUFFEREDWRITER (1)
+#define MICROPY_PY_FSTRINGS         (1)
+
+// --- System module features (port-wide) ---
+#define MICROPY_PY_SYS_STDFILES     (1)
+#define MICROPY_PY_SYS_STDIO_BUFFER (1)
+#define MICROPY_PY_SYS_ATEXIT       (1)
+#define MICROPY_PY_SYS_EXC_INFO     (1)
+
+// --- Debugging and error handling (port-wide) ---
+#define MICROPY_DEBUG_PRINTERS      (1)
+#define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF (1)
+#define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE (256)
+
+// --- Memory and GC settings (port-wide) ---
+#define MICROPY_ALLOC_PARSE_CHUNK_INIT (16)
+#define MICROPY_PY_GC_COLLECT_RETVAL   (1)
+
+// --- Code loading (port-wide) ---
+// Defined again below for clarity, but this is the port-wide default
+// #define MICROPY_PERSISTENT_CODE_LOAD (1)
+
+// --- Float implementation (port-wide) ---
+// WASM always uses double-precision floats (not single-precision)
+#define MICROPY_FLOAT_IMPL          (MICROPY_FLOAT_IMPL_DOUBLE)
+
+// --- Python compatibility (port-wide) ---
+#define MICROPY_CPYTHON_COMPAT      (1)
+
+// --- Keyboard interrupt (port-wide) ---
+#define MICROPY_ASYNC_KBD_INTR      (1)
+
+// --- REPL conveniences (port-wide) ---
+#define MICROPY_REPL_INFO           (1)
+#define MICROPY_REPL_EMACS_WORDS_MOVE  (1)
+#define MICROPY_REPL_EMACS_EXTRA_WORDS_MOVE (1)
+#define MICROPY_USE_READLINE_HISTORY   (1)
+#ifndef MICROPY_READLINE_HISTORY_SIZE
+#define MICROPY_READLINE_HISTORY_SIZE  (100)
+#endif
+
+// ============================================================================
+// CIRCUITPY-SPECIFIC SETTINGS
+// ============================================================================
+
 // CIRCUITPY-CHANGE: CircuitPython-specific settings
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
 #define MICROPY_PY_ASYNC_AWAIT (1)
@@ -61,7 +129,7 @@
 #define MICROPY_ALLOC_PATH_MAX      (256)
 #define MICROPY_PERSISTENT_CODE_LOAD (1)
 #define MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT (1)
-// MICROPY_READER_VFS is defined in mpconfigvariant_common.h
+// MICROPY_READER_VFS is defined in port-wide section above
 #define MICROPY_ENABLE_GC           (1)
 // CIRCUITPY-CHANGE: Enable selective GC collection
 #define MICROPY_ENABLE_SELECTIVE_COLLECT (1)
@@ -73,7 +141,7 @@
 #define MICROPY_WARNINGS            (1)
 // CIRCUITPY-CHANGE: Use mp_plat_print (stdout) for Python errors, keep stderr for JS/TS infrastructure
 #define MICROPY_ERROR_PRINTER       (&mp_plat_print)
-#define MICROPY_FLOAT_IMPL          (MICROPY_FLOAT_IMPL_DOUBLE)
+// MICROPY_FLOAT_IMPL is defined in port-wide section above (line 88)
 #define MICROPY_USE_INTERNAL_ERRNO  (1)
 #define MICROPY_USE_INTERNAL_PRINTF (0)
 #define MICROPY_PY_BOUND_METHOD_FULL_EQUALITY_CHECK (1)

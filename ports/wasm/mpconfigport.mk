@@ -1,3 +1,23 @@
+# ==============================================================================
+# WASM PORT MAKEFILE CONFIGURATION
+# ==============================================================================
+#
+# This file defines port-wide Makefile variables for the WebAssembly port.
+# These settings control which modules are compiled and linked into the build.
+#
+# FILE HIERARCHY:
+#   mpconfigport.mk         - This file: port-wide module enables (Makefile vars)
+#   mpconfigport.h          - Port-wide C preprocessor defines (MICROPY_*, CIRCUITPY_*)
+#   variants/*/mpconfigvariant.mk - Variant-specific Makefile overrides
+#   variants/*/mpconfigvariant.h  - Variant-specific C defines
+#
+# NOTE ON CIRCUITPY_FULL_BUILD:
+#   We don't set CIRCUITPY_FULL_BUILD=1 because that would enable ALL modules,
+#   many of which require hardware implementations we haven't created yet.
+#   Instead, we selectively enable modules below that work in WASM.
+#
+# ==============================================================================
+
 # Enable/disable modules and 3rd-party libs to be included in interpreter
 
 # This variable can take the following values:
@@ -60,6 +80,8 @@ CIRCUITPY_DIGITALIO = 1
 CIRCUITPY_MICROCONTROLLER = 1
 CIRCUITPY_NEOPIXEL_WRITE = 1
 CIRCUITPY_PWMIO = 1
+CIRCUITPY_ROTARYIO = 1
+CIRCUITPY_ROTARYIO_SOFTENCODER = 1
 CIRCUITPY_SUPERVISOR ?= 1
 CIRCUITPY_TIME = 1
 
@@ -104,6 +126,8 @@ CFLAGS += -DCIRCUITPY_OPT_MAP_LOOKUP_CACHE=$(CIRCUITPY_OPT_MAP_LOOKUP_CACHE)
 CFLAGS += -DCIRCUITPY_OS_GETENV=$(CIRCUITPY_OS_GETENV)
 CFLAGS += -DCIRCUITPY_PWMIO=$(CIRCUITPY_PWMIO)
 CFLAGS += -DCIRCUITPY_RE=$(CIRCUITPY_RE)
+CFLAGS += -DCIRCUITPY_ROTARYIO=$(CIRCUITPY_ROTARYIO)
+CFLAGS += -DCIRCUITPY_ROTARYIO_SOFTENCODER=$(CIRCUITPY_ROTARYIO_SOFTENCODER)
 CFLAGS += -DCIRCUITPY_SUPERVISOR=$(CIRCUITPY_SUPERVISOR)
 CFLAGS += -DCIRCUITPY_TIME=$(CIRCUITPY_TIME)
 CFLAGS += -DCIRCUITPY_ULAB=$(CIRCUITPY_ULAB)

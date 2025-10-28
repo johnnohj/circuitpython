@@ -24,11 +24,27 @@
  * THE SOFTWARE.
  */
 
-// Set base feature level.
+// ============================================================================
+// STANDARD VARIANT CONFIGURATION
+// ============================================================================
+//
+// This is the standard WASM variant - a lightweight build focused on
+// WebAssembly-specific features without the full CircuitPython supervisor.
+//
+// Differences from "integrated" variant:
+// - Lighter weight supervisor (filesystem_wasm vs full supervisor)
+// - No status bar (WASM has no physical LEDs)
+// - Optimized for browser/Node.js environments
+//
+// For full CircuitPython supervisor compatibility, use the "integrated"
+// variant instead.
+// ============================================================================
+
+// Set base feature level - full featured but optimized for WASM
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 
 // WASM has no physical status LEDs, disable status bar features
 #define CIRCUITPY_STATUS_BAR 0
 
-// Enable extra Unix features.
+// Include common variant settings (currently minimal, see that file for details)
 #include "../mpconfigvariant_common.h"

@@ -75,6 +75,8 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_get_i2c_state_ptr,\
 	_get_uart_state_ptr,\
 	_get_spi_state_ptr,\
+	_get_rotaryio_state_ptr,\
+	_rotaryio_update_encoder,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -127,7 +129,8 @@ SRC_LIB = \
 	library_analogio.js \
 	library_pwmio.js \
 	library_neopixel.js \
-	library_busio.js
+	library_busio.js \
+	library_rotaryio.js
 
 JSFLAGS += $(addprefix --js-library ,$(SRC_LIB))
 JSFLAGS += -s SUPPORT_LONGJMP=emscripten
@@ -180,6 +183,8 @@ SRC_BINDINGS = $(addprefix shared-bindings/,\
 	neopixel_write/__init__.c \
 	pwmio/PWMOut.c \
 	pwmio/__init__.c \
+	rotaryio/IncrementalEncoder.c \
+	rotaryio/__init__.c \
 	time/__init__.c \
 	util.c \
 	)
@@ -202,6 +207,8 @@ SRC_COMMON_HAL = $(addprefix common-hal/,\
 	peripherals/pins.c \
 	pwmio/PWMOut.c \
 	pwmio/__init__.c \
+	rotaryio/IncrementalEncoder.c \
+	rotaryio/__init__.c \
 	time/__init__.c \
 	)
 
