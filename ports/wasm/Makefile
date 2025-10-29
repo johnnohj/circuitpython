@@ -24,24 +24,23 @@ BUILD ?= build-$(VARIANT)
 
 # CIRCUITPY-CHANGE: Include CircuitPython build system
 include ../../py/mkenv.mk
+# Include port-specific configuration
+-include mpconfigport.mk
 include $(VARIANT_DIR)/mpconfigvariant.mk
 
 # Use the default frozen manifest, variants may override this.
+# CIRCUITPY-CHANGE: Disable frozen modules for now (can re-enable after rotaryio works)
 FROZEN_MANIFEST ?= variants/manifest.py
 
 # Qstr definitions (must come before including py.mk).
 QSTR_DEFS = qstrdefsport.h
+QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
 
-# Include port-specific configuration
-include mpconfigport.mk
-
-# CIRCUITPY-CHANGE: Include CircuitPython py core make definitions
-# Note: py.mk already includes extmod/extmod.mk, so we don't include it again
+# include py core make definitions
 include $(TOP)/py/py.mk
 
-# NOTE: We cannot include $(TOP)/py/circuitpy_defns.mk because it causes
-# duplicate symbol errors (uz lib, etc.). For now, only enable modules that
-# don't require additional source files or that are already in extmod.
+include $(TOP)/py/circuitpy_defns.mk
+
 
 ################################################################################
 # Project specific settings and compiler/linker flags.
@@ -58,6 +57,7 @@ INC += -I$(VARIANT_DIR)
 
 CFLAGS += -std=c99 -Wall -Werror -Wno-double-promotion -Wno-float-conversion
 CFLAGS += -Os -DNDEBUG
+CFLAGS += -g
 CFLAGS += $(INC)
 
 EXPORTED_FUNCTIONS_EXTRA += ,\
@@ -77,6 +77,7 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_get_spi_state_ptr,\
 	_get_rotaryio_state_ptr,\
 	_rotaryio_update_encoder,\
+	_analyze_code_structure,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -123,7 +124,7 @@ JSFLAGS += -s EXPORTED_RUNTIME_METHODS="\
 
 # Library modules - JavaScript bridge for C↔JS communication
 # Organized by CircuitPython module (supervisor, digitalio, analogio, etc.)
-SRC_LIB = \
+SRC_JS_LIB = \
 	library_supervisor.js \
 	library_digitalio.js \
 	library_analogio.js \
@@ -132,7 +133,7 @@ SRC_LIB = \
 	library_busio.js \
 	library_rotaryio.js
 
-JSFLAGS += $(addprefix --js-library ,$(SRC_LIB))
+JSFLAGS += $(addprefix --js-library ,$(SRC_JS_LIB))
 JSFLAGS += -s SUPPORT_LONGJMP=emscripten
 # CIRCUITPY-CHANGE: Use CircuitPython module name
 JSFLAGS += -s MODULARIZE -s EXPORT_NAME=_createCircuitPythonModule
@@ -156,63 +157,9 @@ SRC_SUPERVISOR = $(addprefix supervisor/shared/,\
 	tick.c \
 	translate/translate.c \
 	)
-SRC_SUPERVISOR += supervisor/port.c
-SRC_SUPERVISOR += supervisor/serial.c
-SRC_SUPERVISOR += supervisor/filesystem_wasm.c
-
-# CIRCUITPY-CHANGE: Manually add CircuitPython module sources
-SRC_BINDINGS = $(addprefix shared-bindings/,\
-	analogio/AnalogIn.c \
-	analogio/AnalogOut.c \
-	analogio/__init__.c \
-	board/__init__.c \
-	busio/I2C.c \
-	busio/SPI.c \
-	busio/UART.c \
-	busio/__init__.c \
-	digitalio/DigitalInOut.c \
-	digitalio/Direction.c \
-	digitalio/DriveMode.c \
-	digitalio/Pull.c \
-	digitalio/__init__.c \
-	microcontroller/Pin.c \
-	microcontroller/Processor.c \
-	microcontroller/ResetReason.c \
-	microcontroller/RunMode.c \
-	microcontroller/__init__.c \
-	neopixel_write/__init__.c \
-	pwmio/PWMOut.c \
-	pwmio/__init__.c \
-	rotaryio/IncrementalEncoder.c \
-	rotaryio/__init__.c \
-	time/__init__.c \
-	util.c \
-	)
-
-SRC_COMMON_HAL = $(addprefix common-hal/,\
-	analogio/AnalogIn.c \
-	analogio/AnalogOut.c \
-	analogio/__init__.c \
-	board/__init__.c \
-	busio/I2C.c \
-	busio/SPI.c \
-	busio/UART.c \
-	busio/__init__.c \
-	digitalio/DigitalInOut.c \
-	digitalio/__init__.c \
-	microcontroller/Pin.c \
-	microcontroller/Processor.c \
-	microcontroller/__init__.c \
-	neopixel_write/__init__.c \
-	peripherals/pins.c \
-	pwmio/PWMOut.c \
-	pwmio/__init__.c \
-	rotaryio/IncrementalEncoder.c \
-	rotaryio/__init__.c \
-	time/__init__.c \
-	)
 
 SRC_C += \
+	common-hal/peripherals/pins.c \
 	lexer_dedent.c \
 	main.c \
 	modjs.c \
@@ -220,9 +167,11 @@ SRC_C += \
 	mphalport.c \
 	objjsproxy.c \
 	proxy_c.c \
-
-# List of sources for qstr extraction.
-SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_SUPERVISOR) $(SRC_BINDINGS) $(SRC_COMMON_HAL)
+	supervisor/port.c \
+	supervisor/serial.c \
+	supervisor/filesystem_wasm.c \
+	supervisor/code_analysis.c \
+	$(SRC_MOD) \
 
 SRC_JS += \
 	virtual_clock.js \
@@ -233,12 +182,17 @@ SRC_JS += \
 
 # CIRCUITPY-CHANGE: Use assignment not append for first line (PY_O already includes extmod)
 OBJ = $(PY_O)
+OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_SHARED:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_SUPERVISOR:.c=.o))
-OBJ += $(addprefix $(BUILD)/, $(SRC_BINDINGS:.c=.o))
-OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL:.c=.o))
-OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
-OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED:.c=.o))
+
+$(BUILD)/$(FATFS_DIR)/ff.o: COPT += -Os
+$(filter $(PY_BUILD)/../extmod/vfs_fat_%.o, $(PY_O)): COPT += -Os
+
+# List of sources for qstr extraction.
+# Note: Use expanded versions with directory prefixes for file finding
+SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_SUPERVISOR) $(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED) 
 
 # Per-file compiler flags (to handle upstream CircuitPython code quirks)
 $(BUILD)/supervisor/shared/tick.o: CFLAGS += -Wno-unused-variable
@@ -252,7 +206,7 @@ $(BUILD)/supervisor/shared/tick.o: CFLAGS += -Wno-unused-variable
 all: $(BUILD)/circuitpython.mjs
 
 # Add Blinka character (U+E000) to banner after build
-$(BUILD)/circuitpython.mjs: $(OBJ) $(SRC_LIB) $(SRC_JS)
+$(BUILD)/circuitpython.mjs: $(OBJ) $(SRC_JS_LIB) $(SRC_JS)
 	$(ECHO) "LINK $@"
 	$(Q)emcc $(LDFLAGS) -o $@ $(OBJ) $(JSFLAGS)
 	$(Q)cat $(SRC_JS) >> $@

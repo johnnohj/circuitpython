@@ -207,48 +207,90 @@ void rotaryio_update_encoder(uint8_t encoder_index, uint8_t pin_a_state, uint8_t
 // ============================================================================
 // POSITION AND DIVISOR ACCESSORS
 // ============================================================================
-// Note: These are defined in shared-module/rotaryio/IncrementalEncoder.c
-// when CIRCUITPY_ROTARYIO_SOFTENCODER is enabled, but we need to ensure
-// our local position is synced with the state array.
+// Provided by common-hal since shared-bindings expects them here
 
-// Position getter - override shared-module version to sync with state array
 mp_int_t common_hal_rotaryio_incrementalencoder_get_position(rotaryio_incrementalencoder_obj_t *self) {
-    if (common_hal_rotaryio_incrementalencoder_deinited(self)) {
-        return 0;
-    }
-
-    // Sync from state array (may have been updated by JavaScript)
-    self->position = encoder_states[self->encoder_index].position;
     return self->position;
 }
 
-// Position setter - override shared-module version to sync with state array
-void common_hal_rotaryio_incrementalencoder_set_position(rotaryio_incrementalencoder_obj_t *self,
-    mp_int_t new_position) {
-    if (common_hal_rotaryio_incrementalencoder_deinited(self)) {
-        return;
-    }
-
-    self->position = new_position;
-    encoder_states[self->encoder_index].position = new_position;
+void common_hal_rotaryio_incrementalencoder_set_position(rotaryio_incrementalencoder_obj_t *self, mp_int_t position) {
+    self->position = position;
+    encoder_states[self->encoder_index].position = position;
 }
 
-// Divisor getter - override shared-module version to sync with state array
 mp_int_t common_hal_rotaryio_incrementalencoder_get_divisor(rotaryio_incrementalencoder_obj_t *self) {
-    if (common_hal_rotaryio_incrementalencoder_deinited(self)) {
-        return 4;
-    }
-
     return self->divisor;
 }
 
-// Divisor setter - override shared-module version to sync with state array
-void common_hal_rotaryio_incrementalencoder_set_divisor(rotaryio_incrementalencoder_obj_t *self,
-    mp_int_t new_divisor) {
-    if (common_hal_rotaryio_incrementalencoder_deinited(self)) {
-        return;
-    }
+void common_hal_rotaryio_incrementalencoder_set_divisor(rotaryio_incrementalencoder_obj_t *self, mp_int_t divisor) {
+    self->divisor = divisor;
+    encoder_states[self->encoder_index].divisor = divisor;
+}
 
-    self->divisor = new_divisor;
-    encoder_states[self->encoder_index].divisor = new_divisor;
+// ============================================================================
+// SHARED-MODULE SOFTENCODER FUNCTIONS
+// ============================================================================
+// These are normally provided by shared-module/rotaryio/IncrementalEncoder.c
+// but we implement them here for WASM to avoid duplicate symbols
+
+void shared_module_softencoder_state_init(rotaryio_incrementalencoder_obj_t *self, uint8_t quiescence_state) {
+    self->state = quiescence_state;
+    self->sub_count = 0;
+}
+
+void shared_module_softencoder_state_update(rotaryio_incrementalencoder_obj_t *self, uint8_t new_state) {
+    // Quadrature decoding state machine (2-bit gray code)
+    static const int8_t transitions[] = {
+        0,  // 00 -> 00: no change
+        -1, // 00 -> 01: CCW
+        +1, // 00 -> 10: CW
+        0,  // 00 -> 11: invalid
+
+        +1, // 01 -> 00: CW
+        0,  // 01 -> 01: no change
+        0,  // 01 -> 10: invalid
+        -1, // 01 -> 11: CCW
+
+        -1, // 10 -> 00: CCW
+        0,  // 10 -> 01: invalid
+        0,  // 10 -> 10: no change
+        +1, // 10 -> 11: CW
+
+        0,  // 11 -> 00: invalid
+        +1, // 11 -> 01: CW
+        -1, // 11 -> 10: CCW
+        0,  // 11 -> 11: no change
+    };
+
+    uint8_t index = (self->state << 2) | (new_state & 0x03);
+    self->state = new_state;
+
+    int8_t quarter_incr = transitions[index];
+    self->sub_count += quarter_incr;
+
+    if (self->divisor == 4) {
+        // Every transition counts
+        self->position += quarter_incr;
+    } else {
+        // divisor is 1 or 2
+        if (self->divisor == 1) {
+            // Full cycle = 4 quarter steps
+            if (self->sub_count >= 4) {
+                self->position += 1;
+                self->sub_count -= 4;
+            } else if (self->sub_count <= -4) {
+                self->position -= 1;
+                self->sub_count += 4;
+            }
+        } else {
+            // divisor == 2: half cycle = 2 quarter steps
+            if (self->sub_count >= 2) {
+                self->position += 1;
+                self->sub_count -= 2;
+            } else if (self->sub_count <= -2) {
+                self->position -= 1;
+                self->sub_count += 2;
+            }
+        }
+    }
 }

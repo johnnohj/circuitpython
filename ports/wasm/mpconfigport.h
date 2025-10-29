@@ -52,8 +52,8 @@
 #define MICROPY_OPT_MPZ_BITWISE     (1)
 
 // --- Reader configuration (port-wide) ---
-#define MICROPY_READER_POSIX        (1)
-#define MICROPY_READER_VFS          (1)
+#define MICROPY_READER_POSIX        (MICROPY_VFS)
+#define MICROPY_READER_VFS          (MICROPY_VFS)
 
 // --- Built-in help system (port-wide) ---
 #define MICROPY_PY_BUILTINS_HELP    (1)

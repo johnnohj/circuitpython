@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM - Interactive Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 5px;
+            padding: 15px;
+        }
+
+        h1 {
+            color: #4ec9b0;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        h2 {
+            color: #569cd6;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .editor {
+            width: 100%;
+            min-height: 400px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #3c3c3c;
+            border-radius: 3px;
+            padding: 10px;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        .console {
+            background: #0c0c0c;
+            color: #cccccc;
+            padding: 10px;
+            border-radius: 3px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .console-line {
+            margin: 2px 0;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+        }
+
+        .console-error {
+            color: #f48771;
+        }
+
+        .console-info {
+            color: #4ec9b0;
+        }
+
+        .button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px 5px 5px 0;
+            font-size: 14px;
+        }
+
+        .button:hover {
+            background: #1177bb;
+        }
+
+        .button:disabled {
+            background: #3c3c3c;
+            cursor: not-allowed;
+        }
+
+        .button.stop {
+            background: #a1260d;
+        }
+
+        .button.stop:hover {
+            background: #c1361d;
+        }
+
+        .stats {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .stats-label {
+            color: #858585;
+        }
+
+        .stats-value {
+            color: #4ec9b0;
+        }
+
+        .file-manager {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+            margin-top: 10px;
+        }
+
+        .file-list {
+            list-style: none;
+            margin: 10px 0;
+        }
+
+        .file-item {
+            padding: 5px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+
+        .file-item:hover {
+            background: #37373d;
+        }
+
+        .file-item.selected {
+            background: #094771;
+        }
+
+        .hardware-state {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        .hardware-item {
+            margin: 5px 0;
+            padding: 5px;
+            background: #1e1e1e;
+            border-radius: 3px;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #252526;
+            padding: 30px;
+            border-radius: 5px;
+            border: 1px solid #3c3c3c;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <h2>Loading CircuitPython WASM...</h2>
+        <p>Please wait...</p>
+    </div>
+
+    <div class="container" style="display: none;" id="main-app">
+        <div class="panel">
+            <h1>🐍 CircuitPython WASM</h1>
+
+            <h2>Code Editor</h2>
+            <div class="file-manager">
+                <label>Current File:
+                    <select id="file-select" onchange="loadSelectedFile()">
+                        <option value="">-- Select File --</option>
+                    </select>
+                </label>
+                <input type="file" id="file-upload" accept=".py" onchange="handleFileUpload(this)">
+                <button class="button" onclick="createNewFile()">New File</button>
+                <button class="button" onclick="saveCurrentFile()">Save</button>
+                <button class="button stop" onclick="clearStorage()">Clear Storage</button>
+            </div>
+
+            <textarea id="editor" class="editor" placeholder="# Write your CircuitPython code here...
+import board
+import digitalio
+import time
+
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
+
+while True:
+    led.value = not led.value
+    print('LED toggled!')
+    time.sleep(1)
+"></textarea>
+
+            <div>
+                <button class="button" onclick="runCode()" id="run-btn">▶️ Run</button>
+                <button class="button stop" onclick="stopCode()" id="stop-btn" disabled>⏹️ Stop</button>
+                <button class="button" onclick="reloadCode()" id="reload-btn" disabled>🔄 Reload</button>
+            </div>
+
+            <div class="stats" id="stats">
+                <div class="stats-row">
+                    <span class="stats-label">Status:</span>
+                    <span class="stats-value" id="status">Ready</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Mode:</span>
+                    <span class="stats-value" id="mode">-</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Iterations:</span>
+                    <span class="stats-value" id="iterations">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Current File:</span>
+                    <span class="stats-value" id="current-file">None</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>Console Output</h2>
+            <div class="console" id="console"></div>
+            <button class="button" onclick="clearConsole()">Clear Console</button>
+
+            <h2 style="margin-top: 20px;">Hardware State</h2>
+            <div class="hardware-state" id="hardware-state">
+                <div class="hardware-item">
+                    <strong>GPIO Pins:</strong> <span id="gpio-state">Not accessed yet</span>
+                </div>
+                <div class="hardware-item">
+                    <strong>Rotary Encoders:</strong> <span id="rotary-state">Not accessed yet</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="supervisor.js"></script>
+    <script>
+        let supervisor = null;
+        let wasmModule = null;
+
+        // Console logging
+        function log(message, type = 'info') {
+            const console = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = `console-line console-${type}`;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '';
+        }
+
+        // Override console.log to capture Python output
+        const originalLog = console.log;
+        console.log = function(...args) {
+            log(args.join(' '), 'info');
+            originalLog.apply(console, args);
+        };
+
+        console.error = function(...args) {
+            log(args.join(' '), 'error');
+        };
+
+        // Load CircuitPython WASM module
+        async function loadCircuitPython() {
+            try {
+                log('Loading CircuitPython WASM module...', 'info');
+
+                // Import the loadCircuitPython API
+                const { loadCircuitPython: loadCP } = await import('./build-standard/circuitpython.mjs');
+
+                // Load CircuitPython with proper initialization
+                wasmModule = await loadCP({
+                    heapsize: 1024 * 1024,  // 1MB heap
+                    stdout: (line) => log(line, 'info'),
+                    stderr: (line) => log(line, 'error'),
+                    verbose: true
+                });
+
+                log('CircuitPython WASM loaded!', 'info');
+                log('Initializing supervisor...', 'info');
+
+                // Create supervisor
+                supervisor = new CircuitPythonSupervisor(wasmModule);
+
+                // Check if code.py exists and has content
+                let existingCode = null;
+                try {
+                    existingCode = await supervisor.fs.read('code.py');
+                } catch (e) {
+                    // File doesn't exist, that's fine
+                }
+
+                if (!existingCode || existingCode.trim() === '') {
+                    // No code.py or it's empty - use default from editor placeholder
+                    const defaultCode = document.getElementById('editor').placeholder;
+                    await supervisor.fs.write('code.py', defaultCode);
+                    document.getElementById('editor').value = defaultCode;
+                    log('Created default code.py', 'info');
+                } else {
+                    // Load existing code.py into editor
+                    document.getElementById('editor').value = existingCode;
+                    log('Loaded existing code.py', 'info');
+                }
+
+                currentEditingFile = 'code.py'; // Track the initial file
+
+                log('Supervisor ready!', 'info');
+
+                // Hide loading, show app
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('main-app').style.display = 'grid';
+
+                updateFileList();
+                updateStats(); // Update stats to show current file
+
+            } catch (e) {
+                log(`Failed to load: ${e}`, 'error');
+                console.error(e);
+            }
+        }
+
+        // Track current file being edited
+        let currentEditingFile = null;
+
+        // Code execution
+        async function runCode() {
+            if (!supervisor) return;
+
+            try {
+                const code = document.getElementById('editor').value;
+
+                // If we're editing a specific file, load from that file
+                // Otherwise just run from string
+                if (currentEditingFile) {
+                    // Save current editor content to the file first
+                    await supervisor.fs.write(currentEditingFile, code);
+                    await supervisor.loadCodeFromFile(currentEditingFile);
+                } else {
+                    await supervisor.loadCodeFromString(code);
+                    supervisor.currentFile = '(editor)'; // Mark as unsaved
+                }
+
+                await supervisor.start();
+
+                document.getElementById('run-btn').disabled = true;
+                document.getElementById('stop-btn').disabled = false;
+                document.getElementById('reload-btn').disabled = false;
+
+                log('Code started!', 'info');
+
+                // Start stats update
+                setInterval(updateStats, 1000);
+
+            } catch (e) {
+                log(`Error: ${e}`, 'error');
+            }
+        }
+
+        function stopCode() {
+            if (!supervisor) return;
+
+            supervisor.stop();
+            document.getElementById('run-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = true;
+            document.getElementById('reload-btn').disabled = true;
+
+            log('Code stopped', 'info');
+            updateStats();
+        }
+
+        async function reloadCode() {
+            if (!supervisor) return;
+
+            log('Reloading...', 'info');
+            await supervisor.reload();
+            updateStats();
+        }
+
+        // File management
+        async function createNewFile() {
+            const filename = prompt('Enter filename:', 'code.py');
+            if (!filename) return;
+
+            const content = '# New file\nimport board\n\n';
+            await supervisor.fs.write(filename, content);
+            document.getElementById('editor').value = content;
+            currentEditingFile = filename; // Track the new file
+
+            updateFileList();
+            log(`Created ${filename}`, 'info');
+            updateStats(); // Update display
+        }
+
+        async function loadSelectedFile() {
+            const select = document.getElementById('file-select');
+            const filename = select.value;
+            if (!filename) return;
+
+            try {
+                const content = await supervisor.fs.read(filename);
+                document.getElementById('editor').value = content;
+                currentEditingFile = filename; // Track which file we're editing
+                log(`Loaded ${filename}`, 'info');
+                updateStats(); // Update the display immediately
+            } catch (e) {
+                log(`Error loading file: ${e}`, 'error');
+            }
+        }
+
+        async function saveCurrentFile() {
+            const select = document.getElementById('file-select');
+            let filename = select.value || currentEditingFile;
+
+            if (!filename) {
+                filename = prompt('Save as:', 'code.py');
+                if (!filename) return;
+            }
+
+            const content = document.getElementById('editor').value;
+            await supervisor.fs.write(filename, content);
+            currentEditingFile = filename; // Track the file we just saved to
+            updateFileList();
+            log(`Saved ${filename}`, 'info');
+            updateStats(); // Update display
+        }
+
+        async function handleFileUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const content = await file.text();
+            await supervisor.fs.write(file.name, content);
+            document.getElementById('editor').value = content;
+            currentEditingFile = file.name; // Track the uploaded file
+
+            updateFileList();
+            log(`Uploaded ${file.name}`, 'info');
+            updateStats(); // Update display
+        }
+
+        async function clearStorage() {
+            if (!confirm('Clear all stored files? This cannot be undone!')) return;
+
+            // Delete IndexedDB
+            indexedDB.deleteDatabase('CircuitPythonFS');
+
+            log('Storage cleared! Reloading page...', 'info');
+
+            // Reload page after short delay
+            setTimeout(() => {
+                location.reload();
+            }, 500);
+        }
+
+        async function updateFileList() {
+            if (!supervisor) return;
+
+            const files = await supervisor.fs.list('/');
+            const select = document.getElementById('file-select');
+
+            select.innerHTML = '<option value="">-- Select File --</option>';
+
+            for (const file of files.sort()) {
+                const option = document.createElement('option');
+                option.value = file;
+                option.textContent = file;
+                select.appendChild(option);
+            }
+        }
+
+        // Stats update
+        function updateStats() {
+            if (!supervisor) return;
+
+            const stats = supervisor.getStats();
+
+            document.getElementById('status').textContent = stats.running ? 'Running' : 'Stopped';
+            document.getElementById('mode').textContent = stats.hasLoop ? 'Loop Mode' : 'Run Once';
+            document.getElementById('iterations').textContent = stats.iterations;
+
+            // Show current file from supervisor (when running) or from editor tracking (when editing)
+            const displayFile = stats.currentFile || currentEditingFile || 'None';
+            document.getElementById('current-file').textContent = displayFile;
+
+            // Update hardware state
+            updateHardwareState();
+        }
+
+        function updateHardwareState() {
+            if (!wasmModule) return;
+
+            // Get the underlying Emscripten module
+            const mod = wasmModule._module || wasmModule;
+
+            try {
+                // Read GPIO state
+                const gpioPtr = mod._get_gpio_state_ptr?.();
+                if (gpioPtr) {
+                    const view = new DataView(mod.HEAPU8.buffer, gpioPtr, 64 * 8);
+                    let activePins = [];
+                    for (let i = 0; i < 64; i++) {
+                        const value = view.getUint8(i * 8);
+                        const direction = view.getUint8(i * 8 + 1);
+                        if (direction !== 0) { // Pin is configured
+                            activePins.push(`D${i}=${value}`);
+                        }
+                    }
+                    document.getElementById('gpio-state').textContent =
+                        activePins.length > 0 ? activePins.join(', ') : 'None active';
+                }
+
+                // Read rotary encoder state
+                const rotaryPtr = mod._get_rotaryio_state_ptr?.();
+                if (rotaryPtr) {
+                    const view = new DataView(mod.HEAPU8.buffer, rotaryPtr, 128);
+                    let encoders = [];
+                    for (let i = 0; i < 4; i++) {
+                        const enabled = view.getUint8(i * 32 + 12);
+                        if (enabled) {
+                            const position = view.getInt32(i * 32 + 4, true);
+                            encoders.push(`Enc${i}=${position}`);
+                        }
+                    }
+                    document.getElementById('rotary-state').textContent =
+                        encoders.length > 0 ? encoders.join(', ') : 'None active';
+                }
+            } catch (e) {
+                // State not available yet
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('load', loadCircuitPython);
+    </script>
+</body>
+</html>

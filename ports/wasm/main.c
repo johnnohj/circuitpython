@@ -39,9 +39,6 @@
 #include "extmod/vfs_posix.h"
 #include "shared/runtime/pyexec.h"
 
-// // CIRCUITPY-CHANGE: Background task support
-// #include "background.h"
-
 #include "emscripten.h"
 #include "lexer_dedent.h"
 #include "library.h"
@@ -95,9 +92,6 @@ void mp_js_init(int pystack_size, int heap_size) {
 
     mp_init();
 
-    // CIRCUITPY-CHANGE: Background task system initialized in port_init()
-    // (supervisor/port.c) per CircuitPython architecture
-
     #if MICROPY_VFS_POSIX
     {
         // Mount the host FS at the root of our internal VFS
@@ -150,6 +144,8 @@ void mp_js_do_import(const char *name, uint32_t *out) {
 
 void mp_js_do_exec(const char *src, size_t len, uint32_t *out) {
     external_call_depth_inc();
+    // TODO: support different input kinds, especially strings from the lexer
+    // as it identifies 'while True' loops and async tasks
     mp_parse_input_kind_t input_kind = MP_PARSE_FILE_INPUT;
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {

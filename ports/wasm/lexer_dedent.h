@@ -29,7 +29,7 @@
 #include "py/lexer.h"
 
 // This function creates a new "dedenting lexer" which automatically dedents the input
-// source code if every non-empty line in that source starts with a common whitespace
+// source code of every non-empty line in that source starts with a common whitespace
 // prefix.  It does this dedenting inplace as the memory is read.
 mp_lexer_t *mp_lexer_new_from_str_len_dedent(qstr src_name, const char *str, size_t len, size_t free_len);
 
