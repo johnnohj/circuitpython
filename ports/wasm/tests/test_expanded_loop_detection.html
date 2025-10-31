@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Expanded Loop Detection Test</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #4ec9b0; }
+        h2 { color: #569cd6; margin-top: 30px; }
+        .test-case {
+            margin: 20px 0;
+            padding: 15px;
+            background: #252526;
+            border-left: 4px solid #007acc;
+            border-radius: 4px;
+        }
+        .test-case h3 {
+            margin-top: 0;
+            color: #dcdcaa;
+        }
+        .code-block {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            white-space: pre;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #1e1e1e;
+            border-radius: 4px;
+        }
+        .pass { color: #4ec9b0; }
+        .fail { color: #f48771; }
+        .info { color: #569cd6; }
+        .loop-info {
+            margin: 5px 0;
+            padding: 5px 10px;
+            background: #2d2d30;
+            border-left: 3px solid #4ec9b0;
+        }
+        .loop-type-0 { border-left-color: #f48771; } /* WHILE_TRUE - red */
+        .loop-type-1 { border-left-color: #ce9178; } /* WHILE_NUMERIC - orange */
+        .loop-type-2 { border-left-color: #dcdcaa; } /* WHILE_GENERAL - yellow */
+        .loop-type-3 { border-left-color: #4ec9b0; } /* FOR_GENERAL - cyan */
+        .loop-type-4 { border-left-color: #569cd6; } /* FOR_RANGE - blue */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #3e3e42;
+        }
+        th {
+            background: #2d2d30;
+            color: #4ec9b0;
+        }
+        #summary {
+            margin: 20px 0;
+            padding: 15px;
+            background: #2d2d30;
+            border-radius: 4px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Expanded Loop Detection Test</h1>
+    <div id="summary">Loading CircuitPython WASM...</div>
+    <div id="results"></div>
+
+    <script type="module">
+        import { loadCircuitPython } from '../build-standard/circuitpython.mjs';
+
+        const LoopTypeNames = {
+            0: 'WHILE_TRUE',
+            1: 'WHILE_NUMERIC',
+            2: 'WHILE_GENERAL',
+            3: 'FOR_GENERAL',
+            4: 'FOR_RANGE'
+        };
+
+        const testCases = [
+            {
+                name: 'Single while True loop',
+                code: `counter = 0
+while True:
+    print(counter)
+    counter += 1`,
+                expectedLoops: [{type: 0, line: 2}]
+            },
+            {
+                name: 'while 1 loop',
+                code: `i = 0
+while 1:
+    print(i)
+    i += 1`,
+                expectedLoops: [{type: 1, line: 2}]
+            },
+            {
+                name: 'while condition loop',
+                code: `x = 10
+while x > 0:
+    print(x)
+    x -= 1`,
+                expectedLoops: [{type: 2, line: 2}]
+            },
+            {
+                name: 'Simple for loop',
+                code: `for i in [1, 2, 3]:
+    print(i)`,
+                expectedLoops: [{type: 3, line: 1}]
+            },
+            {
+                name: 'Multiple loops - mixed types',
+                code: `while True:
+    print("infinite")
+
+for x in range(10):
+    print(x)
+
+count = 5
+while count > 0:
+    print(count)
+    count -= 1`,
+                expectedLoops: [
+                    {type: 0, line: 1},  // while True
+                    {type: 3, line: 4},  // for in range
+                    {type: 2, line: 8}   // while count > 0
+                ]
+            },
+            {
+                name: 'Nested loops',
+                code: `for i in range(3):
+    for j in range(3):
+        print(i, j)`,
+                expectedLoops: [
+                    {type: 3, line: 1},  // outer for
+                    {type: 3, line: 2}   // inner for
+                ]
+            },
+            {
+                name: 'Complex while condition',
+                code: `while x < 10 and y > 0:
+    x += 1
+    y -= 1`,
+                expectedLoops: [{type: 2, line: 1}]
+            },
+            {
+                name: 'For loop with enumerate',
+                code: `for i, val in enumerate([1, 2, 3]):
+    print(i, val)`,
+                expectedLoops: [{type: 3, line: 1}]
+            },
+            {
+                name: 'No loops',
+                code: `x = 10
+print(x)
+y = x + 5`,
+                expectedLoops: []
+            }
+        ];
+
+        function displayLoopInfo(analysis) {
+            let html = '<table><tr><th>Type</th><th>Line</th><th>Column</th><th>Needs Instrumentation</th></tr>';
+
+            for (const loop of analysis.loops) {
+                const typeName = LoopTypeNames[loop.loopType] || `UNKNOWN(${loop.loopType})`;
+                html += `<tr>
+                    <td class="loop-type-${loop.loopType}">${typeName}</td>
+                    <td>${loop.line}</td>
+                    <td>${loop.column}</td>
+                    <td>${loop.needsInstrumentation ? '✓' : '✗'}</td>
+                </tr>`;
+            }
+
+            html += '</table>';
+            return html;
+        }
+
+        function runTest(cp, testCase, index) {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'test-case';
+
+            let html = `<h3>Test ${index + 1}: ${testCase.name}</h3>`;
+            html += `<div class="code-block">${testCase.code}</div>`;
+
+            try {
+                const analysis = cp.analyzeCode(testCase.code);
+
+                html += `<div class="result">`;
+                html += `<div class="info">Detected ${analysis.loopCount} loop(s)</div>`;
+
+                if (analysis.loopCount > 0) {
+                    html += displayLoopInfo(analysis);
+                }
+
+                // Validate expected loops
+                let pass = true;
+                if (analysis.loopCount !== testCase.expectedLoops.length) {
+                    pass = false;
+                    html += `<div class="fail">✗ Expected ${testCase.expectedLoops.length} loops, got ${analysis.loopCount}</div>`;
+                } else {
+                    for (let i = 0; i < testCase.expectedLoops.length; i++) {
+                        const expected = testCase.expectedLoops[i];
+                        const actual = analysis.loops[i];
+
+                        if (actual.loopType !== expected.type) {
+                            pass = false;
+                            html += `<div class="fail">✗ Loop ${i + 1}: Expected type ${LoopTypeNames[expected.type]}, got ${LoopTypeNames[actual.loopType]}</div>`;
+                        }
+                        if (actual.line !== expected.line) {
+                            pass = false;
+                            html += `<div class="fail">✗ Loop ${i + 1}: Expected line ${expected.line}, got ${actual.line}</div>`;
+                        }
+                    }
+                }
+
+                if (pass) {
+                    html += `<div class="pass">✓ PASS</div>`;
+                }
+
+                // Show legacy fields for backward compatibility check
+                html += `<div style="margin-top: 10px; padding: 10px; background: #1e1e1e;">`;
+                html += `<strong>Legacy Fields:</strong><br>`;
+                html += `hasWhileTrueLoop: ${analysis.hasWhileTrueLoop}<br>`;
+                html += `tokenCount: ${analysis.tokenCount}`;
+                html += `</div>`;
+
+                html += `</div>`;
+
+                return { pass, html };
+
+            } catch (error) {
+                html += `<div class="result"><div class="fail">✗ Error: ${error.message}</div></div>`;
+                return { pass: false, html };
+            }
+        }
+
+        async function runAllTests() {
+            try {
+                const cp = await loadCircuitPython({ verbose: true });
+                console.log('CircuitPython loaded successfully');
+
+                const results = document.getElementById('results');
+                let passCount = 0;
+
+                for (let i = 0; i < testCases.length; i++) {
+                    const result = runTest(cp, testCases[i], i);
+                    if (result.pass) passCount++;
+
+                    const div = document.createElement('div');
+                    div.innerHTML = result.html;
+                    results.appendChild(div);
+                }
+
+                const summary = document.getElementById('summary');
+                const allPass = passCount === testCases.length;
+                summary.innerHTML = allPass
+                    ? `<span class="pass">✓ All ${testCases.length} tests passed!</span>`
+                    : `<span class="fail">${passCount}/${testCases.length} tests passed</span>`;
+
+            } catch (error) {
+                document.getElementById('summary').innerHTML =
+                    `<span class="fail">Failed to load CircuitPython: ${error.message}</span>`;
+                console.error('Test error:', error);
+            }
+        }
+
+        runAllTests();
+    </script>
+</body>
+</html>

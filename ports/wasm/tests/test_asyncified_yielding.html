@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Asyncified Variant - True Cooperative Yielding Test</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #4ec9b0; }
+        h2 { color: #569cd6; margin-top: 30px; }
+
+        #animation-container {
+            margin: 20px 0;
+            padding: 20px;
+            background: #252526;
+            border-radius: 8px;
+        }
+
+        #animation-bar {
+            width: 100%;
+            height: 40px;
+            background: linear-gradient(90deg, #f48771 0%, #ce9178 50%, #dcdcaa 100%);
+            border-radius: 4px;
+            transition: transform 0.1s;
+        }
+
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #252526;
+            border-left: 4px solid #f48771;
+            border-radius: 4px;
+        }
+
+        .test-section.pass { border-left-color: #4ec9b0; }
+        .test-section.running { border-left-color: #dcdcaa; }
+
+        .code-block {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            white-space: pre;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+
+        .output {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .stat-box {
+            padding: 12px;
+            background: #2d2d30;
+            border-radius: 4px;
+            border-left: 3px solid #4ec9b0;
+            text-align: center;
+        }
+
+        .stat-label {
+            color: #858585;
+            font-size: 11px;
+            margin-bottom: 3px;
+        }
+
+        .stat-value {
+            color: #4ec9b0;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .pass { color: #4ec9b0; }
+        .fail { color: #f48771; }
+        .info { color: #569cd6; }
+        .warn { color: #dcdcaa; }
+
+        #summary {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2d2d30;
+            border-radius: 4px;
+            font-size: 18px;
+        }
+
+        .feature-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            margin: 2px;
+            background: #2d2d30;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .feature-badge.yes { background: #0e639c; color: white; }
+        .feature-badge.no { background: #3e3e42; color: #858585; }
+    </style>
+</head>
+<body>
+    <h1>Asyncified Variant - True Cooperative Yielding Test</h1>
+
+    <div style="padding: 15px; background: #2d2d30; border-radius: 4px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: #f48771;">ASYNCIFY Features</h3>
+        <div>
+            <span class="feature-badge yes">✓ Full State Preservation</span>
+            <span class="feature-badge yes">✓ Loop Iterators</span>
+            <span class="feature-badge yes">✓ Generators</span>
+            <span class="feature-badge yes">✓ Nested Loops</span>
+            <span class="feature-badge yes">✓ For Loops</span>
+            <span class="feature-badge yes">✓ Complex Conditions</span>
+        </div>
+        <p style="margin: 10px 0 0 0; color: #858585; font-size: 13px;">
+            Unlike the integrated variant (exception-based), ASYNCIFY preserves ALL execution state.
+            These tests would FAIL with the integrated variant!
+        </p>
+    </div>
+
+    <div id="animation-container">
+        <h3>Browser Responsiveness Indicator</h3>
+        <div id="animation-bar"></div>
+        <p class="info">Smooth animation = browser not frozen = ASYNCIFY working!</p>
+    </div>
+
+    <div id="summary">Loading CircuitPython WASM (asyncified variant)...</div>
+
+    <div id="tests-container"></div>
+
+    <script type="module">
+        // IMPORTANT: Load from build-asyncified directory!
+        import { loadCircuitPython } from '../build-asyncified/circuitpython.mjs';
+
+        // Animation to prove browser isn't frozen
+        let animationPos = 0;
+        setInterval(() => {
+            animationPos = (animationPos + 1) % 100;
+            const bar = document.getElementById('animation-bar');
+            if (bar) {
+                bar.style.transform = `translateX(${animationPos}%)`;
+            }
+        }, 16); // ~60fps
+
+        const testCases = [
+            {
+                name: 'Test 1: Simple while True (baseline)',
+                description: 'Basic infinite loop - should work in all variants',
+                code: `counter = 0
+while True:
+    print(f"Count: {counter}")
+    counter += 1
+    if counter >= 1000:
+        break`,
+                timeout: 5000
+            },
+            {
+                name: 'Test 2: For loop with range (state preservation)',
+                description: 'Tests that loop iterator position is preserved across yields',
+                code: `total = 0
+for i in range(10000):
+    total += i
+    if i % 100 == 0:
+        print(f"Progress: i={i}, total={total}")
+print(f"Final: total={total}")`,
+                timeout: 5000
+            },
+            {
+                name: 'Test 3: Generator with yield (generator state)',
+                description: 'Tests that generator state is preserved - FAILS in integrated variant!',
+                code: `def fibonacci():
+    a, b = 0, 1
+    count = 0
+    while count < 100:
+        yield a
+        a, b = b, a + b
+        count += 1
+
+for i, fib in enumerate(fibonacci()):
+    if i % 10 == 0:
+        print(f"fibonacci({i}) = {fib}")`,
+                timeout: 5000
+            },
+            {
+                name: 'Test 4: Nested loops (complex state)',
+                description: 'Tests nested loop state preservation - FAILS in integrated variant!',
+                code: `outer_sum = 0
+for i in range(50):
+    inner_sum = 0
+    for j in range(50):
+        inner_sum += j
+    outer_sum += inner_sum
+    if i % 10 == 0:
+        print(f"Outer {i}: inner_sum={inner_sum}, outer_sum={outer_sum}")
+print(f"Final outer_sum: {outer_sum}")`,
+                timeout: 5000
+            },
+            {
+                name: 'Test 5: For loop with enumerate (tuple unpacking)',
+                description: 'Tests iterator with tuple unpacking - FAILS in integrated variant!',
+                code: `items = ['apple', 'banana', 'cherry'] * 100
+for idx, item in enumerate(items):
+    if idx % 50 == 0:
+        print(f"Item {idx}: {item}")
+print(f"Processed {len(items)} items")`,
+                timeout: 5000
+            },
+            {
+                name: 'Test 6: While loop with complex condition',
+                description: 'Tests while loop with multi-variable state',
+                code: `x = 0
+y = 100
+while x < 1000 and y > 0:
+    x += 1
+    y -= 1
+    if x % 100 == 0:
+        print(f"x={x}, y={y}")
+print(f"Final: x={x}, y={y}")`,
+                timeout: 5000
+            }
+        ];
+
+        async function runTest(cp, testCase, index) {
+            const container = document.getElementById('tests-container');
+            const section = document.createElement('div');
+            section.className = 'test-section running';
+            section.id = `test-${index}`;
+
+            let html = `<h2>${testCase.name}</h2>`;
+            html += `<p class="info">${testCase.description}</p>`;
+            html += `<div class="code-block">${testCase.code}</div>`;
+            html += `<div class="stats">`;
+            html += `<div class="stat-box"><div class="stat-label">Status</div><div class="stat-value info" id="status-${index}">Running...</div></div>`;
+            html += `<div class="stat-box"><div class="stat-label">Duration</div><div class="stat-value" id="duration-${index}">0ms</div></div>`;
+            html += `<div class="stat-box"><div class="stat-label">Yields</div><div class="stat-value" id="yields-${index}">0</div></div>`;
+            html += `</div>`;
+            html += `<div class="output" id="output-${index}"></div>`;
+
+            section.innerHTML = html;
+            container.appendChild(section);
+
+            const outputDiv = document.getElementById(`output-${index}`);
+            const statusDiv = document.getElementById(`status-${index}`);
+            const durationDiv = document.getElementById(`duration-${index}`);
+            const yieldsDiv = document.getElementById(`yields-${index}`);
+
+            let outputLines = [];
+            const startTime = Date.now();
+
+            // Capture console output
+            const originalLog = console.log;
+            console.log = (...args) => {
+                const line = args.join(' ');
+                outputLines.push(line);
+                if (outputLines.length > 20) {
+                    outputLines.shift();
+                }
+                outputDiv.innerHTML = outputLines.map(l => `<div>${l}</div>`).join('');
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+                originalLog(...args);
+            };
+
+            try {
+                const result = await Promise.race([
+                    cp.runPythonAsync(testCase.code),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('timeout')), testCase.timeout)
+                    )
+                ]);
+
+                console.log = originalLog;
+
+                const duration = Date.now() - startTime;
+                durationDiv.textContent = duration + 'ms';
+
+                // Get ASYNCIFY statistics
+                const yieldCount = cp._module._wasm_get_asyncify_yield_count ?
+                    cp._module._wasm_get_asyncify_yield_count() : 0;
+                const hookCalls = cp._module._wasm_get_asyncify_hook_calls ?
+                    cp._module._wasm_get_asyncify_hook_calls() : 0;
+                yieldsDiv.textContent = `${yieldCount} (${hookCalls} calls)`;
+
+                statusDiv.textContent = '✓ Pass';
+                statusDiv.className = 'stat-value pass';
+                section.className = 'test-section pass';
+
+                console.log(`${testCase.name} completed successfully in ${duration}ms (${yieldCount} yields)`);
+
+            } catch (error) {
+                console.log = originalLog;
+
+                const duration = Date.now() - startTime;
+                durationDiv.textContent = duration + 'ms';
+
+                if (error.message === 'timeout') {
+                    statusDiv.textContent = '✗ Timeout';
+                    statusDiv.className = 'stat-value warn';
+                    section.className = 'test-section fail';
+                    console.error(`${testCase.name} timed out after ${duration}ms`);
+                } else {
+                    statusDiv.textContent = '✗ Error';
+                    statusDiv.className = 'stat-value fail';
+                    section.className = 'test-section fail';
+                    console.error(`${testCase.name} error:`, error);
+                    outputDiv.innerHTML += `<div class="fail">Error: ${error.message}</div>`;
+                }
+            }
+        }
+
+        async function runAllTests() {
+            try {
+                const cp = await loadCircuitPython({
+                    verbose: false,
+                    stdout: (line) => {
+                        // CircuitPython output goes to console.log
+                    }
+                });
+
+                console.log('✓ CircuitPython loaded (asyncified variant)');
+                console.log('✓ ASYNCIFY enabled:', typeof cp._module.Asyncify !== 'undefined');
+                console.log('✓ emscripten_sleep available:', typeof cp._module._emscripten_sleep !== 'undefined');
+
+                const summary = document.getElementById('summary');
+                summary.innerHTML = '<span class="info">Running ASYNCIFY tests...</span>';
+
+                // Run tests sequentially
+                for (let i = 0; i < testCases.length; i++) {
+                    await runTest(cp, testCases[i], i);
+                }
+
+                summary.innerHTML = '<span class="pass">✓ All ASYNCIFY tests completed!</span>';
+
+            } catch (error) {
+                document.getElementById('summary').innerHTML =
+                    `<span class="fail">Failed to load CircuitPython: ${error.message}</span>`;
+                console.error('Setup error:', error);
+            }
+        }
+
+        runAllTests();
+    </script>
+</body>
+</html>

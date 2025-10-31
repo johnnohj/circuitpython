@@ -1,3 +1,3 @@
-# This is the default variant when you `make` the WASM port.
+
 JSFLAGS += -s ALLOW_MEMORY_GROWTH
 FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py

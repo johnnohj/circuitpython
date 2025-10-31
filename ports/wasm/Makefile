@@ -22,7 +22,6 @@ endif
 # If the build directory is not given, make it reflect the variant name.
 BUILD ?= build-$(VARIANT)
 
-# CIRCUITPY-CHANGE: Include CircuitPython build system
 include ../../py/mkenv.mk
 # Include port-specific configuration
 -include mpconfigport.mk
@@ -36,10 +35,12 @@ FROZEN_MANIFEST ?= variants/manifest.py
 QSTR_DEFS = qstrdefsport.h
 QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
 
+include $(TOP)/py/circuitpy_defns.mk
+
 # include py core make definitions
 include $(TOP)/py/py.mk
 
-include $(TOP)/py/circuitpy_defns.mk
+
 
 
 ################################################################################
@@ -67,7 +68,6 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_board_serial_input_available,\
 	_board_serial_set_output_callback,\
 	_board_serial_repl_process_string,\
-	_get_virtual_clock_hw_ptr,\
 	_get_gpio_state_ptr,\
 	_get_analog_state_ptr,\
 	_get_pwm_state_ptr,\
@@ -77,7 +77,6 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_get_spi_state_ptr,\
 	_get_rotaryio_state_ptr,\
 	_rotaryio_update_encoder,\
-	_analyze_code_structure,\
 	_mp_js_do_exec,\
 	_mp_js_do_exec_async,\
 	_mp_js_do_import,\
@@ -96,10 +95,13 @@ EXPORTED_FUNCTIONS_EXTRA += ,\
 	_proxy_c_to_js_lookup_attr,\
 	_proxy_c_to_js_resume,\
 	_proxy_c_to_js_store_attr,\
-	_proxy_convert_mp_to_js_obj_cside
+	_proxy_convert_mp_to_js_obj_cside,\
+	_supervisor_tick_from_js
 
 EXPORTED_RUNTIME_METHODS_EXTRA += ,\
 	HEAPU8,\
+	HEAPU32,\
+	HEAP32,\
 	PATH,\
 	PATH_FS,\
 	UTF8ToString,\
@@ -110,6 +112,7 @@ EXPORTED_RUNTIME_METHODS_EXTRA += ,\
 
 JSFLAGS += -s EXPORTED_FUNCTIONS="\
 	_free,\
+	_main,\
 	_malloc,\
 	_mp_js_init,\
 	_mp_js_repl_init,\
@@ -124,14 +127,15 @@ JSFLAGS += -s EXPORTED_RUNTIME_METHODS="\
 
 # Library modules - JavaScript bridge for C↔JS communication
 # Organized by CircuitPython module (supervisor, digitalio, analogio, etc.)
-SRC_JS_LIB = \
+SRC_JS_LIB = $(addprefix src/library/,\
 	library_supervisor.js \
 	library_digitalio.js \
 	library_analogio.js \
 	library_pwmio.js \
 	library_neopixel.js \
 	library_busio.js \
-	library_rotaryio.js
+	library_rotaryio.js \
+)
 
 JSFLAGS += $(addprefix --js-library ,$(SRC_JS_LIB))
 JSFLAGS += -s SUPPORT_LONGJMP=emscripten
@@ -170,15 +174,14 @@ SRC_C += \
 	supervisor/port.c \
 	supervisor/serial.c \
 	supervisor/filesystem_wasm.c \
-	supervisor/code_analysis.c \
 	$(SRC_MOD) \
 
-SRC_JS += \
-	virtual_clock.js \
+SRC_JS += $(addprefix src/core/,\
 	filesystem.js \
 	api.js \
 	objpyproxy.js \
 	proxy_js.js \
+)
 
 # CIRCUITPY-CHANGE: Use assignment not append for first line (PY_O already includes extmod)
 OBJ = $(PY_O)
@@ -187,8 +190,6 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_SHARED:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_SUPERVISOR:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED:.c=.o))
 
-$(BUILD)/$(FATFS_DIR)/ff.o: COPT += -Os
-$(filter $(PY_BUILD)/../extmod/vfs_fat_%.o, $(PY_O)): COPT += -Os
 
 # List of sources for qstr extraction.
 # Note: Use expanded versions with directory prefixes for file finding

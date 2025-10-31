@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "emscripten.h"
 #include "py/builtin.h"
@@ -236,9 +237,48 @@ void proxy_convert_mp_to_js_exc_cside(void *exc, uint32_t *out) {
     vstr_t vstr;
     mp_print_t print;
     vstr_init_print(&vstr, 64, &print);
-    vstr_add_str(&vstr, qstr_str(mp_obj_get_type(MP_OBJ_FROM_PTR(exc))->name));
+
+    // Try to get exception type name first (safer operation)
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        vstr_add_str(&vstr, qstr_str(mp_obj_get_type(MP_OBJ_FROM_PTR(exc))->name));
+        nlr_pop();
+    } else {
+        // Even getting the type name failed
+        vstr_add_str(&vstr, "UnknownException");
+    }
+
     vstr_add_char(&vstr, '\x04');
-    mp_obj_print_exception(&print, MP_OBJ_FROM_PTR(exc));
+
+    // Now try to format the exception details
+    // We use a simpler approach than mp_obj_print_exception to avoid
+    // potential recursion issues
+    if (nlr_push(&nlr) == 0) {
+        mp_obj_t exc_obj = MP_OBJ_FROM_PTR(exc);
+        mp_obj_exception_t *exc_instance = MP_OBJ_TO_PTR(exc_obj);
+
+        // If exception has args, format them
+        if (exc_instance->args->len > 0) {
+            mp_obj_t arg0 = exc_instance->args->items[0];
+
+            // Check if it's a simple string - most common case
+            if (mp_obj_is_str(arg0)) {
+                const char *str = mp_obj_str_get_str(arg0);
+                vstr_add_str(&vstr, str);
+            } else {
+                // For non-string args, use print helper
+                mp_obj_print_helper(&print, arg0, PRINT_REPR);
+            }
+        } else {
+            vstr_add_str(&vstr, "(no message)");
+        }
+
+        nlr_pop();
+    } else {
+        // Exception details formatting failed - provide fallback
+        vstr_add_str(&vstr, "(details unavailable)");
+    }
+
     char *s = malloc(vstr_len(&vstr) + 1);
     memcpy(s, vstr_str(&vstr), vstr_len(&vstr));
     out[1] = vstr_len(&vstr);

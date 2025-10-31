@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Code Analysis - Simple</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+        pre { background: #0c0c0c; padding: 10px; border-radius: 5px; }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .info { color: #569cd6; }
+    </style>
+</head>
+<body>
+    <h1>Code Analysis Test - Simple API</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        const output = document.getElementById('output');
+
+        function log(msg, className = 'info') {
+            const div = document.createElement('div');
+            div.className = className;
+            div.textContent = msg;
+            output.appendChild(div);
+        }
+
+        async function test() {
+            try {
+                log('Loading CircuitPython WASM...');
+                const { loadCircuitPython } = await import('./build-standard/circuitpython.mjs');
+
+                const cp = await loadCircuitPython({
+                    heapsize: 512 * 1024
+                });
+
+                log('✓ WASM loaded', 'success');
+
+                // Test 1: Check if wrapper function exists
+                if (typeof cp.analyzeCode === 'function') {
+                    log('✓ analyzeCode() wrapper exists!', 'success');
+                } else {
+                    log('✗ analyzeCode() NOT found', 'error');
+                    log('Available: ' + Object.keys(cp).filter(k => k.includes('analyze')).join(', '));
+                    return;
+                }
+
+                // Test 2: Analyze code with while True loop
+                const testCode1 = `
+import time
+
+count = 0
+while True:
+    count += 1
+    print(count)
+    time.sleep(1)
+`;
+
+                log('\n=== Test 1: Code with while True ===');
+                log('Code:', 'info');
+                log(testCode1);
+
+                const result1 = cp.analyzeCode(testCode1);
+                if (result1) {
+                    log('Analysis Result:', 'info');
+                    log(JSON.stringify(result1, null, 2));
+
+                    if (result1.hasWhileTrueLoop && result1.whileTrueLine === 5) {
+                        log('✅ SUCCESS! Correctly detected while True at line 5', 'success');
+                    } else {
+                        log(`✗ FAILED: Expected while True at line 5, got line ${result1.whileTrueLine}`, 'error');
+                    }
+                } else {
+                    log('✗ analyzeCode returned null', 'error');
+                }
+
+                // Test 3: Analyze code without while True
+                const testCode2 = `
+for i in range(10):
+    print(i)
+print("Done")
+`;
+
+                log('\n=== Test 2: Code without while True ===');
+                log('Code:', 'info');
+                log(testCode2);
+
+                const result2 = cp.analyzeCode(testCode2);
+                if (result2) {
+                    log('Analysis Result:', 'info');
+                    log(JSON.stringify(result2, null, 2));
+
+                    if (!result2.hasWhileTrueLoop) {
+                        log('✅ SUCCESS! Correctly detected no while True loop', 'success');
+                    } else {
+                        log('✗ FAILED: False positive for while True', 'error');
+                    }
+                } else {
+                    log('✗ analyzeCode returned null', 'error');
+                }
+
+                // Test 4: Test syntax validation
+                log('\n=== Test 3: Syntax Validation ===');
+
+                const validCode = 'print("hello")';
+                const invalidCode = 'print("hello"';
+
+                const isValid1 = cp.isValidPythonSyntax(validCode);
+                const isValid2 = cp.isValidPythonSyntax(invalidCode);
+
+                log(`Valid code check: ${isValid1 ? '✓ PASS' : '✗ FAIL'}`, isValid1 ? 'success' : 'error');
+                log(`Invalid code check: ${!isValid2 ? '✓ PASS' : '✗ FAIL'}`, !isValid2 ? 'success' : 'error');
+
+                log('\n=== All Tests Complete ===', 'success');
+
+            } catch (e) {
+                log('✗ Error: ' + e.message, 'error');
+                console.error(e);
+            }
+        }
+
+        test();
+    </script>
+</body>
+</html>

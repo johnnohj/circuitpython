@@ -34,6 +34,7 @@
 #include <stdint.h>
 #include <stdlib.h> // for malloc, for MICROPY_GC_SPLIT_HEAP_AUTO
 #include <errno.h>  // for errno used throughout the codebase
+#include <stdbool.h>
 
 // Variant-specific definitions.
 #include "mpconfigvariant.h"
@@ -73,7 +74,6 @@
 // --- Debugging and error handling (port-wide) ---
 #define MICROPY_DEBUG_PRINTERS      (1)
 #define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF (1)
-#define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE (256)
 
 // --- Memory and GC settings (port-wide) ---
 #define MICROPY_ALLOC_PARSE_CHUNK_INIT (16)
@@ -202,6 +202,7 @@
 #endif
 
 // CIRCUITPY-CHANGE: Background tasks hook
+// TODO: Implement cooperative yielding - for now use no-op to verify basic functionality
 #define RUN_BACKGROUND_TASKS ((void)0)
 
 // type definitions for the specific machine
@@ -215,9 +216,6 @@
 typedef int mp_int_t; // must be pointer size
 typedef unsigned mp_uint_t; // must be pointer size
 typedef long mp_off_t;
-
-#define MICROPY_HW_BOARD_NAME "WebAssembly"
-#define MICROPY_HW_MCU_NAME "Emscripten"
 
 // CIRCUITPY-CHANGE: Single processor for WASM
 #define CIRCUITPY_PROCESSOR_COUNT (1)

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Code Analysis Export</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+        pre { background: #0c0c0c; padding: 10px; border-radius: 5px; }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+    </style>
+</head>
+<body>
+    <h1>Test Code Analysis Export</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        const output = document.getElementById('output');
+
+        function log(msg, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error' : 'success';
+            div.textContent = msg;
+            output.appendChild(div);
+        }
+
+        async function test() {
+            try {
+                log('Loading CircuitPython WASM...');
+                const { loadCircuitPython } = await import('./build-standard/circuitpython.mjs');
+
+                const cp = await loadCircuitPython({
+                    heapsize: 512 * 1024
+                });
+
+                log('✓ WASM loaded');
+
+                // Get the actual WASM Module
+                const Module = cp._module;
+
+                // Test 1: Check if function exists
+                if (typeof Module._analyze_code_structure === 'function') {
+                    log('✓ _analyze_code_structure function exists!');
+                } else {
+                    log('✗ _analyze_code_structure NOT found', true);
+                    log('Available functions: ' + Object.keys(Module).filter(k => k.includes('analyze')).join(', '));
+                    return;
+                }
+
+                // Test 2: Try calling it
+                const testCode = `
+import time
+
+count = 0
+while True:
+    count += 1
+    print(count)
+    time.sleep(1)
+`;
+
+                log('\nTesting with code:');
+                log(testCode);
+
+                // Allocate memory for the code string
+                const len = Module.lengthBytesUTF8(testCode);
+                const codePtr = Module._malloc(len + 1);
+                Module.stringToUTF8(testCode, codePtr, len + 1);
+
+                log(`\nAllocated ${len} bytes for code at ${codePtr.toString(16)}`);
+
+                // Call analyze_code_structure
+                const resultPtr = Module._analyze_code_structure(codePtr, len);
+
+                if (resultPtr) {
+                    log(`✓ analyze_code_structure returned pointer: 0x${resultPtr.toString(16)}`);
+
+                    // Read the result struct
+                    // typedef struct {
+                    //     bool has_while_true_loop;     // offset 0, size 1
+                    //     size_t while_true_line;       // offset 4 (aligned), size 4
+                    //     size_t while_true_column;     // offset 8, size 4
+                    //     bool has_async_def;           // offset 12, size 1
+                    //     bool has_await;               // offset 13, size 1
+                    //     bool has_asyncio_run;         // offset 14, size 1
+                    //     int token_count;              // offset 16 (aligned), size 4
+                    // } code_structure_t;
+
+                    const has_while_true = Module.HEAPU8[resultPtr];
+                    const while_true_line = Module.HEAPU32[(resultPtr + 4) / 4];
+                    const while_true_column = Module.HEAPU32[(resultPtr + 8) / 4];
+                    const has_async_def = Module.HEAPU8[resultPtr + 12];
+                    const has_await = Module.HEAPU8[resultPtr + 13];
+                    const has_asyncio_run = Module.HEAPU8[resultPtr + 14];
+                    const token_count = Module.HEAP32[(resultPtr + 16) / 4];
+
+                    log('\n=== Code Analysis Results ===');
+                    log(`has_while_true_loop: ${!!has_while_true}`);
+                    log(`while_true_line: ${while_true_line}`);
+                    log(`while_true_column: ${while_true_column}`);
+                    log(`has_async_def: ${!!has_async_def}`);
+                    log(`has_await: ${!!has_await}`);
+                    log(`has_asyncio_run: ${!!has_asyncio_run}`);
+                    log(`token_count: ${token_count}`);
+
+                    // Verify results
+                    if (has_while_true && while_true_line === 5) {
+                        log('\n✅ SUCCESS! Correctly detected while True: at line 5');
+                    } else {
+                        log(`\n✗ FAILED: Expected while True at line 5, got line ${while_true_line}`, true);
+                    }
+                } else {
+                    log('✗ analyze_code_structure returned NULL', true);
+                }
+
+                // Clean up
+                Module._free(codePtr);
+                log('\n✓ Freed allocated memory');
+
+            } catch (e) {
+                log('✗ Error: ' + e.message, true);
+                console.error(e);
+            }
+        }
+
+        test();
+    </script>
+</body>
+</html>

@@ -46,5 +46,3 @@
 // WASM has no physical status LEDs, disable status bar features
 #define CIRCUITPY_STATUS_BAR 0
 
-// Include common variant settings (currently minimal, see that file for details)
-#include "../mpconfigvariant_common.h"

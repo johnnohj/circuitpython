@@ -4,61 +4,76 @@
 //
 // SPDX-License-Identifier: MIT
 
-// WASM port supervisor implementation with virtual timing
+// WASM port supervisor implementation with cooperative yielding
 
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 #include <emscripten.h>
 
 #include "supervisor/background_callback.h"
 #include "supervisor/port.h"
 #include "shared-bindings/microcontroller/__init__.h"
 #include "supervisor/shared/safe_mode.h"
+#include "supervisor/shared/tick.h"
 #include "common-hal/microcontroller/Pin.h"
 #include "common-hal/digitalio/DigitalInOut.h"
 #include "common-hal/analogio/AnalogIn.h"
+#include "proxy_c.h"
 
 // =============================================================================
-// VIRTUAL CLOCK - The "hardware" for WASM timing
+// COOPERATIVE YIELDING STATE
 // =============================================================================
-// This represents the virtual crystal oscillator, accessible to JavaScript
-// JavaScript writes to ticks_32khz to advance virtual time
 
-typedef struct {
-    uint64_t ticks_32khz;         // Virtual 32kHz crystal counter
-    uint32_t cpu_frequency_hz;    // Simulated CPU frequency
-    uint8_t time_mode;            // 0=realtime, 1=controlled
-    uint64_t wasm_yields_count;   // Statistics
-    uint64_t js_ticks_count;      // Statistics
-} virtual_clock_hw_t;
+static volatile uint64_t wasm_yields_count = 0;
+volatile bool wasm_should_yield_to_js = false;
+static uint32_t wasm_bytecode_count = 0;
+static double last_yield_time = 0;
 
-// Global instance accessible to both WASM and JavaScript
-EMSCRIPTEN_KEEPALIVE volatile virtual_clock_hw_t virtual_clock_hw = {
-    .ticks_32khz = 0,
-    .cpu_frequency_hz = 120000000,  // Default 120 MHz
-    .time_mode = 0,  // Realtime by default
-    .wasm_yields_count = 0,
-    .js_ticks_count = 0,
-};
+// Tunable parameters - adjust based on testing
+// NOTE: mp_js_hook is called every 10 bytecodes (MICROPY_VM_HOOK_COUNT = 10)
+// ASYNCIFY has limits - yield LESS frequently to avoid "unreachable" errors
+// Longer intervals = fewer unwind/rewind cycles = more stability
+#define HOOK_CALLS_PER_YIELD 100     // Check timing every 100 hook calls (1000 bytecodes)
+#define YIELD_INTERVAL_MS 100.0      // Yield every ~100ms (less frequent = more stable)
 
-// Expose pointer for JavaScript/library.js
-EMSCRIPTEN_KEEPALIVE
-void* get_virtual_clock_hw_ptr(void) {
-    return (void*)&virtual_clock_hw;
+// Called from RUN_BACKGROUND_TASKS macro (defined in mpconfigport.h)
+// This is the heart of the cooperative yielding system
+void wasm_check_yield_point(void) {
+    wasm_bytecode_count++;
+
+    // Only check time periodically to reduce overhead
+    if (wasm_bytecode_count >= HOOK_CALLS_PER_YIELD) {
+        double now = emscripten_get_now();
+
+        // Yield if enough time has passed
+        if (now - last_yield_time >= YIELD_INTERVAL_MS) {
+            wasm_should_yield_to_js = true;
+            wasm_bytecode_count = 0;
+            last_yield_time = now;
+        } else {
+            // Reset counter but don't yield yet
+            wasm_bytecode_count = 0;
+        }
+    }
 }
 
-// Helper to read ticks
-static inline uint64_t read_virtual_ticks_32khz(void) {
-    return virtual_clock_hw.ticks_32khz;
+// Called from JavaScript to reset yield state before each iteration
+EMSCRIPTEN_KEEPALIVE
+void wasm_reset_yield_state(void) {
+    wasm_should_yield_to_js = false;
+    wasm_bytecode_count = 0;
+}
+
+// Query yield state from JavaScript (for debugging)
+EMSCRIPTEN_KEEPALIVE
+bool wasm_get_yield_state(void) {
+    return wasm_should_yield_to_js;
 }
 
 // =============================================================================
 // PIN INITIALIZATION
 // =============================================================================
-//
-// WASM port: Single default board with all 64 GPIO pins enabled
-// All pins have full capabilities (digital I/O, analog, PWM, I2C, SPI, UART)
-// No profile system - just maximum flexibility for browser-based development
 
 // Enable all 64 GPIO pins at startup
 void enable_all_pins(void) {
@@ -78,7 +93,7 @@ void enable_all_pins(void) {
 }
 
 // =============================================================================
-// Port Initialization
+// PORT INITIALIZATION AND RESET
 // =============================================================================
 
 safe_mode_t port_init(void) {
@@ -87,6 +102,9 @@ safe_mode_t port_init(void) {
 
     // Reset peripherals to safe state
     reset_port();
+
+    // Initialize yield timing
+    last_yield_time = emscripten_get_now();
 
     return SAFE_MODE_NONE;
 }
@@ -111,24 +129,20 @@ void reset_port(void) {
     busio_reset_uart_state();       // All UART ports → disabled
     busio_reset_spi_state();        // All SPI buses → disabled
 
-    // NOTE: We don't reset virtual_clock_hw.ticks_32khz
-    // The tick counter is like a hardware crystal oscillator that keeps
-    // running across resets. Resetting it would break time.monotonic()
-    // continuity between REPL sessions.
+    // NOTE: We don't reset raw_ticks (the tick counter used by time.monotonic())
+    // Like a hardware crystal oscillator, it keeps running across soft resets
+    // to maintain time continuity between REPL sessions.
 }
 
 void reset_to_bootloader(void) {
     // In WASM, "bootloader mode" is repurposed for profile loading/switching
-    // The next_profile_id has already been set by common_hal_mcu_on_next_reset()
-    // On next reset, port_init() will apply the new profile
-
     // For now, loop forever (actual reset happens via JavaScript)
     while (true) {
     }
 }
 
 void reset_cpu(void) {
-    // Handled by common-hal/microcontroller/__init__.c (sends MSG_TYPE_MCU_RESET)
+    // Handled by JavaScript
     while (true) {
     }
 }
@@ -164,49 +178,66 @@ uint32_t port_get_saved_word(void) {
 }
 
 // =============================================================================
-// VIRTUAL TIMING - THE HEART OF THE DUAL CLOCK SYSTEM
+// TIMING AND TICK MANAGEMENT
 // =============================================================================
-//
-// This is like Renode's Simple32kHz.cs - JavaScript controls the virtual
-// crystal oscillator by directly writing to shared memory.
-//
-// WASM reads the counter instantly (no message queue!) just like reading
-// from hardware address 0x40001000 in Renode.
-//
-// The supervisor converts these raw ticks to milliseconds:
-//   supervisor_ticks_ms64() = (raw_ticks * 1000) / 1024
-//
 
-uint64_t port_get_raw_ticks(uint8_t *subticks) {
-    // Read from shared memory - instant, no yielding!
-    // JavaScript increments virtual_clock_hw.ticks_32khz
-    uint64_t ticks_32khz = read_virtual_ticks_32khz();
+static volatile uint64_t raw_ticks = 0;
 
-    // Convert 32kHz to 1024Hz (like all CircuitPython ports)
-    uint64_t ticks_1024hz = ticks_32khz / 32;
+// Called from JavaScript setInterval(1ms)
+// This simulates the hardware tick interrupt
+// IMPORTANT: Only ticks when not executing Python to avoid nlr_jump_fail crashes
+EMSCRIPTEN_KEEPALIVE
+void supervisor_tick_from_js(void) {
+    raw_ticks++;
 
-    // Optionally return sub-tick precision (0-31)
-    if (subticks != NULL) {
-        *subticks = (uint8_t)(ticks_32khz % 32);
-    }
+    // TEMPORARILY DISABLED to test if this is causing crashes
+    // Only tick if we're not currently executing Python code
+    // if (external_call_depth_get() == 0) {
+    //     supervisor_tick();  // Safe to trigger background tasks
+    // }
 
-    return ticks_1024hz;
+    // Don't call supervisor_tick at all for now - just accumulate ticks
 }
 
-static volatile bool ticks_enabled = false;
+uint64_t port_get_raw_ticks(uint8_t* subticks) {
+    if (subticks) *subticks = 0;
+    return raw_ticks;
+}
+
+void port_background_tick(void) {
+    // Called from supervisor_tick() in interrupt-like context
+    // Keep this FAST - just set flags
+    // Actual work happens in port_background_task()
+}
+
+void port_start_background_tick(void) {
+    // No-op for WASM - ticks come from JavaScript
+}
+
+void port_finish_background_tick(void) {
+    // Update yield statistics
+    wasm_yields_count++;
+}
+
+// =============================================================================
+// BACKGROUND TASKS - RUNS BETWEEN BYTECODES
+// =============================================================================
+
+void port_background_task(void) {
+    // Called by background_callback_run_all() in supervisor/shared/background_callback.c
+    // This is called BEFORE running the callback queue and happens *very* often
+    // Keep this lightweight!
+    
+    // Service virtual hardware (if needed)
+    // In future: Web Serial, canvas updates, etc.
+}
+
+// =============================================================================
+// IDLE AND YIELD POINTS
+// =============================================================================
+
 static volatile bool _woken_up = false;
 
-// Enable 1/1024 second tick
-void port_enable_tick(void) {
-    ticks_enabled = true;
-}
-
-// Disable 1/1024 second tick
-void port_disable_tick(void) {
-    ticks_enabled = false;
-}
-
-// Called by sleep functions
 void port_interrupt_after_ticks(uint32_t ticks) {
     _woken_up = false;
     // In WASM, JavaScript advances virtual time during yields
@@ -214,55 +245,29 @@ void port_interrupt_after_ticks(uint32_t ticks) {
 }
 
 void port_idle_until_interrupt(void) {
-    // In WASM, this is where we yield to JavaScript
-    // JavaScript can then:
-    // 1. Advance virtual time
-    // 2. Process hardware events
-    // 3. Handle user input
+    // In WASM, we can't truly idle - just check for yield
+    // In real hardware this would be __WFI() (wait for interrupt)
     common_hal_mcu_disable_interrupts();
-    if (!background_callback_pending() && !_woken_up) {
-        // Yield point - JavaScript event loop runs here
-        // In real hardware this would be __WFI() (wait for interrupt)
+    if (!background_callback_pending() && !wasm_should_yield_to_js) {
+        // Could yield to JavaScript here
     }
     common_hal_mcu_enable_interrupts();
 }
 
 void port_yield(void) {
     // Another yield point for JavaScript
+    // Currently a no-op, but could set wasm_should_yield_to_js
 }
 
 void port_boot_info(void) {
     // Could log to JavaScript console
 }
 
-// Background task hooks
-void port_start_background_tick(void) {
-}
-
-void port_finish_background_tick(void) {
-    // Update yield statistics
-    virtual_clock_hw.wasm_yields_count++;
-}
-
-void port_background_tick(void) {
-    // Called during RUN_BACKGROUND_TASKS
-    // JavaScript can process events here
-}
-
-void port_background_task(void) {
-    // Called by background_callback_run_all() in supervisor/shared/background_callback.c
-    // This is called BEFORE running the callback queue and happens *very* often
-    // Use port_background_tick() when possible
-
-    // No message queue - JavaScript reads/writes state arrays directly
-}
-
 // =============================================================================
-// SUPERVISOR UTILITY FUNCTIONS (from supervisor_stubs.c)
+// SUPERVISOR UTILITY FUNCTIONS
 // =============================================================================
 
 #include <time.h>
-#include <emscripten.h>
 #include "supervisor/shared/translate/translate.h"
 
 // Forward declare types
@@ -285,11 +290,10 @@ void assert_heap_ok(void) {
     // No-op in WASM
 }
 
-// Note: Filesystem functions (filesystem_is_writable_by_python, filesystem_set_writable_by_usb, etc.)
-// are now provided by supervisor/filesystem_wasm.c
+// =============================================================================
+// FAT FILESYSTEM SUPPORT
+// =============================================================================
 
-// FAT filesystem timestamp function
-// Returns a packed date/time value in FAT format
 uint32_t get_fattime(void) {
     // Get current time in milliseconds since epoch
     double now_ms = emscripten_get_now();
@@ -301,28 +305,89 @@ uint32_t get_fattime(void) {
     if (timeinfo == NULL) {
         // Fallback to a fixed date if time conversion fails
         // 2024-01-01 00:00:00
-        return ((uint32_t)(44 << 25) | (1 << 21) | (1 << 16));
+        return ((2024 - 1980) << 25) | (1 << 21) | (1 << 16);
     }
 
-    // FAT timestamp format:
-    // Year: 7 bits (0-127, representing 1980-2107)
-    // Month: 4 bits (1-12)
-    // Day: 5 bits (1-31)
-    // Hour: 5 bits (0-23)
-    // Minute: 6 bits (0-59)
-    // Second: 5 bits (0-29, representing 0-58 in 2-second intervals)
+    // FAT timestamp format (packed 32-bit):
+    // Bits 31-25: Year (0 = 1980, 127 = 2107)
+    // Bits 24-21: Month (1-12)
+    // Bits 20-16: Day (1-31)
+    // Bits 15-11: Hour (0-23)
+    // Bits 10-5:  Minute (0-59)
+    // Bits 4-0:   Second/2 (0-29)
 
-    uint32_t year = (timeinfo->tm_year + 1900) - 1980; // tm_year is years since 1900
-    uint32_t month = timeinfo->tm_mon + 1;             // tm_mon is 0-11
-    uint32_t day = timeinfo->tm_mday;                  // 1-31
-    uint32_t hour = timeinfo->tm_hour;                 // 0-23
-    uint32_t minute = timeinfo->tm_min;                // 0-59
-    uint32_t second = timeinfo->tm_sec / 2;            // 0-29 (2-second resolution)
+    uint32_t year = (timeinfo->tm_year + 1900) - 1980;  // tm_year is years since 1900
+    uint32_t month = timeinfo->tm_mon + 1;              // tm_mon is 0-11
+    uint32_t day = timeinfo->tm_mday;                   // 1-31
+    uint32_t hour = timeinfo->tm_hour;                  // 0-23
+    uint32_t minute = timeinfo->tm_min;                 // 0-59
+    uint32_t second = timeinfo->tm_sec / 2;             // 0-29 (FAT uses 2-second resolution)
 
-    return ((year & 0x7F) << 25) |
-           ((month & 0x0F) << 21) |
-           ((day & 0x1F) << 16) |
-           ((hour & 0x1F) << 11) |
-           ((minute & 0x3F) << 5) |
-           (second & 0x1F);
+    return (year << 25) | (month << 21) | (day << 16) |
+           (hour << 11) | (minute << 5) | second;
 }
+
+// =============================================================================
+// DEBUGGING AND STATISTICS
+// =============================================================================
+
+// Get yield statistics (callable from JavaScript)
+EMSCRIPTEN_KEEPALIVE
+uint64_t wasm_get_yield_count(void) {
+    return wasm_yields_count;
+}
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t wasm_get_bytecode_count(void) {
+    return wasm_bytecode_count;
+}
+
+EMSCRIPTEN_KEEPALIVE
+double wasm_get_last_yield_time(void) {
+    return last_yield_time;
+}
+
+// =============================================================================
+// ASYNCIFY-BASED COOPERATIVE YIELDING (asyncified variant only)
+// =============================================================================
+
+#ifdef EMSCRIPTEN_ASYNCIFY_ENABLED
+// For asyncified variant: C implementation that can yield via ASYNCIFY
+// Called from JavaScript library's mp_js_hook() wrapper
+
+static volatile uint64_t asyncify_yields_count = 0;
+static volatile uint64_t asyncify_hook_calls = 0;
+
+EMSCRIPTEN_KEEPALIVE
+void mp_js_hook_asyncify_impl(void) {
+    asyncify_hook_calls++;  // Track every call for debugging
+
+    // Check if it's time to yield based on timing
+    wasm_check_yield_point();
+
+    // If we should yield, use emscripten_sleep to yield to event loop
+    if (wasm_should_yield_to_js) {
+        // Reset yield state before sleeping
+        wasm_should_yield_to_js = false;
+
+        // Increment yield counter for debugging
+        asyncify_yields_count++;
+
+        // Yield to JavaScript event loop - this is the magic!
+        // ASYNCIFY will unwind the stack, run JS tasks, then rewind
+        emscripten_sleep(0);  // Sleep for 0ms = just yield and resume
+    }
+}
+
+// Get ASYNCIFY yield statistics (callable from JavaScript)
+EMSCRIPTEN_KEEPALIVE
+uint64_t wasm_get_asyncify_yield_count(void) {
+    return asyncify_yields_count;
+}
+
+EMSCRIPTEN_KEEPALIVE
+uint64_t wasm_get_asyncify_hook_calls(void) {
+    return asyncify_hook_calls;
+}
+
+#endif  // EMSCRIPTEN_ASYNCIFY_ENABLED

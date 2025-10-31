@@ -78,6 +78,8 @@ CIRCUITPY_MESSAGE_COMPRESSION_LEVEL = 1
 MICROPY_EMIT_NATIVE = 0
 
 # Enable modules that we have implemented or that work without hardware
+CIRCUITPY_BOARD = 1
+CIRCUITPY_BUSDEVICE = 1  # Software wrapper around busio
 CIRCUITPY_ANALOGIO = 1
 CIRCUITPY_BUSIO = 1
 CIRCUITPY_BUSIO_SPI = 1
@@ -92,10 +94,6 @@ CIRCUITPY_TIME = 1
 
 # Enable ulab for scientific computing (pure software module)
 CIRCUITPY_ULAB = 1
-
-# Enable useful utility modules that don't require hardware
-# NOTE: Cannot enable aesio, atexit, busdevice, codeop, locale, msgpack, traceback
-# because they require circuitpy_defns.mk which causes duplicate symbol errors
 
 # Pure optimization flags (no source files needed)
 CIRCUITPY_BUILTINS_POW3 = 1

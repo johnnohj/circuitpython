@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CircuitPython WASM - Cooperative Yielding Test</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 { color: #4ec9b0; }
+        h2 { color: #569cd6; margin-top: 20px; }
+        .panel {
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .console {
+            background: #0c0c0c;
+            color: #cccccc;
+            padding: 10px;
+            border-radius: 3px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .button:hover { background: #1177bb; }
+        .button:disabled {
+            background: #3c3c3c;
+            cursor: not-allowed;
+        }
+        .stats {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        .stats div {
+            margin: 5px 0;
+        }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .warning { color: #dcdcaa; }
+        #animation-indicator {
+            width: 100%;
+            height: 30px;
+            background: linear-gradient(90deg, #0e639c 0%, #1177bb 50%, #0e639c 100%);
+            background-size: 200% 100%;
+            animation: slide 2s linear infinite;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        @keyframes slide {
+            0% { background-position: 0% 0; }
+            100% { background-position: 200% 0; }
+        }
+    </style>
+</head>
+<body>
+    <h1>🐍 CircuitPython WASM - Cooperative Yielding Test</h1>
+
+    <div class="panel">
+        <h2>Animation Test (proves non-blocking execution)</h2>
+        <div id="animation-indicator"></div>
+        <p>If this bar animates smoothly while Python is running, cooperative yielding is working!</p>
+    </div>
+
+    <div class="panel">
+        <h2>Test Controls</h2>
+        <button class="button" onclick="runSimpleTest()" id="test1">Test 1: Simple Print</button>
+        <button class="button" onclick="runLoopTest()" id="test2">Test 2: Loop (10 iterations)</button>
+        <button class="button" onclick="runComputeTest()" id="test3">Test 3: Heavy Computation</button>
+        <button class="button" onclick="runInfiniteTest()" id="test4">Test 4: Infinite Loop</button>
+        <button class="button" onclick="stopTest()" id="stop-btn" disabled>⏹️ Stop</button>
+        <button class="button" onclick="clearConsole()">Clear Console</button>
+    </div>
+
+    <div class="panel">
+        <h2>Statistics</h2>
+        <div class="stats" id="stats">
+            <div>Status: <span id="status">Loading...</span></div>
+            <div>Yield Count: <span id="yield-count">0</span></div>
+            <div>Bytecode Count: <span id="bytecode-count">0</span></div>
+            <div>Last Yield Time: <span id="last-yield">0ms</span></div>
+            <div>Frame Time: <span id="frame-time">0ms</span></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Console Output</h2>
+        <div class="console" id="console"></div>
+    </div>
+
+    <script type="module">
+        let wasmModule = null;
+        let running = false;
+        let frameTimeStart = 0;
+
+        // Console logging
+        function log(message, type = 'info') {
+            const console = document.getElementById('console');
+            const line = document.createElement('div');
+            line.style.color = type === 'error' ? '#f48771' :
+                              type === 'success' ? '#4ec9b0' :
+                              type === 'warning' ? '#dcdcaa' : '#cccccc';
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+        }
+        window.log = log;
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '';
+        }
+        window.clearConsole = clearConsole;
+
+        // Load CircuitPython WASM
+        async function loadWASM() {
+            try {
+                log('Loading CircuitPython WASM module...', 'info');
+
+                const { loadCircuitPython } = await import('../build-standard/circuitpython.mjs');
+
+                wasmModule = await loadCircuitPython({
+                    heapsize: 512 * 1024,  // 512KB heap
+                    stdout: (line) => log(`>>> ${line}`, 'success'),
+                    stderr: (line) => log(`!!! ${line}`, 'error'),
+                    verbose: false
+                });
+
+                log('CircuitPython WASM loaded successfully!', 'success');
+                document.getElementById('status').textContent = 'Ready';
+                document.getElementById('status').className = 'success';
+
+                // Start stats update
+                setInterval(updateStats, 100);
+
+                // Start frame time tracking
+                trackFrameTime();
+
+            } catch (e) {
+                log(`Failed to load: ${e}`, 'error');
+                console.error(e);
+                document.getElementById('status').textContent = 'Failed';
+                document.getElementById('status').className = 'error';
+            }
+        }
+
+        // Track frame time to show responsiveness
+        function trackFrameTime() {
+            frameTimeStart = performance.now();
+            requestAnimationFrame(() => {
+                const frameTime = performance.now() - frameTimeStart;
+                document.getElementById('frame-time').textContent = `${frameTime.toFixed(1)}ms`;
+                trackFrameTime();
+            });
+        }
+
+        // Update stats
+        function updateStats() {
+            if (!wasmModule || !wasmModule._module) return;
+
+            const mod = wasmModule._module;
+
+            try {
+                // Call WASM functions to get stats
+                const yieldCount = mod._wasm_get_yield_count?.() || 0;
+                const bytecodeCount = mod._wasm_get_bytecode_count?.() || 0;
+                const lastYield = mod._wasm_get_last_yield_time?.() || 0;
+
+                document.getElementById('yield-count').textContent = yieldCount;
+                document.getElementById('bytecode-count').textContent = bytecodeCount;
+                document.getElementById('last-yield').textContent = `${lastYield.toFixed(1)}ms`;
+            } catch (e) {
+                // Functions not available yet
+            }
+        }
+
+        // Test 1: Simple print
+        window.runSimpleTest = function() {
+            if (!wasmModule) return;
+            log('Running Test 1: Simple Print', 'warning');
+
+            try {
+                wasmModule.runPython('print("Hello from CircuitPython WASM!")');
+                wasmModule.runPython('print("Cooperative yielding test")');
+                wasmModule.runPython('print("=" * 40)');
+                log('Test 1 completed!', 'success');
+            } catch (e) {
+                log(`Test 1 failed: ${e}`, 'error');
+            }
+        };
+
+        // Test 2: Loop with yields
+        window.runLoopTest = function() {
+            if (!wasmModule) return;
+            log('Running Test 2: Loop (10 iterations)', 'warning');
+
+            const code = `
+for i in range(10):
+    print(f"Iteration {i+1}/10")
+print("Loop complete!")
+`;
+
+            try {
+                wasmModule.runPython(code);
+                log('Test 2 completed!', 'success');
+            } catch (e) {
+                log(`Test 2 failed: ${e}`, 'error');
+            }
+        };
+
+        // Test 3: Heavy computation
+        window.runComputeTest = function() {
+            if (!wasmModule) return;
+            log('Running Test 3: Heavy Computation (should yield to keep UI responsive)', 'warning');
+
+            const code = `
+# Compute fibonacci numbers (slow but demonstrates yielding)
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n-1) + fib(n-2)
+
+print("Computing Fibonacci numbers...")
+for i in range(1, 15):
+    result = fib(i)
+    print(f"fib({i}) = {result}")
+print("Computation complete!")
+`;
+
+            try {
+                wasmModule.runPython(code);
+                log('Test 3 completed!', 'success');
+            } catch (e) {
+                log(`Test 3 failed: ${e}`, 'error');
+            }
+        };
+
+        // Test 4: Infinite loop (tests yielding and stop functionality)
+        window.runInfiniteTest = function() {
+            if (!wasmModule) return;
+            log('Running Test 4: Infinite Loop (watch the yield counter!)', 'warning');
+            log('Click STOP to terminate', 'warning');
+
+            document.getElementById('stop-btn').disabled = false;
+            running = true;
+
+            const code = `
+counter = 0
+while True:
+    counter += 1
+    if counter % 1000 == 0:
+        print(f"Counter: {counter}")
+`;
+
+            try {
+                wasmModule.runPython(code);
+            } catch (e) {
+                log(`Test 4 ended: ${e}`, 'error');
+            } finally {
+                running = false;
+                document.getElementById('stop-btn').disabled = true;
+            }
+        };
+
+        // Stop test
+        window.stopTest = function() {
+            log('Stop requested (would need VM interrupt support)', 'warning');
+            running = false;
+            document.getElementById('stop-btn').disabled = true;
+        };
+
+        // Initialize
+        window.addEventListener('load', loadWASM);
+    </script>
+</body>
+</html>

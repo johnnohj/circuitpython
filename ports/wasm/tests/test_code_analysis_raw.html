@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Code Analysis - Raw C API</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+    </style>
+</head>
+<body>
+    <h1>Code Analysis - Raw C API Test</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        const output = document.getElementById('output');
+
+        function log(msg, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error' : 'success';
+            div.textContent = msg;
+            output.appendChild(div);
+        }
+
+        async function test() {
+            try {
+                log('Loading CircuitPython WASM...');
+                const { loadCircuitPython } = await import('./build-standard/circuitpython.mjs');
+
+                const cp = await loadCircuitPython({
+                    heapsize: 512 * 1024
+                });
+
+                log('✓ WASM loaded');
+
+                // Access the raw Module
+                const Module = cp._module;
+
+                // Simple test code
+                const testCode = 'while True:\n    pass';
+
+                log(`Testing with: "${testCode}"`);
+
+                // Step 1: Allocate memory for code string
+                const len = Module.lengthBytesUTF8(testCode);
+                log(`String length: ${len} bytes`);
+
+                const codePtr = Module._malloc(len + 1);
+                if (!codePtr) {
+                    log('✗ malloc failed!', true);
+                    return;
+                }
+                log(`✓ Allocated ${len + 1} bytes at 0x${codePtr.toString(16)}`);
+
+                // Step 2: Copy string to WASM memory
+                Module.stringToUTF8(testCode, codePtr, len + 1);
+                log('✓ String copied to WASM memory');
+
+                // Step 3: Call analyze_code_structure
+                log('Calling _analyze_code_structure...');
+                const resultPtr = Module._analyze_code_structure(codePtr, len);
+
+                if (!resultPtr) {
+                    log('✗ _analyze_code_structure returned NULL', true);
+                } else {
+                    log(`✓ Got result pointer: 0x${resultPtr.toString(16)}`);
+
+                    // Read the result
+                    const hasWhileTrue = Module.HEAPU8[resultPtr];
+                    log(`has_while_true_loop: ${!!hasWhileTrue}`);
+                }
+
+                // Step 4: Try to free the code pointer
+                log('Attempting to free code pointer...');
+                try {
+                    Module._free(codePtr);
+                    log('✓ Successfully freed code pointer');
+                } catch (e) {
+                    log(`✗ Error during free: ${e.message}`, true);
+                    throw e;
+                }
+
+                log('\n=== Test Complete ===');
+
+            } catch (e) {
+                log(`✗ Error: ${e.message}`, true);
+                console.error(e);
+            }
+        }
+
+        test();
+    </script>
+</body>
+</html>

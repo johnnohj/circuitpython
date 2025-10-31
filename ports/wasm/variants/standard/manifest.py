@@ -1,1 +1,1 @@
-include("$(PORT_DIR)/variants/manifest.py")
+# include("$(PORT_DIR)/variants/manifest.py")
