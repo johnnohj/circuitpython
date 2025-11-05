@@ -36,6 +36,9 @@
 #include <errno.h>  // for errno used throughout the codebase
 #include <stdbool.h>
 
+// CIRCUITPY-CHANGE: Include supervisor headers for RUN_BACKGROUND_TASKS
+#include "supervisor/background_callback.h"
+
 // Variant-specific definitions.
 #include "mpconfigvariant.h"
 
@@ -202,8 +205,7 @@
 #endif
 
 // CIRCUITPY-CHANGE: Background tasks hook
-// TODO: Implement cooperative yielding - for now use no-op to verify basic functionality
-#define RUN_BACKGROUND_TASKS ((void)0)
+#define RUN_BACKGROUND_TASKS (background_callback_run_all())
 
 // type definitions for the specific machine
 

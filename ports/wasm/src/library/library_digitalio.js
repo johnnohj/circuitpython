@@ -33,12 +33,31 @@ mergeInto(LibraryManager.library, {
     `,
 
     mp_js_gpio_get_value: (pin) => {
+        // Try to use controller for high-level features (events, state tracking)
+        const board = Module._circuitPythonBoard;
+        if (board?.gpio) {
+            return board.gpio.getPinValue(pin) ? 1 : 0;
+        }
+
+        // Fallback to direct memory access for backward compatibility
         if (gpioStatePtr === null) initGPIOState();
         const view = getGPIOPinView(pin);
         return view ? view.getUint8(0) : 0;  // Read 'value' field
     },
 
     mp_js_gpio_set_input_value: (pin, value) => {
+        // Try to use controller for high-level features (events, state tracking)
+        const board = Module._circuitPythonBoard;
+        if (board?.gpio) {
+            // Only set if pin is input (controller handles this internally)
+            const pinObj = board.gpio.getPin(pin);
+            if (pinObj.direction === 'input') {
+                board.gpio.setPinValue(pin, value !== 0);
+            }
+            return;
+        }
+
+        // Fallback to direct memory access for backward compatibility
         if (gpioStatePtr === null) initGPIOState();
         const view = getGPIOPinView(pin);
         if (view && view.getUint8(1) === 0) {  // Only if direction == input
@@ -47,6 +66,14 @@ mergeInto(LibraryManager.library, {
     },
 
     mp_js_gpio_get_direction: (pin) => {
+        // Try to use controller for high-level features
+        const board = Module._circuitPythonBoard;
+        if (board?.gpio) {
+            const pinObj = board.gpio.getPin(pin);
+            return pinObj.direction === 'output' ? 1 : 0;
+        }
+
+        // Fallback to direct memory access for backward compatibility
         if (gpioStatePtr === null) initGPIOState();
         const view = getGPIOPinView(pin);
         return view ? view.getUint8(1) : 0;  // Read 'direction' field

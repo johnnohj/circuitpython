@@ -57,23 +57,12 @@
 // WASM has no physical status LEDs, disable status bar features
 #define CIRCUITPY_STATUS_BAR 0
 
-// IMPORTANT: Do NOT use MICROPY_VARIANT_ENABLE_JS_HOOK for asyncified variant
-// It calls a JS library function which creates problematic boundaries for ASYNCIFY
-// Instead, we define our own VM hook that calls pure C code directly
-#define MICROPY_VARIANT_ENABLE_JS_HOOK (0)
+// CIRCUITPY-CHANGE: Use CircuitPython's default VM hook (RUN_BACKGROUND_TASKS)
+// We implement our cooperative yielding in port_background_task() instead
+// This ensures proper integration with the supervisor/background callback system
 
-// EMSCRIPTEN_ASYNCIFY_ENABLED is defined in mpconfigvariant.mk as a CFLAG
-// This tells supervisor/port.c to compile the C implementation
-
-// Override VM hook to call pure C function (not JS library function)
-// This avoids JS/C boundary issues that confuse ASYNCIFY
-#define MICROPY_VM_HOOK_COUNT (10)
-#define MICROPY_VM_HOOK_INIT static uint vm_hook_divisor = MICROPY_VM_HOOK_COUNT;
-#define MICROPY_VM_HOOK_POLL if (--vm_hook_divisor == 0) { \
-        vm_hook_divisor = MICROPY_VM_HOOK_COUNT; \
-        extern void mp_js_hook_asyncify_impl(void); \
-        mp_js_hook_asyncify_impl(); \
-}
-#define MICROPY_VM_HOOK_LOOP MICROPY_VM_HOOK_POLL
-#define MICROPY_VM_HOOK_RETURN MICROPY_VM_HOOK_POLL
+// Don't override MICROPY_VARIANT_ENABLE_JS_HOOK - let CircuitPython's defaults work
+// Don't override VM hooks - let CircuitPython's py/circuitpy_mpconfig.h define them
+// The default is: MICROPY_VM_HOOK_LOOP = RUN_BACKGROUND_TASKS
+// Which calls background_callback_run_all() which calls our port_background_task()
 

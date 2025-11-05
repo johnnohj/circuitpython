@@ -134,7 +134,98 @@ export async function loadCircuitPython(options) {
         [pystack, heapsize],
     );
     Module.ccall("proxy_c_init", "null", [], []);
-    
+
+    // CIRCUITPY-CHANGE: Initialize minimal board controllers for hardware emulation
+    // These provide the virtual hardware objects that tests expect
+    // Full controller classes are in src/controllers/*.js - these are lightweight stubs
+
+    // Pin class with onChange callback support
+    class Pin {
+        constructor(number) {
+            this.number = number;
+            this.changeCallbacks = [];
+        }
+        onChange(callback) {
+            this.changeCallbacks.push(callback);
+        }
+        _notifyChange(property, value) {
+            for (const cb of this.changeCallbacks) {
+                try { cb({ property, value }); } catch (e) { console.error('Pin callback error:', e); }
+            }
+        }
+    }
+
+    // GPIO Controller
+    const pins = new Map();
+    const gpioController = {
+        getPin(number) {
+            if (!pins.has(number)) {
+                pins.set(number, new Pin(number));
+            }
+            return pins.get(number);
+        },
+        getAllPins() { return pins; }
+    };
+
+    // Bus class for I2C/SPI with callback support
+    class Bus {
+        constructor(index, type) {
+            this.index = index;
+            this.type = type;
+            this.probeCallbacks = [];
+            this.transactionCallbacks = [];
+        }
+        onProbe(callback) {
+            this.probeCallbacks.push(callback);
+        }
+        onTransaction(callback) {
+            this.transactionCallbacks.push(callback);
+        }
+        _notifyProbe(data) {
+            for (const cb of this.probeCallbacks) {
+                try { cb(data); } catch (e) { console.error('Probe callback error:', e); }
+            }
+        }
+        _notifyTransaction(data) {
+            for (const cb of this.transactionCallbacks) {
+                try { cb(data); } catch (e) { console.error('Transaction callback error:', e); }
+            }
+        }
+    }
+
+    // I2C Controller
+    const i2cBuses = new Map();
+    const i2cController = {
+        getBus(index) {
+            if (!i2cBuses.has(index)) {
+                i2cBuses.set(index, new Bus(index, 'i2c'));
+            }
+            return i2cBuses.get(index);
+        },
+        buses: i2cBuses
+    };
+
+    // SPI Controller
+    const spiBuses = new Map();
+    const spiController = {
+        getBus(index) {
+            if (!spiBuses.has(index)) {
+                spiBuses.set(index, new Bus(index, 'spi'));
+            }
+            return spiBuses.get(index);
+        },
+        buses: spiBuses
+    };
+
+    Module._circuitPythonBoard = {
+        gpio: gpioController,
+        i2c: i2cController,
+        spi: spiController,
+    };
+
+    if (verbose) {
+        console.log('[CircuitPython] Board controllers initialized');
+    }
 
     // CIRCUITPY-CHANGE: Initialize persistent filesystem if requested
     let persistentFS = null;
@@ -331,16 +422,18 @@ export async function loadCircuitPython(options) {
             Module._free(buf);
             return proxy_convert_mp_to_js_obj_jsside_with_free(value);
         },
-        runPythonAsync(code) {
+        async runPythonAsync(code) {
             const len = Module.lengthBytesUTF8(code);
             const buf = Module._malloc(len + 1);
             Module.stringToUTF8(code, buf, len + 1);
             const value = Module._malloc(3 * 4);
-            Module.ccall(
+            // CIRCUITPY-CHANGE: Mark as async for ASYNCIFY variant
+            await Module.ccall(
                 "mp_js_do_exec_async",
                 "number",
                 ["pointer", "number", "pointer"],
                 [buf, len, value],
+                { async: true }
             );
             Module._free(buf);
             const ret = proxy_convert_mp_to_js_obj_jsside_with_free(value);

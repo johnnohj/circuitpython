@@ -1,15 +1,19 @@
 
 # Enable ASYNCIFY for cooperative yielding
-# mp_js_hook is implemented in C (supervisor/port.c) and calls emscripten_sleep(0)
 JSFLAGS += -s ASYNCIFY=1
 
-# Allow Asyncify to work with indirect function calls (needed for Python VM)
-JSFLAGS += -s ASYNCIFY_IGNORE_INDIRECT=1
+# DON'T ignore indirect calls - Python VM needs full call chain tracking
+# Removing ASYNCIFY_IGNORE_INDIRECT allows ASYNCIFY to see the full VM→background→sleep chain
 
 # Add Emscripten's invoke wrappers and emscripten_sleep to ASYNCIFY_IMPORTS
-# These are exception handling wrappers that ASYNCIFY needs to handle
-# NOTE: mp_js_hook is NOT needed - we call C function directly from VM hook macro
 JSFLAGS += -s 'ASYNCIFY_IMPORTS=["invoke_v","invoke_vi","invoke_ii","invoke_iii","invoke_iiii","invoke_iiiii","invoke_vii","invoke_viii","invoke_viiii","emscripten_sleep"]'
+
+# Explicitly whitelist the CircuitPython background task chain
+# Without this, ASYNCIFY won't instrument these functions for yielding
+JSFLAGS += -s 'ASYNCIFY_ADD=["mp_hal_delay_ms","background_callback_run_all","port_background_task"]'
+
+# Increase stack size for ASYNCIFY (unwinding needs extra space)
+JSFLAGS += -s ASYNCIFY_STACK_SIZE=16384
 
 # Export Asyncify API to JavaScript (for debugging and feature detection)
 EXPORTED_RUNTIME_METHODS_EXTRA +=, Asyncify

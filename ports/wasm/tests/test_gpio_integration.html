@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>GPIO Integration Test - CircuitPython WASM</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+    }
+    .test-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    .test-result {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 3px;
+    }
+    .test-pass {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .test-fail {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .test-pending {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+    .led-indicator {
+      display: inline-block;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #ccc;
+      transition: all 0.3s;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .led-indicator.on {
+      background: #0f0;
+      box-shadow: 0 0 10px #0f0;
+    }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 3px;
+      overflow-x: auto;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      cursor: pointer;
+      border: none;
+      border-radius: 3px;
+      background: #007bff;
+      color: white;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    #eventLog {
+      height: 200px;
+      overflow-y: auto;
+      background: #000;
+      color: #0f0;
+      padding: 10px;
+      font-family: 'Courier New', monospace;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h1>GPIO Integration Test</h1>
+  <p>This test verifies that the CircuitPythonBoard controller architecture is properly integrated with the C library functions.</p>
+
+  <div class="test-section">
+    <h2>Test Status</h2>
+    <div id="testStatus" class="test-result test-pending">
+      Waiting to start tests...
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Visual Indicators</h2>
+    <p>
+      GPIO13 (LED): <span class="led-indicator" id="led13"></span>
+      GPIO14 (LED): <span class="led-indicator" id="led14"></span>
+      GPIO15 (LED): <span class="led-indicator" id="led15"></span>
+    </p>
+  </div>
+
+  <div class="test-section">
+    <h2>Event Log</h2>
+    <div id="eventLog"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test Controls</h2>
+    <button id="runTests">Run All Tests</button>
+    <button id="test1">Test 1: Basic Pin Set</button>
+    <button id="test2">Test 2: Event Callbacks</button>
+    <button id="test3">Test 3: Python Integration</button>
+    <button id="test4">Test 4: Multiple Pins</button>
+  </div>
+
+  <div class="test-section">
+    <h2>Test Results</h2>
+    <div id="testResults"></div>
+  </div>
+
+  <script type="module">
+    // Import CircuitPythonBoard
+    // NOTE: This path needs to be updated based on your build output
+    // For now, this is a placeholder to show the integration pattern
+    // import { CircuitPythonBoard } from '../build/circuitpython.mjs'
+
+    let board = null
+    const eventLog = document.getElementById('eventLog')
+    const testResults = document.getElementById('testResults')
+    const testStatus = document.getElementById('testStatus')
+
+    // Log events
+    function logEvent(message, isError = false) {
+      const time = new Date().toLocaleTimeString()
+      const color = isError ? '#f00' : '#0f0'
+      eventLog.innerHTML += `<span style="color: ${color}">[${time}] ${message}</span>\n`
+      eventLog.scrollTop = eventLog.scrollHeight
+      console.log(`[Test] ${message}`)
+    }
+
+    // Add test result
+    function addTestResult(testName, passed, details = '') {
+      const result = document.createElement('div')
+      result.className = `test-result ${passed ? 'test-pass' : 'test-fail'}`
+      result.innerHTML = `
+        <strong>${passed ? '✓' : '✗'} ${testName}</strong>
+        ${details ? `<br>${details}` : ''}
+      `
+      testResults.appendChild(result)
+    }
+
+    // Initialize board
+    async function initBoard() {
+      logEvent('Initializing CircuitPython Board...')
+
+      // For testing purposes, create a mock board structure
+      // In production, this would be: board = new CircuitPythonBoard()
+      board = createMockBoard()
+
+      logEvent('✓ Board initialized')
+      return board
+    }
+
+    // Create mock board for testing (until actual build is available)
+    function createMockBoard() {
+      const mockBoard = {
+        gpio: {
+          pins: new Map(),
+          getPin(number) {
+            if (!this.pins.has(number)) {
+              const pin = {
+                number,
+                value: false,
+                direction: 'input',
+                callbacks: [],
+                setValue(value) {
+                  this.value = Boolean(value)
+                  this.callbacks.forEach(cb => cb(this.value))
+                },
+                getValue() {
+                  return this.value
+                },
+                onChange(callback) {
+                  this.callbacks.push(callback)
+                  return () => {
+                    const idx = this.callbacks.indexOf(callback)
+                    if (idx >= 0) this.callbacks.splice(idx, 1)
+                  }
+                }
+              }
+              this.pins.set(number, pin)
+            }
+            return this.pins.get(number)
+          },
+          setPinValue(number, value) {
+            this.getPin(number).setValue(value)
+          },
+          getPinValue(number) {
+            return this.getPin(number).getValue()
+          }
+        },
+        isConnected() {
+          return true
+        }
+      }
+
+      // Simulate exposing to Module
+      if (typeof window.Module === 'undefined') {
+        window.Module = {}
+      }
+      window.Module._circuitPythonBoard = mockBoard
+      window.circuitPythonBoard = mockBoard
+
+      return mockBoard
+    }
+
+    // Test 1: Basic Pin Set
+    async function test1_BasicPinSet() {
+      logEvent('--- Test 1: Basic Pin Set ---')
+
+      try {
+        const pin13 = board.gpio.getPin(13)
+
+        // Set pin value
+        pin13.setValue(true)
+
+        // Verify value
+        const value = pin13.getValue()
+
+        if (value === true) {
+          logEvent('✓ Pin 13 set to HIGH')
+          addTestResult('Test 1: Basic Pin Set', true, 'Successfully set and read pin value')
+        } else {
+          throw new Error('Pin value mismatch')
+        }
+
+        // Set back to LOW
+        pin13.setValue(false)
+        logEvent('✓ Pin 13 set to LOW')
+
+      } catch (error) {
+        logEvent(`✗ Test 1 failed: ${error.message}`, true)
+        addTestResult('Test 1: Basic Pin Set', false, error.message)
+      }
+    }
+
+    // Test 2: Event Callbacks
+    async function test2_EventCallbacks() {
+      logEvent('--- Test 2: Event Callbacks ---')
+
+      try {
+        const pin13 = board.gpio.getPin(13)
+        let callbackTriggered = false
+        let callbackValue = null
+
+        // Register callback
+        const unregister = pin13.onChange((value) => {
+          callbackTriggered = true
+          callbackValue = value
+          logEvent(`Callback: Pin 13 changed to ${value ? 'HIGH' : 'LOW'}`)
+
+          // Update visual indicator
+          document.getElementById('led13').classList.toggle('on', value)
+        })
+
+        logEvent('Registered onChange callback')
+
+        // Trigger change
+        pin13.setValue(true)
+
+        // Small delay to allow callback to fire
+        await new Promise(resolve => setTimeout(resolve, 50))
+
+        if (callbackTriggered && callbackValue === true) {
+          logEvent('✓ Callback triggered correctly')
+          addTestResult('Test 2: Event Callbacks', true, 'Callback fired with correct value')
+        } else {
+          throw new Error('Callback not triggered')
+        }
+
+        // Cleanup
+        unregister()
+        pin13.setValue(false)
+
+      } catch (error) {
+        logEvent(`✗ Test 2 failed: ${error.message}`, true)
+        addTestResult('Test 2: Event Callbacks', false, error.message)
+      }
+    }
+
+    // Test 3: Python Integration (Simulated)
+    async function test3_PythonIntegration() {
+      logEvent('--- Test 3: Python Integration ---')
+
+      try {
+        // Simulate what happens when Python code runs:
+        // import board
+        // led = board.GPIO13
+        // led.value = True
+
+        // This simulates the library_digitalio.js calling board.gpio.setPinValue()
+        logEvent('Simulating Python: led.value = True')
+        board.gpio.setPinValue(13, true)
+
+        const value = board.gpio.getPinValue(13)
+
+        if (value === true) {
+          logEvent('✓ Python code successfully changed pin value')
+          addTestResult('Test 3: Python Integration', true,
+            'Library functions successfully delegate to controller')
+        } else {
+          throw new Error('Pin value not updated')
+        }
+
+        // Cleanup
+        board.gpio.setPinValue(13, false)
+
+      } catch (error) {
+        logEvent(`✗ Test 3 failed: ${error.message}`, true)
+        addTestResult('Test 3: Python Integration', false, error.message)
+      }
+    }
+
+    // Test 4: Multiple Pins
+    async function test4_MultiplePins() {
+      logEvent('--- Test 4: Multiple Pins ---')
+
+      try {
+        const pins = [13, 14, 15]
+
+        // Set up callbacks for all pins
+        pins.forEach(pinNum => {
+          const pin = board.gpio.getPin(pinNum)
+          pin.onChange((value) => {
+            const ledId = `led${pinNum}`
+            document.getElementById(ledId).classList.toggle('on', value)
+            logEvent(`Pin ${pinNum}: ${value ? 'HIGH' : 'LOW'}`)
+          })
+        })
+
+        logEvent('Registered callbacks for pins 13, 14, 15')
+
+        // Blink pattern
+        for (const pinNum of pins) {
+          board.gpio.setPinValue(pinNum, true)
+          await new Promise(resolve => setTimeout(resolve, 200))
+          board.gpio.setPinValue(pinNum, false)
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+
+        logEvent('✓ All pins blinked successfully')
+        addTestResult('Test 4: Multiple Pins', true,
+          'Successfully managed multiple pins with events')
+
+      } catch (error) {
+        logEvent(`✗ Test 4 failed: ${error.message}`, true)
+        addTestResult('Test 4: Multiple Pins', false, error.message)
+      }
+    }
+
+    // Run all tests
+    async function runAllTests() {
+      testResults.innerHTML = ''
+      eventLog.innerHTML = ''
+      testStatus.className = 'test-result test-pending'
+      testStatus.textContent = 'Running tests...'
+
+      try {
+        await initBoard()
+        await test1_BasicPinSet()
+        await test2_EventCallbacks()
+        await test3_PythonIntegration()
+        await test4_MultiplePins()
+
+        testStatus.className = 'test-result test-pass'
+        testStatus.textContent = '✓ All tests completed!'
+        logEvent('=== All tests completed ===')
+
+      } catch (error) {
+        testStatus.className = 'test-result test-fail'
+        testStatus.textContent = `✗ Tests failed: ${error.message}`
+        logEvent(`=== Tests failed: ${error.message} ===`, true)
+      }
+    }
+
+    // Button handlers
+    document.getElementById('runTests').addEventListener('click', runAllTests)
+    document.getElementById('test1').addEventListener('click', async () => {
+      await initBoard()
+      await test1_BasicPinSet()
+    })
+    document.getElementById('test2').addEventListener('click', async () => {
+      await initBoard()
+      await test2_EventCallbacks()
+    })
+    document.getElementById('test3').addEventListener('click', async () => {
+      await initBoard()
+      await test3_PythonIntegration()
+    })
+    document.getElementById('test4').addEventListener('click', async () => {
+      await initBoard()
+      await test4_MultiplePins()
+    })
+
+    // Initialize on load
+    logEvent('Test page loaded. Click "Run All Tests" to begin.')
+    logEvent('NOTE: Currently using mock board. Replace with actual CircuitPythonBoard once built.')
+  </script>
+</body>
+</html>

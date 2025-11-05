@@ -24,5 +24,7 @@
  * THE SOFTWARE.
  */
 
-// qstrs specific to this port
-// *FORMAT-OFF*
+ // qstrs specific to this port
+ // *FORMAT-OFF*
+ Q(/lib)
+ Q(asyncio.core)

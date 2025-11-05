@@ -30,6 +30,12 @@ volatile bool wasm_should_yield_to_js = false;
 static uint32_t wasm_bytecode_count = 0;
 static double last_yield_time = 0;
 
+// ASYNCIFY-specific yield tracking (used by port_background_task)
+#ifdef EMSCRIPTEN_ASYNCIFY_ENABLED
+static volatile uint64_t asyncify_yields_count = 0;
+static volatile uint64_t asyncify_hook_calls = 0;
+#endif
+
 // Tunable parameters - adjust based on testing
 // NOTE: mp_js_hook is called every 10 bytecodes (MICROPY_VM_HOOK_COUNT = 10)
 // ASYNCIFY has limits - yield LESS frequently to avoid "unreachable" errors
@@ -224,12 +230,24 @@ void port_finish_background_tick(void) {
 // =============================================================================
 
 void port_background_task(void) {
-    // Called by background_callback_run_all() in supervisor/shared/background_callback.c
-    // This is called BEFORE running the callback queue and happens *very* often
-    // Keep this lightweight!
-    
-    // Service virtual hardware (if needed)
-    // In future: Web Serial, canvas updates, etc.
+    // Called by background_callback_run_all() BEFORE processing callback queue
+    // This is called from RUN_BACKGROUND_TASKS macro which is invoked from VM hook
+    // Perfect place to implement cooperative yielding for WASM
+
+    #ifdef EMSCRIPTEN_ASYNCIFY_ENABLED
+    // ASYNCIFY variant: Check if it's time to yield and use emscripten_sleep
+    wasm_check_yield_point();
+
+    if (wasm_should_yield_to_js) {
+        wasm_should_yield_to_js = false;
+        asyncify_yields_count++;
+        emscripten_sleep(0);  // Yield to JavaScript event loop
+    }
+    #else
+    // Standard/JSPI variant: Set flag for main loop to check
+    wasm_check_yield_point();
+    // Main loop checks wasm_should_yield_to_js and returns control
+    #endif
 }
 
 // =============================================================================
@@ -355,12 +373,13 @@ double wasm_get_last_yield_time(void) {
 // For asyncified variant: C implementation that can yield via ASYNCIFY
 // Called from JavaScript library's mp_js_hook() wrapper
 
-static volatile uint64_t asyncify_yields_count = 0;
-static volatile uint64_t asyncify_hook_calls = 0;
-
 EMSCRIPTEN_KEEPALIVE
 void mp_js_hook_asyncify_impl(void) {
     asyncify_hook_calls++;  // Track every call for debugging
+
+    // CIRCUITPY-CHANGE: Run background tasks first (supervisor integration)
+    // This must be called before yielding to process CircuitPython callbacks
+    RUN_BACKGROUND_TASKS;
 
     // Check if it's time to yield based on timing
     wasm_check_yield_point();

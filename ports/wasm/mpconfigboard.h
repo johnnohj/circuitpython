@@ -16,12 +16,12 @@
 
 // Default bus pin assignments for board.I2C(), board.SPI(), board.UART()
 // These provide sensible defaults for the virtual hardware
-#define DEFAULT_I2C_BUS_SDA         (&pin_GPIO0)
-#define DEFAULT_I2C_BUS_SCL         (&pin_GPIO1)
+#define DEFAULT_I2C_BUS_SDA         (&pin_GPIO5)
+#define DEFAULT_I2C_BUS_SCL         (&pin_GPIO6)
 
-#define DEFAULT_SPI_BUS_SCK         (&pin_GPIO2)
-#define DEFAULT_SPI_BUS_MOSI        (&pin_GPIO3)
-#define DEFAULT_SPI_BUS_MISO        (&pin_GPIO4)
+#define DEFAULT_SPI_BUS_SCK         (&pin_GPIO7)
+#define DEFAULT_SPI_BUS_MOSI        (&pin_GPIO8)
+#define DEFAULT_SPI_BUS_MISO        (&pin_GPIO9)
 
-#define DEFAULT_UART_BUS_TX         (&pin_GPIO5)
-#define DEFAULT_UART_BUS_RX         (&pin_GPIO6)
+#define DEFAULT_UART_BUS_TX         (&pin_GPIO10)
+#define DEFAULT_UART_BUS_RX         (&pin_GPIO11)

@@ -15,6 +15,7 @@
 #include "shared-bindings/digitalio/Direction.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "py/runtime.h"
+#include "proxy_c.h"
 #include <emscripten.h>
 #include <string.h>
 
@@ -26,6 +27,64 @@ gpio_pin_state_t gpio_state[64];
 EMSCRIPTEN_KEEPALIVE
 gpio_pin_state_t* get_gpio_state_ptr(void) {
     return gpio_state;
+}
+
+// ============================================================================
+// JsProxy Integration for Rich Web Features
+// ============================================================================
+
+// Create a JS Pin object and add it to the proxy system
+// Returns the js_ref index for use with mp_obj_new_jsproxy()
+EM_JS(int, gpio_create_js_pin_proxy, (int pin_number), {
+    // Get or create the GPIO controller
+    const board = Module._circuitPythonBoard;
+    if (!board || !board.gpio) {
+        console.warn('[GPIO] CircuitPythonBoard or GPIO controller not initialized');
+        return -1;  // Indicate failure
+    }
+
+    // Get the Pin object (controller creates it if it doesn't exist)
+    const pin = board.gpio.getPin(pin_number);
+
+    // Add to proxy system and return the reference
+    // This makes the JS Pin object accessible from C code
+    return proxy_js_add_obj(pin);
+});
+
+// Helper function to sync a boolean value to JS Pin proxy
+// This triggers the JS setter which automatically fires onChange callbacks
+static inline void gpio_sync_bool_to_js_pin(mp_obj_jsproxy_t *js_pin, const char *attr_name, bool value) {
+    if (js_pin == NULL) {
+        return;  // No JS proxy, skip sync
+    }
+
+    uint32_t value_out[PVN];
+    proxy_convert_mp_to_js_obj_cside(mp_obj_new_bool(value), value_out);
+    store_attr(js_pin->ref, attr_name, value_out);
+}
+
+// Helper function to sync an integer value to JS Pin proxy
+__attribute__((unused))
+static inline void gpio_sync_int_to_js_pin(mp_obj_jsproxy_t *js_pin, const char *attr_name, int value) {
+    if (js_pin == NULL) {
+        return;  // No JS proxy, skip sync
+    }
+
+    uint32_t value_out[PVN];
+    proxy_convert_mp_to_js_obj_cside(mp_obj_new_int(value), value_out);
+    store_attr(js_pin->ref, attr_name, value_out);
+}
+
+// Helper function to sync a string value to JS Pin proxy
+__attribute__((unused))
+static inline void gpio_sync_str_to_js_pin(mp_obj_jsproxy_t *js_pin, const char *attr_name, const char *value) {
+    if (js_pin == NULL) {
+        return;  // No JS proxy, skip sync
+    }
+
+    uint32_t value_out[PVN];
+    proxy_convert_mp_to_js_obj_cside(mp_obj_new_str(value, strlen(value)), value_out);
+    store_attr(js_pin->ref, attr_name, value_out);
 }
 
 // Initialize GPIO state (called during port initialization)
@@ -41,6 +100,7 @@ void digitalio_reset_gpio_state(void) {
         gpio_state[i].pull = 0;       // No pull
         gpio_state[i].open_drain = false;
         gpio_state[i].enabled = false;
+        gpio_state[i].js_pin = NULL;  // No JsProxy by default
     }
 }
 
@@ -92,12 +152,17 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
 
     uint8_t pin_num = self->pin->number;
 
-    // Set direction to input
-    gpio_state[pin_num].direction = 0;
-
-    // Set pull resistor
+    // Fast path: Update C state
+    gpio_state[pin_num].direction = 0;  // Input
     gpio_state[pin_num].pull = (pull == PULL_UP) ? 1 :
                                 (pull == PULL_DOWN) ? 2 : 0;
+
+    // Rich path: Sync to JsProxy if it exists
+    gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "direction", "input");
+
+    const char *pull_str = (pull == PULL_UP) ? "up" :
+                           (pull == PULL_DOWN) ? "down" : "none";
+    gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "pull", pull_str);
 
     return DIGITALINOUT_OK;
 }
@@ -110,9 +175,16 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
 
     uint8_t pin_num = self->pin->number;
 
+    // Fast path: Update C state
     gpio_state[pin_num].direction = 1;  // Output
     gpio_state[pin_num].value = value;
     gpio_state[pin_num].open_drain = (drive_mode == DRIVE_MODE_OPEN_DRAIN);
+
+    // Rich path: Sync to JsProxy if it exists
+    gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "direction", "output");
+    gpio_sync_bool_to_js_pin(gpio_state[pin_num].js_pin, "value", value);
+    gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "driveMode",
+        (drive_mode == DRIVE_MODE_OPEN_DRAIN) ? "open-drain" : "push-pull");
 
     return DIGITALINOUT_OK;
 }
@@ -134,7 +206,11 @@ void common_hal_digitalio_digitalinout_set_value(
 
     // Only allow setting value if pin is output
     if (gpio_state[pin_num].direction == 1) {
+        // Fast path: Update C state
         gpio_state[pin_num].value = value;
+
+        // Rich path: Sync to JsProxy if it exists (triggers automatic onChange events)
+        gpio_sync_bool_to_js_pin(gpio_state[pin_num].js_pin, "value", value);
     }
 }
 

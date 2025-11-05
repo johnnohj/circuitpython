@@ -11,6 +11,7 @@
 #include "shared-bindings/microcontroller/Pin.h"
 #include "py/mperrno.h"
 #include "py/runtime.h"
+#include "proxy_c.h"
 #include <emscripten.h>
 #include <string.h>
 
@@ -36,6 +37,11 @@ typedef struct {
     uint8_t last_read_data[SPI_BUFFER_SIZE];
     uint16_t last_write_len;
     uint16_t last_read_len;
+
+    // Rich path: Optional JsProxy for events (NULL if no web app listeners)
+    // When this exists, JS SPI bus object is the source of truth for transactions
+    // C code syncs to it via store_attr(), triggering automatic onChange events
+    mp_obj_jsproxy_t *js_spi;
 } spi_bus_state_t;
 
 // State array for up to 4 SPI buses
@@ -80,7 +86,81 @@ void busio_reset_spi_state(void) {
         spi_buses[i].half_duplex = false;
         spi_buses[i].last_write_len = 0;
         spi_buses[i].last_read_len = 0;
+        spi_buses[i].js_spi = NULL;  // No JsProxy initially
     }
+}
+
+// ========== JsProxy Integration Functions ==========
+
+// Create a JS SPI bus object and add it to the proxy system
+EM_JS(int, spi_create_js_bus_proxy, (int bus_index), {
+    const board = Module._circuitPythonBoard;
+    if (!board || !board.spi) {
+        console.warn('[SPI] CircuitPythonBoard or SPI controller not initialized');
+        return -1;
+    }
+
+    // Get the SPI bus object (controller creates it if it doesn't exist)
+    const bus = board.spi.getBus(bus_index);
+
+    // Add to proxy system and return the reference
+    return proxy_js_add_obj(bus);
+});
+
+// Get current timestamp in milliseconds
+EM_JS(double, spi_get_timestamp_ms, (void), {
+    return Date.now();
+});
+
+// Helper to sync transaction data to JS proxy
+static inline void spi_sync_transaction_to_js(mp_obj_jsproxy_t *js_spi,
+    const uint8_t *write_data, size_t write_len,
+    const uint8_t *read_data, size_t read_len,
+    const char *type) {
+    if (js_spi == NULL) {
+        return;
+    }
+
+    // Create transaction object as a Python dict
+    mp_obj_t transaction_dict = mp_obj_new_dict(5);
+
+    // Add type field ("write", "read", or "transfer")
+    mp_obj_dict_store(transaction_dict,
+        mp_obj_new_str("type", 4),
+        mp_obj_new_str(type, strlen(type)));
+
+    // Add write data if present
+    if (write_data != NULL && write_len > 0) {
+        mp_obj_t write_bytes = mp_obj_new_bytes(write_data, write_len);
+        mp_obj_dict_store(transaction_dict,
+            mp_obj_new_str("writeData", 9),
+            write_bytes);
+        mp_obj_dict_store(transaction_dict,
+            mp_obj_new_str("writeLen", 8),
+            mp_obj_new_int(write_len));
+    }
+
+    // Add read data if present
+    if (read_data != NULL && read_len > 0) {
+        mp_obj_t read_bytes = mp_obj_new_bytes(read_data, read_len);
+        mp_obj_dict_store(transaction_dict,
+            mp_obj_new_str("readData", 8),
+            read_bytes);
+        mp_obj_dict_store(transaction_dict,
+            mp_obj_new_str("readLen", 7),
+            mp_obj_new_int(read_len));
+    }
+
+    // Add timestamp field
+    double timestamp = spi_get_timestamp_ms();
+    mp_obj_dict_store(transaction_dict,
+        mp_obj_new_str("timestamp", 9),
+        mp_obj_new_float(timestamp));
+
+    // Convert to JS and set as property on bus object
+    uint32_t value_out[PVN];
+    proxy_convert_mp_to_js_obj_cside(transaction_dict, value_out);
+    store_attr(js_spi->ref, "lastTransaction", value_out);
 }
 
 void common_hal_busio_spi_construct(busio_spi_obj_t *self,
@@ -133,6 +213,14 @@ void common_hal_busio_spi_construct(busio_spi_obj_t *self,
         spi_buses[bus_idx].locked = false;
         spi_buses[bus_idx].never_reset = false;
         spi_buses[bus_idx].half_duplex = half_duplex;
+
+        // Create JsProxy for this bus if not already created
+        if (spi_buses[bus_idx].js_spi == NULL) {
+            int jsref = spi_create_js_bus_proxy(bus_idx);
+            if (jsref >= 0) {
+                spi_buses[bus_idx].js_spi = mp_obj_new_jsproxy(jsref);
+            }
+        }
     }
 
     // Store configuration in object
@@ -258,10 +346,13 @@ bool common_hal_busio_spi_write(busio_spi_obj_t *self, const uint8_t *data, size
         return false;
     }
 
-    // Store write data for JavaScript access (up to buffer size)
+    // Fast path: Store write data for JavaScript access (up to buffer size)
     size_t copy_len = (len > SPI_BUFFER_SIZE) ? SPI_BUFFER_SIZE : len;
     memcpy(spi_buses[bus_idx].last_write_data, data, copy_len);
     spi_buses[bus_idx].last_write_len = copy_len;
+
+    // Rich path: Sync to JsProxy (triggers automatic transaction events)
+    spi_sync_transaction_to_js(spi_buses[bus_idx].js_spi, data, copy_len, NULL, 0, "write");
 
     return true;
 }
@@ -280,11 +371,14 @@ bool common_hal_busio_spi_read(busio_spi_obj_t *self, uint8_t *data, size_t len,
         return false;
     }
 
-    // For WASM simulation, JavaScript can write to last_read_data
+    // Fast path: For WASM simulation, JavaScript can write to last_read_data
     // to simulate peripheral responses
     size_t copy_len = (len > SPI_BUFFER_SIZE) ? SPI_BUFFER_SIZE : len;
     memcpy(data, spi_buses[bus_idx].last_read_data, copy_len);
     spi_buses[bus_idx].last_read_len = copy_len;
+
+    // Rich path: Sync to JsProxy (triggers automatic transaction events)
+    spi_sync_transaction_to_js(spi_buses[bus_idx].js_spi, NULL, 0, data, copy_len, "read");
 
     return true;
 }
@@ -303,12 +397,15 @@ bool common_hal_busio_spi_transfer(busio_spi_obj_t *self, const uint8_t *data_ou
         return false;
     }
 
-    // Store write data and read simulated response
+    // Fast path: Store write data and read simulated response
     size_t copy_len = (len > SPI_BUFFER_SIZE) ? SPI_BUFFER_SIZE : len;
     memcpy(spi_buses[bus_idx].last_write_data, data_out, copy_len);
     memcpy(data_in, spi_buses[bus_idx].last_read_data, copy_len);
     spi_buses[bus_idx].last_write_len = copy_len;
     spi_buses[bus_idx].last_read_len = copy_len;
+
+    // Rich path: Sync to JsProxy (triggers automatic transaction events)
+    spi_sync_transaction_to_js(spi_buses[bus_idx].js_spi, data_out, copy_len, data_in, copy_len, "transfer");
 
     return true;
 }

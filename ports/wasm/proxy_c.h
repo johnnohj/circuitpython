@@ -56,6 +56,11 @@ void proxy_convert_mp_to_js_exc_cside(void *exc, uint32_t *out);
 mp_obj_t mp_obj_new_jsproxy(int ref);
 void mp_obj_jsproxy_global_this_attr(qstr attr, mp_obj_t *dest);
 
+// CIRCUITPY-CHANGE: JsProxy attribute access functions (defined in objjsproxy.c as EM_JS)
+// These are used by common-hal code to sync hardware state to JavaScript proxies
+int lookup_attr(int jsref, const char *str, uint32_t *out);
+void store_attr(int jsref, const char *attr_ptr, uint32_t *value_ref);
+
 static inline bool mp_obj_is_jsproxy(mp_obj_t o) {
     return mp_obj_get_type(o) == &mp_type_jsproxy;
 }

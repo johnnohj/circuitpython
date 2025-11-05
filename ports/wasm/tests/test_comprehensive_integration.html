@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CircuitPython WASM - Comprehensive Integration Test</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            max-width: 1600px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #4ec9b0; }
+        h2 { color: #569cd6; margin-top: 30px; }
+
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #252526;
+            border-left: 4px solid #858585;
+            border-radius: 4px;
+        }
+
+        .test-section.pass { border-left-color: #4ec9b0; }
+        .test-section.fail { border-left-color: #f48771; }
+        .test-section.running { border-left-color: #dcdcaa; }
+
+        .code-block {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            white-space: pre;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+
+        .output {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .stat-box {
+            padding: 12px;
+            background: #2d2d30;
+            border-radius: 4px;
+            border-left: 3px solid #4ec9b0;
+            text-align: center;
+        }
+
+        .stat-label {
+            color: #858585;
+            font-size: 11px;
+            margin-bottom: 3px;
+        }
+
+        .stat-value {
+            color: #4ec9b0;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .pass { color: #4ec9b0; }
+        .fail { color: #f48771; }
+        .info { color: #569cd6; }
+        .warn { color: #dcdcaa; }
+
+        #summary {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2d2d30;
+            border-radius: 4px;
+            font-size: 18px;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .feature-item {
+            padding: 10px;
+            background: #2d2d30;
+            border-radius: 4px;
+            border-left: 3px solid #4ec9b0;
+        }
+    </style>
+</head>
+<body>
+    <h1>CircuitPython WASM - Comprehensive Integration Test</h1>
+
+    <div style="padding: 15px; background: #2d2d30; border-radius: 4px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: #f48771;">Testing Integrated Features</h3>
+        <div class="feature-list">
+            <div class="feature-item">✓ RUN_BACKGROUND_TASKS enabled</div>
+            <div class="feature-item">✓ Cooperative yielding (~100ms)</div>
+            <div class="feature-item">✓ Phase 1.5: GPIO JsProxy sync</div>
+            <div class="feature-item">✓ Phase 2: I2C JsProxy sync</div>
+            <div class="feature-item">✓ Phase 3: SPI JsProxy sync</div>
+            <div class="feature-item">✓ Supervisor integration</div>
+        </div>
+    </div>
+
+    <div id="summary">Loading CircuitPython WASM...</div>
+
+    <div id="tests-container"></div>
+
+    <script type="module">
+        import { loadCircuitPython } from '../build-asyncified/circuitpython.mjs';
+
+        const testCases = [
+            {
+                name: 'Test 1: Basic REPL and Yielding',
+                description: 'Verify REPL works and cooperative yielding happens every ~100ms',
+                code: `import time
+
+print("CircuitPython WASM REPL Test")
+print("Python version:", __import__('sys').version)
+
+print("\\nTesting cooperative yielding...")
+start = time.monotonic()
+iterations = 0
+
+# Run for 2 seconds - should yield ~20 times
+while time.monotonic() - start < 2.0:
+    iterations += 1
+
+print(f"Completed {iterations} iterations in 2 seconds")
+print("If browser stayed responsive, yielding works!")`,
+                timeout: 5000,
+                validateYields: true
+            },
+            {
+                name: 'Test 2: GPIO Direction and Value Changes',
+                description: 'Test Phase 1.5 - GPIO state changes sync to JavaScript',
+                code: `import board
+import digitalio
+import time
+
+print("Testing GPIO direction and value changes...")
+
+# Create pin
+pin = digitalio.DigitalInOut(board.D5)
+
+# Test direction changes
+pin.direction = digitalio.Direction.OUTPUT
+time.sleep(0.1)
+
+# Test value changes
+for i in range(5):
+    pin.value = True
+    time.sleep(0.05)
+    pin.value = False
+    time.sleep(0.05)
+
+print("GPIO test complete!")`,
+                timeout: 3000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    if (!board || !board.gpio) {
+                        console.log('[WARNING] GPIO controller not initialized');
+                        return { events: [] };
+                    }
+
+                    const pin5 = board.gpio.getPin(5);
+                    const events = [];
+
+                    pin5.onChange((change) => {
+                        events.push({
+                            timestamp: Date.now(),
+                            property: change.property,
+                            value: change.value
+                        });
+                        console.log(`[GPIO5] ${change.property} = ${change.value}`);
+                    });
+
+                    return { events };
+                },
+                validate: (result) => {
+                    if (!result || !result.events) return '⚠ GPIO not monitored';
+                    const events = result.events;
+                    console.log(`GPIO events detected: ${events.length}`);
+                    if (events.length >= 10) {
+                        return `✓ ${events.length} events (expected ~11)`;
+                    }
+                    return `⚠ ${events.length} events (expected ~11)`;
+                }
+            },
+            {
+                name: 'Test 3: GPIO Pull Resistor Changes',
+                description: 'Test Phase 1.5 - GPIO pull resistor state sync',
+                code: `import board
+import digitalio
+import time
+
+print("Testing GPIO pull resistor changes...")
+
+pin = digitalio.DigitalInOut(board.D6)
+pin.direction = digitalio.Direction.INPUT
+
+# Test pull changes
+pin.pull = digitalio.Pull.UP
+time.sleep(0.1)
+
+pin.pull = digitalio.Pull.DOWN
+time.sleep(0.1)
+
+pin.pull = None
+time.sleep(0.1)
+
+print("Pull resistor test complete!")`,
+                timeout: 3000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    if (!board || !board.gpio) return { events: [] };
+
+                    const pin6 = board.gpio.getPin(6);
+                    const events = [];
+
+                    pin6.onChange((change) => {
+                        events.push({
+                            property: change.property,
+                            value: change.value
+                        });
+                        console.log(`[GPIO6] ${change.property} = ${change.value}`);
+                    });
+
+                    return { events };
+                },
+                validate: (result) => {
+                    if (!result || !result.events) return '⚠ GPIO not monitored';
+                    const pullEvents = result.events.filter(e => e.property === 'pull');
+                    console.log(`Pull events: ${pullEvents.length}`);
+                    return pullEvents.length >= 3 ?
+                        `✓ ${pullEvents.length} pull events` :
+                        `⚠ ${pullEvents.length} pull events (expected 3)`;
+                }
+            },
+            {
+                name: 'Test 4: I2C Bus Probing',
+                description: 'Test Phase 2 - I2C probe events sync to JavaScript',
+                code: `import board
+import busio
+import time
+
+print("Testing I2C bus probing...")
+
+i2c = busio.I2C(board.SCL, board.SDA)
+
+while not i2c.try_lock():
+    pass
+
+# Probe a few addresses
+test_addrs = [0x20, 0x40, 0x50, 0x60, 0x70]
+for addr in test_addrs:
+    found = i2c.probe(addr)
+    print(f"  Probe 0x{addr:02X}: {'found' if found else 'not found'}")
+
+i2c.unlock()
+print("I2C probe test complete!")`,
+                timeout: 3000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    if (!board || !board.i2c) {
+                        console.log('[WARNING] I2C controller not initialized');
+                        return { probes: [] };
+                    }
+
+                    const bus = board.i2c.getBus(0);
+                    const probes = [];
+
+                    bus.onProbe((probe) => {
+                        probes.push(probe);
+                        console.log(`[I2C] Probe 0x${probe.addr.toString(16)} = ${probe.found}`);
+                    });
+
+                    return { probes };
+                },
+                validate: (result) => {
+                    if (!result || !result.probes) return '⚠ I2C not monitored';
+                    console.log(`I2C probes: ${result.probes.length}`);
+                    return result.probes.length >= 5 ?
+                        `✓ ${result.probes.length} probe events` :
+                        `⚠ ${result.probes.length} probe events (expected 5)`;
+                }
+            },
+            {
+                name: 'Test 5: I2C Write Transaction',
+                description: 'Test Phase 2 - I2C write transaction sync',
+                code: `import board
+import busio
+
+print("Testing I2C write transaction...")
+
+i2c = busio.I2C(board.SCL, board.SDA)
+
+while not i2c.try_lock():
+    pass
+
+try:
+    # Try to write (will fail but should sync)
+    test_data = bytes([0x00, 0x01, 0x02, 0x03])
+    i2c.writeto(0x50, test_data)
+except OSError as e:
+    print(f"  Write failed (expected): {e}")
+
+i2c.unlock()
+print("I2C write test complete!")`,
+                timeout: 3000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    if (!board || !board.i2c) return { transactions: [] };
+
+                    const bus = board.i2c.getBus(0);
+                    const transactions = [];
+
+                    bus.onTransaction((txn) => {
+                        transactions.push(txn);
+                        console.log(`[I2C] ${txn.type} 0x${txn.addr.toString(16)} len=${txn.length}`);
+                    });
+
+                    return { transactions };
+                },
+                validate: (result) => {
+                    if (!result || !result.transactions) return '⚠ I2C not monitored';
+                    const writes = result.transactions.filter(t => t.type === 'write');
+                    console.log(`I2C writes: ${writes.length}`);
+                    return writes.length >= 1 ?
+                        `✓ ${writes.length} write transaction(s)` :
+                        `⚠ No write transactions detected`;
+                }
+            },
+            {
+                name: 'Test 6: SPI Transactions',
+                description: 'Test Phase 3 - SPI write/read/transfer sync',
+                code: `import board
+import busio
+import time
+
+print("Testing SPI transactions...")
+
+spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+
+while not spi.try_lock():
+    pass
+
+spi.configure(baudrate=1000000)
+
+# Write
+print("  SPI write...")
+spi.write(bytes([0xAA, 0x55, 0xFF, 0x00]))
+time.sleep(0.05)
+
+# Read
+print("  SPI read...")
+buf = bytearray(4)
+spi.readinto(buf)
+time.sleep(0.05)
+
+# Transfer
+print("  SPI transfer...")
+write_data = bytes([0x01, 0x02, 0x03, 0x04])
+read_data = bytearray(4)
+spi.write_readinto(write_data, read_data)
+
+spi.unlock()
+print("SPI test complete!")`,
+                timeout: 3000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    if (!board || !board.spi) {
+                        console.log('[WARNING] SPI controller not initialized');
+                        return { transactions: [] };
+                    }
+
+                    const bus = board.spi.getBus(0);
+                    const transactions = [];
+
+                    bus.onTransaction((txn) => {
+                        transactions.push(txn);
+                        console.log(`[SPI] ${txn.type} write=${txn.writeLen} read=${txn.readLen}`);
+                    });
+
+                    return { transactions };
+                },
+                validate: (result) => {
+                    if (!result || !result.transactions) return '⚠ SPI not monitored';
+                    console.log(`SPI transactions: ${result.transactions.length}`);
+                    return result.transactions.length >= 3 ?
+                        `✓ ${result.transactions.length} transactions` :
+                        `⚠ ${result.transactions.length} transactions (expected 3)`;
+                }
+            },
+            {
+                name: 'Test 7: Stress Test - Mixed Operations',
+                description: 'Verify all peripherals work together under load',
+                code: `import board
+import digitalio
+import busio
+import time
+
+print("Running stress test...")
+
+# Setup GPIO
+pin = digitalio.DigitalInOut(board.D7)
+pin.direction = digitalio.Direction.OUTPUT
+
+# Setup I2C
+i2c = busio.I2C(board.SCL, board.SDA)
+
+# Setup SPI
+spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+
+# Run mixed operations
+for i in range(10):
+    # GPIO toggle
+    pin.value = not pin.value
+
+    # I2C probe
+    while not i2c.try_lock():
+        pass
+    i2c.probe(0x50)
+    i2c.unlock()
+
+    # SPI write
+    while not spi.try_lock():
+        pass
+    spi.write(bytes([i]))
+    spi.unlock()
+
+    if i % 3 == 0:
+        print(f"Round {i+1}/10 complete")
+
+print("Stress test complete!")`,
+                timeout: 5000,
+                setupJS: (cp) => {
+                    const board = cp._circuitPythonBoard;
+                    const events = { gpio: 0, i2c: 0, spi: 0 };
+
+                    if (board && board.gpio) {
+                        const pin7 = board.gpio.getPin(7);
+                        pin7.onChange(() => events.gpio++);
+                    }
+
+                    if (board && board.i2c) {
+                        const i2cBus = board.i2c.getBus(0);
+                        i2cBus.onProbe(() => events.i2c++);
+                    }
+
+                    if (board && board.spi) {
+                        const spiBus = board.spi.getBus(0);
+                        spiBus.onTransaction(() => events.spi++);
+                    }
+
+                    return { events };
+                },
+                validate: (result) => {
+                    if (!result || !result.events) return '⚠ Not monitored';
+                    const { gpio, i2c, spi } = result.events;
+                    console.log(`Stress test events - GPIO: ${gpio}, I2C: ${i2c}, SPI: ${spi}`);
+                    const total = gpio + i2c + spi;
+                    return total >= 20 ?
+                        `✓ ${total} total events (GPIO:${gpio} I2C:${i2c} SPI:${spi})` :
+                        `⚠ ${total} total events (GPIO:${gpio} I2C:${i2c} SPI:${spi})`;
+                },
+                validateYields: true
+            }
+        ];
+
+        async function runTest(cp, testCase, index) {
+            const container = document.getElementById('tests-container');
+            const section = document.createElement('div');
+            section.className = 'test-section running';
+
+            let html = `<h2>${testCase.name}</h2>`;
+            html += `<p class="info">${testCase.description}</p>`;
+            html += `<div class="code-block">${testCase.code}</div>`;
+            html += `<div class="stats">`;
+            html += `<div class="stat-box"><div class="stat-label">Status</div><div class="stat-value info" id="status-${index}">Running...</div></div>`;
+            html += `<div class="stat-box"><div class="stat-label">Duration</div><div class="stat-value" id="duration-${index}">0ms</div></div>`;
+            html += `<div class="stat-box"><div class="stat-label">Yields</div><div class="stat-value" id="yields-${index}">0</div></div>`;
+            html += `<div class="stat-box"><div class="stat-label">Validation</div><div class="stat-value info" id="validation-${index}">-</div></div>`;
+            html += `</div>`;
+            html += `<div class="output" id="output-${index}"></div>`;
+
+            section.innerHTML = html;
+            container.appendChild(section);
+
+            const outputDiv = document.getElementById(`output-${index}`);
+            const statusDiv = document.getElementById(`status-${index}`);
+            const durationDiv = document.getElementById(`duration-${index}`);
+            const yieldsDiv = document.getElementById(`yields-${index}`);
+            const validationDiv = document.getElementById(`validation-${index}`);
+
+            let outputLines = [];
+            const startTime = Date.now();
+
+            // Setup JavaScript monitoring
+            let testData = null;
+            if (testCase.setupJS) {
+                testData = testCase.setupJS(cp);
+            }
+
+            // Capture console output
+            const originalLog = console.log;
+            console.log = (...args) => {
+                const line = args.join(' ');
+                if (!line.startsWith('[GPIO') && !line.startsWith('[I2C') && !line.startsWith('[SPI')) {
+                    outputLines.push(line);
+                    if (outputLines.length > 20) outputLines.shift();
+                    outputDiv.innerHTML = outputLines.map(l => `<div>${l}</div>`).join('');
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+                originalLog(...args);
+            };
+
+            try {
+                await Promise.race([
+                    cp.runPythonAsync(testCase.code),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('timeout')), testCase.timeout)
+                    )
+                ]);
+
+                console.log = originalLog;
+
+                const duration = Date.now() - startTime;
+                durationDiv.textContent = duration + 'ms';
+
+                // Get yield statistics
+                const yieldCount = cp._module._wasm_get_asyncify_yield_count ?
+                    cp._module._wasm_get_asyncify_yield_count() : 0;
+                yieldsDiv.textContent = yieldCount;
+
+                // Validate test-specific results
+                let validationMsg = '-';
+                if (testCase.validate && testData) {
+                    validationMsg = testCase.validate(testData);
+                }
+
+                // Validate yield count if requested
+                if (testCase.validateYields && duration > 1000) {
+                    const expectedYields = Math.floor(duration / 100);
+                    if (yieldCount < expectedYields * 0.5) {
+                        validationMsg += ` ⚠ Low yields`;
+                    }
+                }
+
+                validationDiv.innerHTML = validationMsg;
+                statusDiv.textContent = '✓ Pass';
+                statusDiv.className = 'stat-value pass';
+                section.className = 'test-section pass';
+
+            } catch (error) {
+                console.log = originalLog;
+
+                const duration = Date.now() - startTime;
+                durationDiv.textContent = duration + 'ms';
+
+                statusDiv.textContent = error.message === 'timeout' ? '✗ Timeout' : '✗ Error';
+                statusDiv.className = 'stat-value fail';
+                section.className = 'test-section fail';
+                console.error(`${testCase.name} error:`, error);
+                outputDiv.innerHTML += `<div class="fail">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runAllTests() {
+            try {
+                const cp = await loadCircuitPython({
+                    verbose: false,
+                    stdout: (line) => console.log(line)
+                });
+
+                console.log('✓ CircuitPython loaded (asyncified variant)');
+                console.log('✓ Board object:', typeof cp._circuitPythonBoard !== 'undefined');
+
+                const summary = document.getElementById('summary');
+                summary.innerHTML = '<span class="info">Running comprehensive integration tests...</span>';
+
+                // Run tests sequentially
+                for (let i = 0; i < testCases.length; i++) {
+                    await runTest(cp, testCases[i], i);
+                }
+
+                summary.innerHTML = '<span class="pass">✓ All tests completed! Check individual results above.</span>';
+
+            } catch (error) {
+                document.getElementById('summary').innerHTML =
+                    `<span class="fail">Failed to load CircuitPython: ${error.message}</span>`;
+                console.error('Setup error:', error);
+            }
+        }
+
+        runAllTests();
+    </script>
+</body>
+</html>

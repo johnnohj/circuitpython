@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CircuitPython WASM - Simple Load Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .pass { color: #4ec9b0; }
+        .fail { color: #f48771; }
+        .info { color: #dcdcaa; }
+        pre {
+            background: #252526;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>CircuitPython WASM - Simple Load Diagnostic</h1>
+
+    <div id="status">Loading...</div>
+    <pre id="log"></pre>
+
+    <script type="module">
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+
+        function log(msg, type = 'info') {
+            const timestamp = new Date().toISOString().split('T')[1];
+            const prefix = type === 'pass' ? '✓' : type === 'fail' ? '✗' : '•';
+            logEl.textContent += `${timestamp} ${prefix} ${msg}\n`;
+            console.log(msg);
+        }
+
+        async function testLoad() {
+            try {
+                log('Step 1: Importing CircuitPython module...');
+                const { loadCircuitPython } = await import('../build-asyncified/circuitpython.mjs');
+                log('Step 1: Module imported successfully', 'pass');
+
+                log('Step 2: Calling loadCircuitPython()...');
+                const cp = await loadCircuitPython({
+                    verbose: true,
+                    stdout: (line) => log(`STDOUT: ${line}`),
+                    stderr: (line) => log(`STDERR: ${line}`, 'fail')
+                });
+                log('Step 2: CircuitPython loaded successfully', 'pass');
+
+                log('Step 3: Checking CircuitPython object...');
+                log(`  - Type: ${typeof cp}`);
+                log(`  - _module: ${typeof cp._module}`);
+                log(`  - _circuitPythonBoard: ${typeof cp._circuitPythonBoard}`);
+
+                if (cp._circuitPythonBoard) {
+                    log(`  - Board.gpio: ${typeof cp._circuitPythonBoard.gpio}`);
+                    log(`  - Board.i2c: ${typeof cp._circuitPythonBoard.i2c}`);
+                    log(`  - Board.spi: ${typeof cp._circuitPythonBoard.spi}`);
+                }
+
+                log('Step 4: Testing simple Python code...');
+                await cp.runPythonAsync('print("Hello from CircuitPython!")');
+                log('Step 4: Python code executed', 'pass');
+
+                log('Step 5: Testing board import...');
+                await cp.runPythonAsync(`
+import board
+print("Board module imported")
+print("Board attributes:", dir(board))
+`);
+                log('Step 5: Board import successful', 'pass');
+
+                log('Step 6: Checking for D5 pin...');
+                await cp.runPythonAsync(`
+import board
+try:
+    pin = board.D5
+    print(f"D5 pin found: {pin}")
+except AttributeError as e:
+    print(f"D5 not found: {e}")
+`);
+                log('Step 6: Pin check complete', 'pass');
+
+                log('Step 7: Testing background tasks...');
+                await cp.runPythonAsync(`
+import time
+print("Sleeping for 1 second...")
+time.sleep(1)
+print("Sleep complete (background tasks should have run)")
+`);
+                log('Step 7: Background tasks test complete', 'pass');
+
+                if (cp._module._wasm_get_asyncify_yield_count) {
+                    const yields = cp._module._wasm_get_asyncify_yield_count();
+                    log(`Yield count: ${yields}`, yields > 0 ? 'pass' : 'fail');
+                }
+
+                statusEl.innerHTML = '<span class="pass">✓ All diagnostic steps passed!</span>';
+
+            } catch (error) {
+                log(`FATAL ERROR: ${error.message}`, 'fail');
+                log(`Stack: ${error.stack}`, 'fail');
+                statusEl.innerHTML = `<span class="fail">✗ Failed: ${error.message}</span>`;
+                console.error('Full error:', error);
+            }
+        }
+
+        testLoad();
+    </script>
+</body>
+</html>

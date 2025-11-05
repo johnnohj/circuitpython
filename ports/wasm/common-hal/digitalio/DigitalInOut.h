@@ -8,16 +8,23 @@
 
 #include "common-hal/microcontroller/Pin.h"
 #include "py/obj.h"
+#include "proxy_c.h"
 
 // GPIO state for WASM virtual hardware
-// This is the SINGLE SOURCE OF TRUTH for GPIO state in the WASM port
+// Hybrid architecture: C structs for fast access + optional JsProxy for rich web features
 typedef struct {
+    // Fast path: Direct C state
     bool value;          // Current pin value
     uint8_t direction;   // 0=input, 1=output
     uint8_t pull;        // 0=none, 1=up, 2=down
     bool open_drain;     // Open-drain output mode
     bool enabled;        // Pin is enabled/in-use
     bool never_reset;    // If true, don't reset during soft reset
+
+    // Rich path: Optional JsProxy for events (NULL if no web app listeners)
+    // When this exists, JS Pin object is the source of truth
+    // C code syncs to it via store_attr(), triggering automatic onChange events
+    mp_obj_jsproxy_t *js_pin;
 } gpio_pin_state_t;
 
 // 64 virtual GPIO pins - exposed to JavaScript via library.js
