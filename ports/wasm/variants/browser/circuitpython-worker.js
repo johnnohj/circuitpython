@@ -60,11 +60,16 @@ self.onmessage = async function(e) {
                 break;
 
             case 'writeFile':
+                // Write to both IndexedDB (persistence) and VFS (execution)
+
+                // First write to VFS (always needed for execution)
+                circuitPython.FS.writeFile(params.path, params.content);
+
+                // Also write to IndexedDB if storage peripheral is available (for persistence)
                 if (circuitPython.saveFile) {
                     await circuitPython.saveFile(params.path, params.content);
-                } else {
-                    circuitPython.FS.writeFile(params.path, params.content);
                 }
+
                 if (id !== undefined) {
                     postMessage({ type: 'result', id, result: true });
                 }
@@ -93,6 +98,94 @@ self.onmessage = async function(e) {
                 const exists = circuitPython.FS.analyzePath(params.path).exists;
                 if (id !== undefined) {
                     postMessage({ type: 'result', id, result: exists });
+                }
+                break;
+
+            case 'listDir':
+                const entries = circuitPython._module.FS.readdir(params.path);
+                const results = [];
+                for (const name of entries) {
+                    if (name === '.' || name === '..') continue;
+                    const fullPath = params.path === '/' ? `/${name}` : `${params.path}/${name}`;
+                    try {
+                        const stat = circuitPython._module.FS.stat(fullPath);
+                        results.push({
+                            path: name,
+                            isDir: circuitPython._module.FS.isDir(stat.mode),
+                            fileSize: stat.size,
+                            fileDate: stat.mtime.getTime()
+                        });
+                    } catch (e) {
+                        console.warn(`[Worker] Error getting stats for ${fullPath}:`, e);
+                    }
+                }
+                if (id !== undefined) {
+                    postMessage({ type: 'result', id, result: results });
+                }
+                break;
+
+            case 'makeDir':
+                const dirPath = params.path.endsWith('/') ? params.path.slice(0, -1) : params.path;
+                const pathInfo = circuitPython.FS.analyzePath(dirPath);
+                if (!pathInfo.exists) {
+                    circuitPython._module.FS.mkdir(dirPath);
+                }
+                if (id !== undefined) {
+                    postMessage({ type: 'result', id, result: true });
+                }
+                break;
+
+            case 'delete':
+                const deletePathInfo = circuitPython.FS.analyzePath(params.path);
+                if (deletePathInfo.exists) {
+                    const deleteStat = circuitPython._module.FS.stat(params.path);
+                    if (circuitPython._module.FS.isDir(deleteStat.mode)) {
+                        circuitPython._module.FS.rmdir(params.path);
+                    } else {
+                        circuitPython._module.FS.unlink(params.path);
+                    }
+                }
+                if (id !== undefined) {
+                    postMessage({ type: 'result', id, result: true });
+                }
+                break;
+
+            case 'move':
+                circuitPython._module.FS.rename(params.oldPath, params.newPath);
+                if (id !== undefined) {
+                    postMessage({ type: 'result', id, result: true });
+                }
+                break;
+
+            case 'getGpioStates':
+                // Get GPIO peripheral and query all pin states
+                const gpioStates = {};
+                try {
+                    console.log('[Worker] getGpioStates: checking peripherals...', circuitPython.peripherals);
+                    const gpio = circuitPython.peripherals?.get('gpio');
+                    console.log('[Worker] GPIO peripheral:', gpio);
+                    if (gpio && gpio.getAllPins) {
+                        const pins = gpio.getAllPins();
+                        console.log('[Worker] getAllPins() returned:', pins.size, 'pins');
+                        for (const [pinNum] of pins) {
+                            const virtualState = gpio.getVirtualState ? gpio.getVirtualState(pinNum) : null;
+                            console.log('[Worker] Pin', pinNum, 'virtualState:', virtualState);
+                            if (virtualState) {
+                                gpioStates[`GPIO${pinNum}`] = {
+                                    direction: virtualState.direction,
+                                    value: virtualState.value,
+                                    mode: virtualState.analogValue !== undefined && virtualState.analogValue !== 0 ? 'analog' : 'digital'
+                                };
+                            }
+                        }
+                    } else {
+                        console.warn('[Worker] GPIO peripheral not found or missing getAllPins method');
+                    }
+                } catch (e) {
+                    console.warn('[Worker] Error getting GPIO states:', e);
+                }
+                if (id !== undefined) {
+                    postMessage({ type: 'result', id, result: gpioStates });
                 }
                 break;
 

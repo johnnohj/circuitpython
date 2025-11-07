@@ -90,26 +90,102 @@ void busio_reset_spi_state(void) {
     }
 }
 
-// ========== JsProxy Integration Functions ==========
+// ========== Peripheral Hook Integration Functions ==========
 
-// Create a JS SPI bus object and add it to the proxy system
+// Create a JS SPI bus object via peripheral hook and add it to proxy system
+// This uses the layered architecture where peripherals can be attached by applications
 EM_JS(int, spi_create_js_bus_proxy, (int bus_index), {
-    const board = Module._circuitPythonBoard;
-    if (!board || !board.spi) {
-        console.warn('[SPI] CircuitPythonBoard or SPI controller not initialized');
-        return -1;
+    // Try to get SPI peripheral via hook system (preferred method)
+    if (Module.hasPeripheral && Module.hasPeripheral('spi')) {
+        const spiPeripheral = Module.getPeripheral('spi');
+
+        // Check if peripheral has getBus method
+        if (spiPeripheral && typeof spiPeripheral.getBus === 'function') {
+            const bus = spiPeripheral.getBus(bus_index);
+            if (bus) {
+                return proxy_js_add_obj(bus);
+            }
+        }
     }
 
-    // Get the SPI bus object (controller creates it if it doesn't exist)
-    const bus = board.spi.getBus(bus_index);
+    // Fallback: Try legacy _circuitPythonBoard for backward compatibility
+    if (Module._circuitPythonBoard && Module._circuitPythonBoard.spi) {
+        const bus = Module._circuitPythonBoard.spi.getBus(bus_index);
+        if (bus) {
+            return proxy_js_add_obj(bus);
+        }
+    }
 
-    // Add to proxy system and return the reference
-    return proxy_js_add_obj(bus);
+    // No peripheral attached - will use state array simulation only (fast path)
+    return -1;
 });
 
 // Get current timestamp in milliseconds
 EM_JS(double, spi_get_timestamp_ms, (void), {
     return Date.now();
+});
+
+// Perform SPI transfer via peripheral hook (full-duplex)
+// Returns: 0 on success, error code on failure, -1 if peripheral doesn't support transfer
+EM_JS(int, spi_peripheral_transfer, (int bus_index, const uint8_t *write_data, uint8_t *read_data, size_t len), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('spi')) {
+        const spiPeripheral = Module.getPeripheral('spi');
+
+        // Check if peripheral has transfer method
+        if (spiPeripheral && typeof spiPeripheral.transfer === 'function') {
+            try {
+                // Copy write data from WASM to JS
+                const writeBuffer = new Uint8Array(Module.HEAPU8.buffer, write_data, len);
+                const writeData = new Uint8Array(writeBuffer);  // Make a copy
+
+                // Perform transfer
+                const readDataJS = spiPeripheral.transfer(writeData);
+
+                if (readDataJS && readDataJS.length > 0) {
+                    // Copy read data from JS to WASM
+                    const readBuffer = new Uint8Array(Module.HEAPU8.buffer, read_data, len);
+                    readBuffer.set(readDataJS.subarray(0, Math.min(len, readDataJS.length)));
+                    return 0;  // Success
+                }
+                return 1;  // No response
+            } catch (e) {
+                console.error('[SPI] Peripheral transfer error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // No peripheral - use state array
+    return -1;
+});
+
+// Configure SPI via peripheral hook
+// Returns: 0 on success, -1 if peripheral doesn't support configuration
+EM_JS(int, spi_peripheral_configure, (int bus_index, uint32_t baudrate, uint8_t polarity, uint8_t phase, uint8_t bits), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('spi')) {
+        const spiPeripheral = Module.getPeripheral('spi');
+
+        // Check if peripheral has configure method
+        if (spiPeripheral && typeof spiPeripheral.configure === 'function') {
+            try {
+                spiPeripheral.configure({
+                    frequency: baudrate,
+                    polarity: polarity,
+                    phase: phase,
+                    bits: bits
+                });
+                return 0;  // Success
+            } catch (e) {
+                console.error('[SPI] Peripheral configure error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // No peripheral or doesn't support configuration
+    return -1;
 });
 
 // Helper to sync transaction data to JS proxy
@@ -273,7 +349,7 @@ bool common_hal_busio_spi_configure(busio_spi_obj_t *self, uint32_t baudrate,
         return false;
     }
 
-    // Update configuration
+    // Update state array configuration
     spi_buses[bus_idx].baudrate = baudrate;
     spi_buses[bus_idx].polarity = polarity;
     spi_buses[bus_idx].phase = phase;
@@ -284,6 +360,10 @@ bool common_hal_busio_spi_configure(busio_spi_obj_t *self, uint32_t baudrate,
     self->polarity = polarity;
     self->phase = phase;
     self->bits = bits;
+
+    // Try to configure via peripheral hook
+    spi_peripheral_configure(bus_idx, baudrate, polarity, phase, bits);
+    // Note: We don't check the return value - peripheral configuration is optional
 
     return true;
 }
@@ -397,10 +477,24 @@ bool common_hal_busio_spi_transfer(busio_spi_obj_t *self, const uint8_t *data_ou
         return false;
     }
 
-    // Fast path: Store write data and read simulated response
     size_t copy_len = (len > SPI_BUFFER_SIZE) ? SPI_BUFFER_SIZE : len;
+
+    // Try peripheral hook first
+    int peripheral_result = spi_peripheral_transfer(bus_idx, data_out, data_in, copy_len);
+
+    if (peripheral_result == 0) {
+        // Peripheral hook successfully handled the transfer
+        // Data is already in data_in buffer
+    } else if (peripheral_result < 0) {
+        // No peripheral or legacy mode - use state array
+        memcpy(data_in, spi_buses[bus_idx].last_read_data, copy_len);
+    } else {
+        // Peripheral returned an error - still copy state array data as fallback
+        memcpy(data_in, spi_buses[bus_idx].last_read_data, copy_len);
+    }
+
+    // Store write data for JavaScript access
     memcpy(spi_buses[bus_idx].last_write_data, data_out, copy_len);
-    memcpy(data_in, spi_buses[bus_idx].last_read_data, copy_len);
     spi_buses[bus_idx].last_write_len = copy_len;
     spi_buses[bus_idx].last_read_len = copy_len;
 

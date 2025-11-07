@@ -124,6 +124,26 @@ export async function loadCircuitPythonWorker(options) {
             return sendMessage('fileExists', { path });
         },
 
+        listDir(path) {
+            return sendMessage('listDir', { path });
+        },
+
+        makeDir(path) {
+            return sendMessage('makeDir', { path });
+        },
+
+        deleteFile(path) {
+            return sendMessage('delete', { path });
+        },
+
+        moveFile(oldPath, newPath) {
+            return sendMessage('move', { oldPath, newPath });
+        },
+
+        getGpioStates() {
+            return sendMessage('getGpioStates');
+        },
+
         // Filesystem API (proxied to worker)
         FS: {
             async writeFile(path, content) {

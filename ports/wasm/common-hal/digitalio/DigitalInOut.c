@@ -36,19 +36,38 @@ gpio_pin_state_t* get_gpio_state_ptr(void) {
 // Create a JS Pin object and add it to the proxy system
 // Returns the js_ref index for use with mp_obj_new_jsproxy()
 EM_JS(int, gpio_create_js_pin_proxy, (int pin_number), {
-    // Get or create the GPIO controller
-    const board = Module._circuitPythonBoard;
-    if (!board || !board.gpio) {
-        console.warn('[GPIO] CircuitPythonBoard or GPIO controller not initialized');
+    // Detect execution context
+    const isWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+    const context = isWorker ? 'WORKER' : 'MAIN';
+    console.log(`[${context}] gpio_create_js_pin_proxy called for pin ${pin_number}`);
+
+    // Get the GPIO controller from the peripheral system
+    const gpio = Module.getPeripheral('gpio');
+    if (!gpio) {
+        console.warn(`[${context}] GPIO peripheral not initialized`);
         return -1;  // Indicate failure
     }
 
     // Get the Pin object (controller creates it if it doesn't exist)
-    const pin = board.gpio.getPin(pin_number);
+    const pin = gpio.getPin(pin_number);
 
     // Add to proxy system and return the reference
     // This makes the JS Pin object accessible from C code
     return proxy_js_add_obj(pin);
+});
+
+// Post GPIO state update to main thread (if running in worker)
+EM_JS(void, gpio_post_state_update, (int pin_number, int direction, int value), {
+    if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
+        // We're in a worker - post message to main thread immediately
+        // Direct postMessage (not setTimeout) ensures updates stream in real-time
+        self.postMessage({
+            type: 'gpio-update',
+            pin: pin_number,
+            direction: direction === 0 ? 'input' : 'output',
+            value: value !== 0
+        });
+    }
 });
 
 // Helper function to sync a boolean value to JS Pin proxy
@@ -126,6 +145,14 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
     gpio_state[pin_num].enabled = true;
     gpio_state[pin_num].never_reset = false;
 
+    // Create JavaScript Pin proxy for rich web features
+    int js_ref = gpio_create_js_pin_proxy(pin_num);
+    if (js_ref >= 0) {
+        gpio_state[pin_num].js_pin = mp_obj_new_jsproxy(js_ref);
+    } else {
+        gpio_state[pin_num].js_pin = NULL;
+    }
+
     return DIGITALINOUT_OK;
 }
 
@@ -164,6 +191,9 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
                            (pull == PULL_DOWN) ? "down" : "none";
     gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "pull", pull_str);
 
+    // Post update to main thread
+    gpio_post_state_update(pin_num, 0, gpio_state[pin_num].value);
+
     return DIGITALINOUT_OK;
 }
 
@@ -185,6 +215,9 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
     gpio_sync_bool_to_js_pin(gpio_state[pin_num].js_pin, "value", value);
     gpio_sync_str_to_js_pin(gpio_state[pin_num].js_pin, "driveMode",
         (drive_mode == DRIVE_MODE_OPEN_DRAIN) ? "open-drain" : "push-pull");
+
+    // Post update to main thread
+    gpio_post_state_update(pin_num, 1, value);
 
     return DIGITALINOUT_OK;
 }
@@ -211,6 +244,9 @@ void common_hal_digitalio_digitalinout_set_value(
 
         // Rich path: Sync to JsProxy if it exists (triggers automatic onChange events)
         gpio_sync_bool_to_js_pin(gpio_state[pin_num].js_pin, "value", value);
+
+        // Post update to main thread
+        gpio_post_state_update(pin_num, gpio_state[pin_num].direction, value);
     }
 }
 

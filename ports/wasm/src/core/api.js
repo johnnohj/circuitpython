@@ -141,10 +141,68 @@ export async function loadCircuitPython(options) {
 
     // Pin class with onChange callback support
     class Pin {
-        constructor(number) {
+        constructor(number, virtualStateRef) {
             this.number = number;
             this.changeCallbacks = [];
+            this._virtualStateRef = virtualStateRef;
+            this._value = false;
+            this._direction = 'input';
+            this._pull = null;
         }
+
+        get value() {
+            return this._value;
+        }
+
+        set value(val) {
+            const boolValue = Boolean(val);
+            if (this._value !== boolValue) {
+                this._value = boolValue;
+                this._virtualStateRef.value = boolValue;
+                console.log(`[GPIO] Pin ${this.number} value set to ${boolValue}`);
+                this._notifyChange('value', boolValue);
+            }
+        }
+
+        get direction() {
+            return this._direction;
+        }
+
+        set direction(dir) {
+            if (dir !== 'input' && dir !== 'output') {
+                throw new Error(`Invalid direction: ${dir}`);
+            }
+            if (this._direction !== dir) {
+                this._direction = dir;
+                this._virtualStateRef.direction = dir;
+                console.log(`[GPIO] Pin ${this.number} direction set to ${dir}`);
+                this._notifyChange('direction', dir);
+            }
+        }
+
+        get pull() {
+            return this._pull;
+        }
+
+        set pull(p) {
+            if (p === 'none') p = null;
+            if (p !== 'up' && p !== 'down' && p !== null) {
+                throw new Error(`Invalid pull mode: ${p}`);
+            }
+            if (this._pull !== p) {
+                this._pull = p;
+                this._virtualStateRef.pull = p;
+                // Apply pull to value if input
+                if (this._direction === 'input' && p !== null) {
+                    this.value = (p === 'up');
+                }
+                this._notifyChange('pull', p);
+            }
+        }
+
+        getPinValue() { return this.value; }
+        setPinValue(val) { this.value = val; }
+
         onChange(callback) {
             this.changeCallbacks.push(callback);
         }
@@ -157,14 +215,54 @@ export async function loadCircuitPython(options) {
 
     // GPIO Controller
     const pins = new Map();
+    const virtualState = new Map();
     const gpioController = {
         getPin(number) {
             if (!pins.has(number)) {
-                pins.set(number, new Pin(number));
+                const state = {
+                    value: false,
+                    direction: 'input',
+                    pull: null,
+                    analogValue: 0
+                };
+                virtualState.set(number, state);
+                pins.set(number, new Pin(number, state));
+                console.log(`[GPIO] Created pin ${number}`);
             }
             return pins.get(number);
         },
-        getAllPins() { return pins; }
+        getAllPins() { return pins; },
+        getVirtualState(number) {
+            return virtualState.get(number) || {
+                value: false,
+                direction: 'input',
+                pull: null,
+                analogValue: 0
+            };
+        },
+        // Methods expected by library_digitalio.js
+        getPinValue(number) {
+            const pin = this.getPin(number);
+            return pin.value;
+        },
+        setPinValue(number, value) {
+            const pin = this.getPin(number);
+            pin.value = value;
+        },
+        setPinDirection(number, direction) {
+            const pin = this.getPin(number);
+            pin.direction = direction;
+        },
+        setPinPull(number, pull) {
+            const pin = this.getPin(number);
+            pin.pull = pull;
+        },
+        _updateVirtualState(number, updates) {
+            const state = virtualState.get(number);
+            if (state) {
+                Object.assign(state, updates);
+            }
+        }
     };
 
     // Bus class for I2C/SPI with callback support
@@ -223,8 +321,75 @@ export async function loadCircuitPython(options) {
         spi: spiController,
     };
 
+    // CIRCUITPY-CHANGE: Peripheral hook system for layered architecture
+    // This allows applications to register custom peripheral implementations
+    // for Type B modules (displayio, busio, etc.) that require external interaction.
+    // The core API remains environment-agnostic while enabling rich integrations.
+    const peripherals = new Map();
+
+    Module.attachPeripheral = function(name, implementation) {
+        if (typeof name !== 'string' || !name) {
+            throw new Error('Peripheral name must be a non-empty string');
+        }
+        if (typeof implementation !== 'object' || implementation === null) {
+            throw new Error('Peripheral implementation must be an object');
+        }
+        peripherals.set(name, implementation);
+        if (verbose) {
+            console.log(`[CircuitPython] Attached peripheral: ${name}`);
+        }
+    };
+
+    Module.getPeripheral = function(name) {
+        return peripherals.get(name);
+    };
+
+    Module.hasPeripheral = function(name) {
+        return peripherals.has(name);
+    };
+
+    Module.detachPeripheral = function(name) {
+        const existed = peripherals.delete(name);
+        if (existed && verbose) {
+            console.log(`[CircuitPython] Detached peripheral: ${name}`);
+        }
+        return existed;
+    };
+
+    Module.listPeripherals = function() {
+        return Array.from(peripherals.keys());
+    };
+
+    // Register default controllers as peripherals
+    Module.attachPeripheral('gpio', gpioController);
+    Module.attachPeripheral('i2c', i2cController);
+    Module.attachPeripheral('spi', spiController);
+
     if (verbose) {
         console.log('[CircuitPython] Board controllers initialized');
+        console.log('[CircuitPython] Peripheral hook system ready');
+        console.log('[CircuitPython] Registered peripherals:', Module.listPeripherals());
+    }
+
+    // CIRCUITPY-CHANGE: Set up CircuitPython-style directory structure
+    // Create /home/lib/ for user modules and set working directory to /home
+    try {
+        if (!Module.FS.analyzePath('/home').exists) {
+            Module.FS.mkdir('/home');
+        }
+        if (!Module.FS.analyzePath('/home/lib').exists) {
+            Module.FS.mkdir('/home/lib');
+        }
+        // Set current working directory to /home
+        Module.FS.chdir('/home');
+        if (verbose) {
+            console.log('[CircuitPython] Created /home/lib/ directory structure');
+            console.log('[CircuitPython] Working directory set to /home');
+        }
+    } catch (e) {
+        if (verbose) {
+            console.warn('[CircuitPython] Directory setup warning:', e);
+        }
     }
 
     // CIRCUITPY-CHANGE: Initialize persistent filesystem if requested
@@ -240,8 +405,12 @@ export async function loadCircuitPython(options) {
                 // Sync files from IndexedDB to VFS before running any code
                 await persistentFS.syncToVFS(Module);
 
+                // Register filesystem as storage peripheral for os module
+                Module.attachPeripheral('storage', persistentFS);
+
                 if (verbose) {
                     console.log('[CircuitPython] Persistent filesystem initialized');
+                    console.log('[CircuitPython] Registered filesystem as storage peripheral');
                 }
             } else {
                 throw new Error('CircuitPythonFilesystem not available');
@@ -284,22 +453,22 @@ export async function loadCircuitPython(options) {
     // Run CircuitPython boot workflow (boot.py then code.py)
     const runWorkflow = () => {
         try {
-            // Run boot.py if it exists
-            if (Module.FS.analyzePath('/boot.py').exists) {
+            // Run boot.py if it exists in /home
+            if (Module.FS.analyzePath('/home/boot.py').exists) {
                 if (verbose) {
-                    console.log('[CircuitPython] Running /boot.py');
+                    console.log('[CircuitPython] Running /home/boot.py');
                 }
-                runFile('/boot.py');
+                runFile('/home/boot.py');
             }
 
-            // Run code.py if it exists
-            if (Module.FS.analyzePath('/code.py').exists) {
+            // Run code.py if it exists in /home
+            if (Module.FS.analyzePath('/home/code.py').exists) {
                 if (verbose) {
-                    console.log('[CircuitPython] Running /code.py');
+                    console.log('[CircuitPython] Running /home/code.py');
                 }
-                runFile('/code.py');
+                runFile('/home/code.py');
             } else if (verbose) {
-                console.log('[CircuitPython] No code.py found');
+                console.log('[CircuitPython] No code.py found in /home');
             }
         } catch (error) {
             if (verbose) {
@@ -384,6 +553,14 @@ export async function loadCircuitPython(options) {
         saveFile: saveFile,
         saveBinaryFile: saveBinaryFile,
         fetchAndSaveFile: fetchAndSaveFile,
+        // CIRCUITPY-CHANGE: Peripheral hook system for layered architecture
+        peripherals: {
+            attach: Module.attachPeripheral.bind(Module),
+            get: Module.getPeripheral.bind(Module),
+            has: Module.hasPeripheral.bind(Module),
+            detach: Module.detachPeripheral.bind(Module),
+            list: Module.listPeripherals.bind(Module),
+        },
         globals: {
             __dict__: pyimport("__main__").__dict__,
             get(key) {
@@ -631,8 +808,7 @@ globalThis.loadCircuitPython = loadCircuitPython;
 
 // Export worker-based loader for browser environments
 // This runs CircuitPython in a Web Worker to prevent blocking the main thread
-// Worker export disabled for command-line testing
-// export { loadCircuitPythonWorker } from './circuitpython-worker-proxy.js';
+export { loadCircuitPythonWorker } from './circuitpython-worker-proxy.js';
 
 async function runCLI() {
     const fs = await import("fs");

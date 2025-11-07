@@ -86,26 +86,162 @@ void busio_reset_i2c_state(void) {
     }
 }
 
-// ========== JsProxy Integration Functions ==========
+// ========== Peripheral Hook Integration Functions ==========
 
-// Create a JS I2C bus object and add it to the proxy system
+// Create a JS I2C bus object via peripheral hook and add it to proxy system
+// This uses the layered architecture where peripherals can be attached by applications
 EM_JS(int, i2c_create_js_bus_proxy, (int bus_index), {
-    const board = Module._circuitPythonBoard;
-    if (!board || !board.i2c) {
-        console.warn('[I2C] CircuitPythonBoard or I2C controller not initialized');
-        return -1;
+    // Try to get I2C peripheral via hook system (preferred method)
+    if (Module.hasPeripheral && Module.hasPeripheral('i2c')) {
+        const i2cPeripheral = Module.getPeripheral('i2c');
+
+        // Check if peripheral has getBus method
+        if (i2cPeripheral && typeof i2cPeripheral.getBus === 'function') {
+            const bus = i2cPeripheral.getBus(bus_index);
+            if (bus) {
+                return proxy_js_add_obj(bus);
+            }
+        }
     }
 
-    // Get the I2C bus object (controller creates it if it doesn't exist)
-    const bus = board.i2c.getBus(bus_index);
+    // Fallback: Try legacy _circuitPythonBoard for backward compatibility
+    if (Module._circuitPythonBoard && Module._circuitPythonBoard.i2c) {
+        const bus = Module._circuitPythonBoard.i2c.getBus(bus_index);
+        if (bus) {
+            return proxy_js_add_obj(bus);
+        }
+    }
 
-    // Add to proxy system and return the reference
-    return proxy_js_add_obj(bus);
+    // No peripheral attached - will use state array simulation only (fast path)
+    return -1;
 });
 
 // Get current timestamp in milliseconds
 EM_JS(double, i2c_get_timestamp_ms, (void), {
     return Date.now();
+});
+
+// Check if device exists on I2C bus via peripheral hook
+// Returns: 1 if device exists, 0 if not, -1 if peripheral doesn't support probing
+EM_JS(int, i2c_peripheral_probe, (int bus_index, uint8_t addr), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('i2c')) {
+        const i2cPeripheral = Module.getPeripheral('i2c');
+
+        // Check if peripheral has probe method
+        if (i2cPeripheral && typeof i2cPeripheral.probe === 'function') {
+            return i2cPeripheral.probe(addr) ? 1 : 0;
+        }
+    }
+
+    // Fallback: Try legacy board.i2c
+    if (Module._circuitPythonBoard && Module._circuitPythonBoard.i2c) {
+        const bus = Module._circuitPythonBoard.i2c.getBus(bus_index);
+        if (bus && typeof bus._notifyProbe === 'function') {
+            // Legacy path - just notify, use state array for result
+            return -1;
+        }
+    }
+
+    // No peripheral - use state array
+    return -1;
+});
+
+// Perform I2C read via peripheral hook
+// Returns: 0 on success, error code on failure, -1 if peripheral doesn't support reads
+EM_JS(int, i2c_peripheral_read, (int bus_index, uint8_t addr, uint8_t *buffer, size_t len), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('i2c')) {
+        const i2cPeripheral = Module.getPeripheral('i2c');
+
+        // Check if peripheral has read method
+        if (i2cPeripheral && typeof i2cPeripheral.read === 'function') {
+            try {
+                // Peripheral read should return Uint8Array or null
+                const data = i2cPeripheral.read(addr, 0, len);  // register 0 for simple read
+                if (data && data.length > 0) {
+                    // Copy data from JS to WASM memory
+                    const heapView = new Uint8Array(Module.HEAPU8.buffer, buffer, len);
+                    heapView.set(data.subarray(0, Math.min(len, data.length)));
+                    return 0;  // Success
+                }
+                return 1;  // Device didn't respond
+            } catch (e) {
+                console.error('[I2C] Peripheral read error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // No peripheral - use state array
+    return -1;
+});
+
+// Perform I2C write via peripheral hook
+// Returns: 0 on success, error code on failure, -1 if peripheral doesn't support writes
+EM_JS(int, i2c_peripheral_write, (int bus_index, uint8_t addr, const uint8_t *data, size_t len), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('i2c')) {
+        const i2cPeripheral = Module.getPeripheral('i2c');
+
+        // Check if peripheral has write method
+        if (i2cPeripheral && typeof i2cPeripheral.write === 'function') {
+            try {
+                // Copy data from WASM to JS
+                const buffer = new Uint8Array(Module.HEAPU8.buffer, data, len);
+                const dataCopy = new Uint8Array(buffer);  // Make a copy to avoid memory issues
+
+                // Peripheral write: (address, register, data)
+                // First byte is register, rest is data
+                const register = len > 0 ? dataCopy[0] : 0;
+                const writeData = len > 1 ? dataCopy.subarray(1) : new Uint8Array(0);
+
+                i2cPeripheral.write(addr, register, writeData);
+                return 0;  // Success
+            } catch (e) {
+                console.error('[I2C] Peripheral write error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // No peripheral - use state array
+    return -1;
+});
+
+// Perform I2C write-then-read via peripheral hook
+// Returns: 0 on success, error code on failure, -1 if peripheral doesn't support write_read
+EM_JS(int, i2c_peripheral_write_read, (int bus_index, uint8_t addr,
+    const uint8_t *out_data, size_t out_len, uint8_t *in_data, size_t in_len), {
+    // Try peripheral hook first
+    if (Module.hasPeripheral && Module.hasPeripheral('i2c')) {
+        const i2cPeripheral = Module.getPeripheral('i2c');
+
+        // Check if peripheral has read method (we use write to set register, then read)
+        if (i2cPeripheral && typeof i2cPeripheral.read === 'function') {
+            try {
+                // Copy write data (typically register address)
+                const outBuffer = new Uint8Array(Module.HEAPU8.buffer, out_data, out_len);
+                const register = out_len > 0 ? outBuffer[0] : 0;
+
+                // Read from peripheral
+                const data = i2cPeripheral.read(addr, register, in_len);
+                if (data && data.length > 0) {
+                    // Copy data from JS to WASM memory
+                    const inBuffer = new Uint8Array(Module.HEAPU8.buffer, in_data, in_len);
+                    inBuffer.set(data.subarray(0, Math.min(in_len, data.length)));
+                    return 0;  // Success
+                }
+                return 1;  // Device didn't respond
+            } catch (e) {
+                console.error('[I2C] Peripheral write_read error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // No peripheral - use state array
+    return -1;
 });
 
 // Helper to sync transaction data to JS proxy
@@ -300,8 +436,19 @@ bool common_hal_busio_i2c_probe(busio_i2c_obj_t *self, uint8_t addr) {
         return false;
     }
 
-    // Fast path: Check if device is active
-    bool found = i2c_buses[bus_idx].devices[addr].active;
+    // Try peripheral hook first
+    int peripheral_result = i2c_peripheral_probe(bus_idx, addr);
+    bool found;
+
+    if (peripheral_result >= 0) {
+        // Peripheral hook handled it
+        found = (peripheral_result == 1);
+        // Update state array to match peripheral result
+        i2c_buses[bus_idx].devices[addr].active = found;
+    } else {
+        // No peripheral or legacy mode - use state array
+        found = i2c_buses[bus_idx].devices[addr].active;
+    }
 
     // Rich path: Sync probe result to JsProxy (triggers automatic probe events)
     i2c_sync_probe_to_js(i2c_buses[bus_idx].js_bus, addr, found);
@@ -331,16 +478,27 @@ uint8_t common_hal_busio_i2c_write(busio_i2c_obj_t *self, uint16_t address,
         len = I2C_BUFFER_SIZE;
     }
 
-    // Fast path: Store last write for JavaScript access
+    // Store last write for JavaScript access
     i2c_buses[bus_idx].last_write_addr = address;
     memcpy(i2c_buses[bus_idx].last_write_data, data, len);
     i2c_buses[bus_idx].last_write_len = len;
 
-    // If data starts with register address, write to that register
-    if (len >= 2) {
-        uint8_t reg_addr = data[0];
-        memcpy(&i2c_buses[bus_idx].devices[address].registers[reg_addr],
-               &data[1], len - 1);
+    // Try peripheral hook first
+    int peripheral_result = i2c_peripheral_write(bus_idx, address, data, len);
+
+    if (peripheral_result == 0) {
+        // Peripheral hook successfully handled the write
+    } else if (peripheral_result < 0) {
+        // No peripheral or legacy mode - use state array
+        // If data starts with register address, write to that register
+        if (len >= 2) {
+            uint8_t reg_addr = data[0];
+            memcpy(&i2c_buses[bus_idx].devices[address].registers[reg_addr],
+                   &data[1], len - 1);
+        }
+    } else {
+        // Peripheral returned an error
+        return MP_EIO;
     }
 
     // Rich path: Sync to JsProxy (triggers automatic transaction events)
@@ -371,8 +529,19 @@ uint8_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t address,
         len = I2C_BUFFER_SIZE;
     }
 
-    // Fast path: Read from device registers (starting from register 0)
-    memcpy(data, i2c_buses[bus_idx].devices[address].registers, len);
+    // Try peripheral hook first
+    int peripheral_result = i2c_peripheral_read(bus_idx, address, data, len);
+
+    if (peripheral_result == 0) {
+        // Peripheral hook successfully handled the read
+        // Data is already in the buffer
+    } else if (peripheral_result < 0) {
+        // No peripheral or legacy mode - use state array
+        memcpy(data, i2c_buses[bus_idx].devices[address].registers, len);
+    } else {
+        // Peripheral returned an error
+        return MP_EIO;
+    }
 
     // Store last read for JavaScript access
     i2c_buses[bus_idx].last_read_addr = address;
@@ -410,8 +579,20 @@ uint8_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t address,
         in_len = I2C_BUFFER_SIZE;
     }
 
-    // Fast path: Read from specified register
-    memcpy(in_data, &i2c_buses[bus_idx].devices[address].registers[reg_addr], in_len);
+    // Try peripheral hook first
+    int peripheral_result = i2c_peripheral_write_read(bus_idx, address,
+                                                      out_data, out_len, in_data, in_len);
+
+    if (peripheral_result == 0) {
+        // Peripheral hook successfully handled the write_read
+        // Data is already in in_data buffer
+    } else if (peripheral_result < 0) {
+        // No peripheral or legacy mode - use state array
+        memcpy(in_data, &i2c_buses[bus_idx].devices[address].registers[reg_addr], in_len);
+    } else {
+        // Peripheral returned an error
+        return MP_EIO;
+    }
 
     // Store transaction info
     i2c_buses[bus_idx].last_write_addr = address;

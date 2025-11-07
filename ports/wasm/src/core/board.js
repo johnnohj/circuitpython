@@ -109,24 +109,40 @@ export class CircuitPythonBoard {
       await this.display.initialize()
     }
 
-    // 5. Initialize supervisor (it starts the runtime)
+    // 5. Register controllers as peripherals for C code access
+    console.log('[CircuitPythonBoard] Registering peripherals...')
+    if (this.module.peripherals) {
+      this.module.peripherals.attach('gpio', this.gpio)
+      this.module.peripherals.attach('i2c', this.i2c)
+      this.module.peripherals.attach('spi', this.spi)
+      this.module.peripherals.attach('serial', this.serial)
+      if (this.display) {
+        this.module.peripherals.attach('display', this.display)
+      }
+      if (this.storage) {
+        this.module.peripherals.attach('storage', this.storage)
+      }
+      console.log('[CircuitPythonBoard] Peripherals registered:', this.module.peripherals.list())
+    }
+
+    // 6. Initialize supervisor (it starts the runtime)
     console.log('[CircuitPythonBoard] Initializing supervisor...')
     this.supervisor = new SupervisorController(this.module, this)
     await this.supervisor.initialize()
 
-    // 6. Initialize workflow system (enables web app connection)
+    // 7. Initialize workflow system (enables web app connection)
     console.log('[CircuitPythonBoard] Initializing workflow...')
     this.workflow = new WorkflowController(this)
     await this.workflow.start()
 
-    // 7. Expose board instance for library functions to access
+    // 8. Expose board instance for library functions to access
     // This allows library_*.js to delegate to controllers
     if (this.module && typeof this.module === 'object') {
       this.module._circuitPythonBoard = this
       console.log('[CircuitPythonBoard] Exposed to Module._circuitPythonBoard')
     }
 
-    // 8. Board is ready
+    // 9. Board is ready
     this._connected = true
     console.log('[CircuitPythonBoard] Board connected and ready')
     console.log('[CircuitPythonBoard] Access via window.circuitPythonBoard')
@@ -139,10 +155,14 @@ export class CircuitPythonBoard {
    * @private
    */
   async _loadWASMModule() {
-    // Import the appropriate variant module loader
-    // This will be implemented to load from the existing api.js infrastructure
-    const { loadModule } = await import('./api.js')
-    return loadModule(this.config)
+    // Import the core CircuitPython loader
+    const { loadCircuitPython } = await import('./api.js')
+    return loadCircuitPython({
+      heapsize: this.config.heapSize,
+      verbose: this.config.verbose || false,
+      autoRun: false,  // Board handles workflow
+      filesystem: this.config.filesystem || 'indexeddb'
+    })
   }
 
   /**
@@ -207,6 +227,15 @@ export class CircuitPythonBoard {
 
     if (this.supervisor) {
       await this.supervisor.shutdown()
+    }
+
+    // Detach peripherals
+    if (this.module && this.module.peripherals) {
+      const registered = this.module.peripherals.list()
+      for (const name of registered) {
+        this.module.peripherals.detach(name)
+      }
+      console.log('[CircuitPythonBoard] Detached all peripherals')
     }
 
     if (this.display) {

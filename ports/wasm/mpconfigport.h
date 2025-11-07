@@ -207,6 +207,13 @@
 // CIRCUITPY-CHANGE: Background tasks hook
 #define RUN_BACKGROUND_TASKS (background_callback_run_all())
 
+// CIRCUITPY-CHANGE: WASM port provides its own mp_hal_delay_ms implementation
+// The default supervisor version uses port_idle_until_interrupt() which blocks
+// waiting for raw_ticks to increment. But in WASM, raw_ticks is updated by
+// JavaScript setInterval which can't run when the worker thread is blocked.
+// Our implementation uses emscripten_get_now() for a non-blocking busy-wait.
+#define CIRCUITPY_PORT_PROVIDES_DELAY_MS (1)
+
 // type definitions for the specific machine
 
 #define MP_SSIZE_MAX (0x7fffffff)

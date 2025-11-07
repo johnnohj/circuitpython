@@ -52,6 +52,69 @@ uart_port_state_t* get_uart_state_ptr(void) {
     return uart_ports;
 }
 
+// ========== Peripheral Hook Integration Functions ==========
+
+// Notify peripheral of UART write (TX data)
+// Returns: 0 on success, -1 if no peripheral
+EM_JS(int, uart_peripheral_write, (int port_index, const uint8_t *data, size_t len), {
+    // Try to get serial peripheral via hook system
+    if (Module.hasPeripheral && Module.hasPeripheral('serial')) {
+        const serialPeripheral = Module.getPeripheral('serial');
+
+        // Check if peripheral has write method
+        if (serialPeripheral && typeof serialPeripheral.write === 'function') {
+            try {
+                // Copy data from WASM to JS
+                const buffer = new Uint8Array(Module.HEAPU8.buffer, data, len);
+                const dataCopy = new Uint8Array(buffer);  // Make a copy
+
+                serialPeripheral.write(dataCopy);
+                return 0;  // Success
+            } catch (e) {
+                console.error('[UART] Peripheral write error:', e);
+                return 2;  // Error
+            }
+        }
+    }
+
+    // Fallback: Try legacy _circuitPythonBoard.serial
+    if (Module._circuitPythonBoard && Module._circuitPythonBoard.serial) {
+        try {
+            const buffer = new Uint8Array(Module.HEAPU8.buffer, data, len);
+            const dataCopy = new Uint8Array(buffer);
+            Module._circuitPythonBoard.serial.write(dataCopy);
+            return 0;
+        } catch (e) {
+            console.error('[UART] Legacy serial write error:', e);
+        }
+    }
+
+    // No peripheral
+    return -1;
+});
+
+// Get number of bytes available from peripheral (RX data ready)
+// Returns: number of bytes available, or -1 if no peripheral
+EM_JS(int, uart_peripheral_available, (int port_index), {
+    // Try to get serial peripheral via hook system
+    if (Module.hasPeripheral && Module.hasPeripheral('serial')) {
+        const serialPeripheral = Module.getPeripheral('serial');
+
+        // Check if peripheral has available method
+        if (serialPeripheral && typeof serialPeripheral.available === 'function') {
+            try {
+                return serialPeripheral.available();
+            } catch (e) {
+                console.error('[UART] Peripheral available error:', e);
+                return -1;
+            }
+        }
+    }
+
+    // No peripheral
+    return -1;
+});
+
 void busio_reset_uart_state(void) {
     for (int i = 0; i < MAX_UART_PORTS; i++) {
         // Skip ports marked as never_reset (e.g., used by supervisor console)
@@ -244,6 +307,7 @@ size_t common_hal_busio_uart_write(busio_uart_obj_t *self,
         return 0;
     }
 
+    // Store in TX buffer
     uint32_t space = uart_tx_space(port_idx);
     size_t to_write = (len < space) ? len : space;
 
@@ -251,6 +315,10 @@ size_t common_hal_busio_uart_write(busio_uart_obj_t *self,
         uart_ports[port_idx].tx_buffer[uart_ports[port_idx].tx_head] = data[i];
         uart_ports[port_idx].tx_head = (uart_ports[port_idx].tx_head + 1) % UART_BUFFER_SIZE;
     }
+
+    // Try to send via peripheral hook
+    // Note: We store in buffer regardless of peripheral result for consistency
+    (void)uart_peripheral_write(port_idx, data, to_write);
 
     return to_write;
 }

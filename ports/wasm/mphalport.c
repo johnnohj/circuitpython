@@ -41,12 +41,39 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     return write(1, str, len);
 }
 
-// CIRCUITPY-CHANGE: mp_hal_delay_ms is provided by supervisor/shared/tick.c
-// Only mp_hal_delay_us needs to be implemented by the port
+// CIRCUITPY-CHANGE: Override mp_hal_delay_ms for WASM
+// The default implementation in supervisor/shared/tick.c uses port_idle_until_interrupt()
+// which blocks waiting for raw_ticks to increment. But raw_ticks is updated by JavaScript
+// setInterval which can't run when the worker thread is blocked!
+//
+// Solution: Pure busy-wait using emscripten_get_now() - essentially a no-op that just
+// counts time, allowing the worker to continue processing and posting GPIO updates
+
+#include <emscripten.h>
+
+void mp_hal_delay_ms(mp_uint_t delay_ms) {
+    if (delay_ms == 0) {
+        return;
+    }
+
+    double start_time = emscripten_get_now();
+    double target_time = start_time + delay_ms;
+
+    // Simple busy-wait loop - just count time from Date.now()
+    // This is essentially a no-op that allows code to continue
+    while (emscripten_get_now() < target_time) {
+        // Tight loop - could add a small yield here if needed
+        // For now, just busy-wait to maintain timing accuracy
+    }
+}
 
 void mp_hal_delay_us(mp_uint_t us) {
-    uint32_t start = mp_hal_ticks_us();
-    while (mp_hal_ticks_us() - start < us) {
+    // For microsecond delays, use pure busy-wait for better accuracy
+    // Don't yield for such short delays
+    double start = emscripten_get_now();
+    double target = start + (us / 1000.0);
+    while (emscripten_get_now() < target) {
+        // Tight busy-wait
     }
 }
 

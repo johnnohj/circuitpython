@@ -2,6 +2,7 @@
  * CircuitPython WASM Filesystem
  *
  * Provides persistent storage for CircuitPython files using IndexedDB.
+ * Implements the StoragePeripheral interface for use with the os module.
  * Syncs with Emscripten's virtual filesystem (VFS) to provide seamless
  * file operations from Python code.
  */
@@ -14,6 +15,7 @@ export class CircuitPythonFilesystem {
     constructor(verbose = false) {
         this.db = null;
         this.verbose = verbose;
+        this.cwd = '/home';  // Current working directory - CircuitPython user space
     }
 
     /**
@@ -60,15 +62,21 @@ export class CircuitPythonFilesystem {
             throw new Error('Database not initialized');
         }
 
+        // Resolve relative paths
+        const resolvedPath = this._resolvePath(path);
+
         // Convert content to Uint8Array if it's a string
         const data = typeof content === 'string'
             ? new TextEncoder().encode(content)
             : content;
 
+        // Create parent directories if needed
+        await this._ensureParentDirs(resolvedPath);
+
         const fileRecord = {
-            path: path,
+            path: resolvedPath,
             content: data,
-            modified: Date.now(),
+            modified: Date.now() / 1000,  // Unix timestamp in seconds
             size: data.length,
             isDirectory: false
         };
@@ -80,92 +88,111 @@ export class CircuitPythonFilesystem {
 
             request.onsuccess = () => {
                 if (this.verbose) {
-                    console.log(`[CircuitPython FS] Wrote ${path} (${data.length} bytes)`);
+                    console.log(`[CircuitPython FS] Wrote ${resolvedPath} (${data.length} bytes)`);
                 }
                 resolve();
             };
 
             request.onerror = () => {
-                reject(new Error(`Failed to write ${path}: ${request.error}`));
+                reject(new Error(`Failed to write ${resolvedPath}: ${request.error}`));
             };
         });
     }
 
     /**
      * Read a file from IndexedDB
+     * Returns Uint8Array content or null if file doesn't exist
      */
     async readFile(path) {
         if (!this.db) {
             throw new Error('Database not initialized');
         }
 
+        // Resolve relative paths
+        const resolvedPath = this._resolvePath(path);
+
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([STORE_NAME], 'readonly');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(path);
+            const request = store.get(resolvedPath);
 
             request.onsuccess = () => {
                 if (request.result) {
                     if (this.verbose) {
-                        console.log(`[CircuitPython FS] Read ${path} (${request.result.size} bytes)`);
+                        console.log(`[CircuitPython FS] Read ${resolvedPath} (${request.result.size} bytes)`);
                     }
                     resolve(request.result.content);
                 } else {
-                    reject(new Error(`File not found: ${path}`));
+                    // Return null for missing files (StoragePeripheral interface)
+                    resolve(null);
                 }
             };
 
             request.onerror = () => {
-                reject(new Error(`Failed to read ${path}: ${request.error}`));
+                reject(new Error(`Failed to read ${resolvedPath}: ${request.error}`));
             };
         });
     }
 
     /**
      * Delete a file from IndexedDB
+     * Throws error if file doesn't exist or is a directory
      */
     async deleteFile(path) {
         if (!this.db) {
             throw new Error('Database not initialized');
         }
 
+        const resolvedPath = this._resolvePath(path);
+
+        // Check if it's a directory
+        const fileInfo = await this._getFileInfo(resolvedPath);
+        if (!fileInfo) {
+            throw new Error(`File not found: ${resolvedPath}`);
+        }
+        if (fileInfo.isDirectory) {
+            throw new Error(`Cannot delete directory with deleteFile: ${resolvedPath}`);
+        }
+
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([STORE_NAME], 'readwrite');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.delete(path);
+            const request = store.delete(resolvedPath);
 
             request.onsuccess = () => {
                 if (this.verbose) {
-                    console.log(`[CircuitPython FS] Deleted ${path}`);
+                    console.log(`[CircuitPython FS] Deleted ${resolvedPath}`);
                 }
                 resolve();
             };
 
             request.onerror = () => {
-                reject(new Error(`Failed to delete ${path}: ${request.error}`));
+                reject(new Error(`Failed to delete ${resolvedPath}: ${request.error}`));
             };
         });
     }
 
     /**
-     * Check if a file exists
+     * Check if a file or directory exists
      */
     async exists(path) {
         if (!this.db) {
             throw new Error('Database not initialized');
         }
 
+        const resolvedPath = this._resolvePath(path);
+
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([STORE_NAME], 'readonly');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(path);
+            const request = store.get(resolvedPath);
 
             request.onsuccess = () => {
                 resolve(request.result !== undefined);
             };
 
             request.onerror = () => {
-                reject(new Error(`Failed to check ${path}: ${request.error}`));
+                reject(new Error(`Failed to check ${resolvedPath}: ${request.error}`));
             };
         });
     }
@@ -222,9 +249,18 @@ export class CircuitPythonFilesystem {
         }
 
         const files = await this.listFiles();
+        let syncedCount = 0;
 
         for (const fileInfo of files) {
             try {
+                // Skip directory entries - they'll be created as needed by files
+                if (fileInfo.isDirectory) {
+                    if (this.verbose) {
+                        console.log(`[CircuitPython FS] Skipping directory: ${fileInfo.path}`);
+                    }
+                    continue;
+                }
+
                 const content = await this.readFile(fileInfo.path);
 
                 // Create directory structure if needed
@@ -245,6 +281,7 @@ export class CircuitPythonFilesystem {
 
                 // Write file to VFS
                 Module.FS.writeFile(fileInfo.path, content);
+                syncedCount++;
 
                 if (this.verbose) {
                     console.log(`[CircuitPython FS] Synced to VFS: ${fileInfo.path}`);
@@ -255,7 +292,7 @@ export class CircuitPythonFilesystem {
         }
 
         if (this.verbose) {
-            console.log(`[CircuitPython FS] Synced ${files.length} files to VFS`);
+            console.log(`[CircuitPython FS] Synced ${syncedCount} files to VFS`);
         }
     }
 
@@ -335,6 +372,315 @@ export class CircuitPythonFilesystem {
             console.log(`[CircuitPython FS] Imported ${Object.keys(project.files).length} files`);
         }
     }
+
+    // ========== StoragePeripheral Interface Methods ==========
+
+    /**
+     * Get current working directory
+     */
+    getcwd() {
+        return this.cwd;
+    }
+
+    /**
+     * Change current working directory
+     */
+    chdir(path) {
+        const resolvedPath = this._resolvePath(path);
+        // Validate that path exists (optional - could be made async to check DB)
+        this.cwd = resolvedPath;
+        if (this.verbose) {
+            console.log(`[CircuitPython FS] Changed directory to ${this.cwd}`);
+        }
+    }
+
+    /**
+     * Create a directory
+     * Creates parent directories if needed
+     */
+    async mkdir(path) {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const resolvedPath = this._resolvePath(path);
+
+        // Check if directory already exists
+        const existing = await this._getFileInfo(resolvedPath);
+        if (existing) {
+            if (existing.isDirectory) {
+                // Directory already exists - this is OK
+                return;
+            } else {
+                throw new Error(`File exists at path: ${resolvedPath}`);
+            }
+        }
+
+        // Create parent directories recursively
+        await this._ensureParentDirs(resolvedPath);
+
+        // Create the directory entry
+        const dirRecord = {
+            path: resolvedPath,
+            content: null,
+            modified: Date.now() / 1000,
+            size: 0,
+            isDirectory: true
+        };
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put(dirRecord);
+
+            request.onsuccess = () => {
+                if (this.verbose) {
+                    console.log(`[CircuitPython FS] Created directory ${resolvedPath}`);
+                }
+                resolve();
+            };
+
+            request.onerror = () => {
+                reject(new Error(`Failed to create directory ${resolvedPath}: ${request.error}`));
+            };
+        });
+    }
+
+    /**
+     * Remove an empty directory
+     * Throws error if directory is not empty
+     */
+    async rmdir(path) {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const resolvedPath = this._resolvePath(path);
+
+        // Check if it's a directory
+        const fileInfo = await this._getFileInfo(resolvedPath);
+        if (!fileInfo) {
+            throw new Error(`Directory not found: ${resolvedPath}`);
+        }
+        if (!fileInfo.isDirectory) {
+            throw new Error(`Not a directory: ${resolvedPath}`);
+        }
+
+        // Check if directory is empty
+        const contents = await this.listdir(resolvedPath);
+        if (contents.length > 0) {
+            throw new Error(`Directory not empty: ${resolvedPath}`);
+        }
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.delete(resolvedPath);
+
+            request.onsuccess = () => {
+                if (this.verbose) {
+                    console.log(`[CircuitPython FS] Removed directory ${resolvedPath}`);
+                }
+                resolve();
+            };
+
+            request.onerror = () => {
+                reject(new Error(`Failed to remove directory ${resolvedPath}: ${request.error}`));
+            };
+        });
+    }
+
+    /**
+     * List files and directories in a directory
+     * Returns array of names (not full paths)
+     */
+    async listdir(path) {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const resolvedPath = this._resolvePath(path);
+        const prefix = resolvedPath === '/' ? '/' : resolvedPath + '/';
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                const names = new Set();
+
+                for (const file of request.result) {
+                    if (file.path.startsWith(prefix) && file.path !== resolvedPath) {
+                        // Get the relative path after the prefix
+                        const relativePath = file.path.substring(prefix.length);
+                        // Get just the first component (file or directory name)
+                        const name = relativePath.split('/')[0];
+                        if (name) {
+                            names.add(name);
+                        }
+                    }
+                }
+
+                const result = Array.from(names);
+                if (this.verbose) {
+                    console.log(`[CircuitPython FS] Listed ${result.length} items in ${resolvedPath}`);
+                }
+                resolve(result);
+            };
+
+            request.onerror = () => {
+                reject(new Error(`Failed to list directory ${resolvedPath}: ${request.error}`));
+            };
+        });
+    }
+
+    /**
+     * Get file/directory metadata
+     * Returns null if path doesn't exist
+     */
+    async stat(path) {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const resolvedPath = this._resolvePath(path);
+        const fileInfo = await this._getFileInfo(resolvedPath);
+
+        if (!fileInfo) {
+            return null;
+        }
+
+        // Return stat object matching StoragePeripheral interface
+        return {
+            size: fileInfo.size || 0,
+            mode: fileInfo.isDirectory ? 0o040777 : 0o100666,
+            isDirectory: fileInfo.isDirectory,
+            mtime: fileInfo.modified || (Date.now() / 1000),
+            atime: fileInfo.modified || (Date.now() / 1000),
+            ctime: fileInfo.modified || (Date.now() / 1000)
+        };
+    }
+
+    /**
+     * Get filesystem statistics (optional)
+     * Returns null as IndexedDB doesn't provide this info easily
+     */
+    statvfs(_path) {
+        // IndexedDB doesn't easily provide filesystem stats
+        // Could be implemented with navigator.storage.estimate() if needed
+        return null;
+    }
+
+    /**
+     * Set file modification time (optional)
+     */
+    async utime(path, _atime, mtime) {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const resolvedPath = this._resolvePath(path);
+        const fileInfo = await this._getFileInfo(resolvedPath);
+
+        if (!fileInfo) {
+            throw new Error(`File not found: ${resolvedPath}`);
+        }
+
+        // Update the modified timestamp
+        fileInfo.modified = mtime;
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put(fileInfo);
+
+            request.onsuccess = () => {
+                if (this.verbose) {
+                    console.log(`[CircuitPython FS] Updated mtime for ${resolvedPath}`);
+                }
+                resolve();
+            };
+
+            request.onerror = () => {
+                reject(new Error(`Failed to update time for ${resolvedPath}: ${request.error}`));
+            };
+        });
+    }
+
+    // ========== Helper Methods ==========
+
+    /**
+     * Resolve a path relative to current working directory
+     */
+    _resolvePath(path) {
+        if (path.startsWith('/')) {
+            // Absolute path
+            return path;
+        }
+
+        // Relative path - resolve against cwd
+        if (this.cwd === '/') {
+            return '/' + path;
+        }
+        return this.cwd + '/' + path;
+    }
+
+    /**
+     * Get file/directory info from database
+     */
+    async _getFileInfo(path) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(path);
+
+            request.onsuccess = () => {
+                resolve(request.result || null);
+            };
+
+            request.onerror = () => {
+                reject(new Error(`Failed to get file info for ${path}: ${request.error}`));
+            };
+        });
+    }
+
+    /**
+     * Ensure parent directories exist
+     */
+    async _ensureParentDirs(path) {
+        const parts = path.split('/').filter(p => p);
+        if (parts.length <= 1) {
+            return; // No parent directory or root
+        }
+
+        let currentPath = '';
+        for (let i = 0; i < parts.length - 1; i++) {
+            currentPath += '/' + parts[i];
+
+            const existing = await this._getFileInfo(currentPath);
+            if (!existing) {
+                // Create directory entry
+                const dirRecord = {
+                    path: currentPath,
+                    content: null,
+                    modified: Date.now() / 1000,
+                    size: 0,
+                    isDirectory: true
+                };
+
+                await new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.put(dirRecord);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(new Error(`Failed to create directory ${currentPath}`));
+                });
+            }
+        }
+    }
+
+    // ========== Utility Methods ==========
 
     /**
      * Clear all files from IndexedDB

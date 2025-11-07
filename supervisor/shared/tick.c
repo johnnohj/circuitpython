@@ -85,13 +85,6 @@ void supervisor_tick(void) {
     background_callback_add(&tick_callback, supervisor_background_tick, NULL);
 }
 
-static uint64_t _get_raw_subticks(void) {
-    uint64_t ticks;
-    uint8_t subticks;
-    ticks = port_get_raw_ticks(&subticks);
-    return (ticks << 5) | subticks;
-}
-
 uint64_t supervisor_ticks_ms64(void) {
     uint64_t result;
     result = port_get_raw_ticks(NULL);
@@ -101,6 +94,17 @@ uint64_t supervisor_ticks_ms64(void) {
 
 uint32_t supervisor_ticks_ms32(void) {
     return supervisor_ticks_ms64();
+}
+
+// Allow ports to provide their own mp_hal_delay_ms implementation
+// (e.g., WASM uses emscripten_get_now() for non-blocking delays)
+#ifndef CIRCUITPY_PORT_PROVIDES_DELAY_MS
+
+static uint64_t _get_raw_subticks(void) {
+    uint64_t ticks;
+    uint8_t subticks;
+    ticks = port_get_raw_ticks(&subticks);
+    return (ticks << 5) | subticks;
 }
 
 void mp_hal_delay_ms(mp_uint_t delay_ms) {
@@ -130,6 +134,7 @@ void mp_hal_delay_ms(mp_uint_t delay_ms) {
         remaining = end_subtick - _get_raw_subticks();
     }
 }
+#endif
 
 void supervisor_enable_tick(void) {
     common_hal_mcu_disable_interrupts();
