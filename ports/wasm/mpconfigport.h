@@ -111,7 +111,7 @@
 
 // CIRCUITPY-CHANGE: CircuitPython-specific settings
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
-#define MICROPY_PY_ASYNC_AWAIT (1)
+// MICROPY_PY_ASYNC_AWAIT and CIRCUITPY_STATUS_BAR are set in mpconfigport.mk
 #define MICROPY_PY_UCTYPES (0)
 #define MICROPY_PY_MICROPYTHON_RINGIO (0)  // Not supported in WASM
 

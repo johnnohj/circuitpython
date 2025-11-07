@@ -44,5 +44,6 @@
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 
 // WASM has no physical status LEDs, disable status bar features
-#define CIRCUITPY_STATUS_BAR 0
+// NOTE: CIRCUITPY_STATUS_BAR is now set in mpconfigport.h to avoid redefinition
+// #define CIRCUITPY_STATUS_BAR 0
 

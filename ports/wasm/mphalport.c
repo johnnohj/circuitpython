@@ -81,3 +81,13 @@ extern int mp_interrupt_char;
 int mp_hal_get_interrupt_char(void) {
     return mp_interrupt_char;
 }
+
+// CircuitPython os.urandom support (required by random module)
+bool common_hal_os_urandom(uint8_t *buffer, uint32_t length) {
+    // TODO: Implement using JavaScript's crypto.getRandomValues()
+    // For now, return zeros to indicate no real randomness available
+    for (uint32_t i = 0; i < length; i++) {
+        buffer[i] = 0;
+    }
+    return false;  // Return false to indicate we didn't get real random data
+}

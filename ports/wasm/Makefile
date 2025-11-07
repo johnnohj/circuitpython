@@ -35,6 +35,7 @@ FROZEN_MANIFEST ?= variants/manifest.py
 QSTR_DEFS = qstrdefsport.h
 QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
 
+include $(TOP)/py/circuitpy_mpconfig.mk
 include $(TOP)/py/circuitpy_defns.mk
 
 # include py core make definitions
