@@ -421,3 +421,6 @@
 [submodule "frozen/CircuitPython_edupico2_paj7620"]
 	path = frozen/CircuitPython_edupico2_paj7620
 	url = https://github.com/CytronTechnologies/CircuitPython_edupico2_paj7620.git
+[submodule "ports/wasm"]
+	path = ports/wasm
+	url = https://github.com/johnnohj/exp-wasm
