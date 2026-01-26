@@ -104,6 +104,7 @@ TAGS
 
 **/CLAUDE.local.md
 .claude
+.claudeignore
 
 # windsurf rules
 .windsurfrules

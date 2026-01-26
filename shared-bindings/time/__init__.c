@@ -66,8 +66,8 @@ static mp_obj_t time_sleep(mp_obj_t seconds_o) {
     mp_int_t seconds = mp_obj_get_int(seconds_o);
     mp_int_t msecs = 1000 * seconds;
     #endif
-    mp_arg_validate_int_min(msecs, 0, MP_QSTR_seconds);
-    common_hal_time_delay_ms(msecs);
+    mp_arg_validate_int_min((mp_int_t)msecs, 0, MP_QSTR_seconds);
+    common_hal_time_delay_ms((uint32_t)msecs);
     return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_1(time_sleep_obj, time_sleep);
