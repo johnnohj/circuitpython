@@ -134,7 +134,8 @@ msgstr "%q στο %q πρέπει να είναι τύπου %q, όχι %q"
 #: ports/raspberrypi/common-hal/rp2pio/StateMachine.c
 #: ports/raspberrypi/common-hal/usb_host/Port.c
 #: shared-bindings/digitalio/DigitalInOut.c
-#: shared-bindings/microcontroller/Pin.c shared-module/max3421e/Max3421E.c
+#: shared-bindings/i2cioexpander/IOPin.c shared-bindings/microcontroller/Pin.c
+#: shared-module/max3421e/Max3421E.c
 msgid "%q in use"
 msgstr "%q είναι σε χρήση"
 
@@ -147,7 +148,7 @@ msgid "%q indices must be integers, not %s"
 msgstr "%q δείκτες πρέπει να είναι ακέραιοι, όχι %s"
 
 #: ports/analog/common-hal/busio/SPI.c ports/analog/common-hal/busio/UART.c
-#: shared-module/bitbangio/SPI.c
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
 msgid "%q init failed"
 msgstr "%q εκκίνηση απέτυχε"
 
@@ -250,6 +251,14 @@ msgstr "%q πρέπει να είναι τύπου %q, όχι %q"
 msgid "%q must be power of 2"
 msgstr "%q πρέπει να είναι δύναμη του 2"
 
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "%q object missing '%q' attribute"
+msgstr ""
+
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "%q object missing '%q' method"
+msgstr ""
+
 #: shared-bindings/wifi/Monitor.c
 msgid "%q out of bounds"
 msgstr "%q εκτός ορίων"
@@ -319,7 +328,7 @@ msgstr "%s σφάλμα 0x%x"
 msgid "'%q' argument required"
 msgstr "'%q' όρισμα απαιτείται"
 
-#: py/proto.c
+#: py/proto.c shared-bindings/digitalio/DigitalInOutProtocol.c
 msgid "'%q' object does not support '%q'"
 msgstr "'%q' αντικείμενο δεν υποστηρίζει '%q'"
 
@@ -589,7 +598,7 @@ msgstr "Τρέχει ήδη"
 msgid "Already scanning for wifi networks"
 msgstr "Ήδη γίνεται σάρωση για δίκτυα wifi"
 
-#: shared-module/os/getenv.c
+#: supervisor/shared/settings.c
 #, c-format
 msgid "An error occurred while retrieving '%s':\n"
 msgstr "Παρουσιάστηκε σφάλμα κατά την ανάκτηση '%s':\n"
@@ -785,6 +794,10 @@ msgid "Cannot create a new Adapter; use _bleio.adapter;"
 msgstr ""
 "Δεν μπορεί να δημιουργηθεί νέο Adapter; χρησιμοποιείστε _bleio.adapter;"
 
+#: shared-module/i2cioexpander/IOExpander.c
+msgid "Cannot deinitialize board IOExpander"
+msgstr ""
+
 #: shared-bindings/displayio/Bitmap.c
 #: shared-bindings/memorymonitor/AllocationSize.c
 #: shared-bindings/pulseio/PulseIn.c
@@ -821,6 +834,7 @@ msgid "Cannot remount path when visible via USB."
 msgstr ""
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Cannot set value when direction is input."
 msgstr "Δεν μπορεί να οριστεί τιμή οταν η κατεύθυνση είναι input."
 
@@ -964,6 +978,7 @@ msgid "Done"
 msgstr "Ολοκληρώθηκε"
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Drive mode not used when direction is input."
 msgstr "Ο τρόπος οδήγησης δεν χρησιμοποιείται όταν η κατεύθυνση είναι είσοδος."
 
@@ -1103,7 +1118,6 @@ msgid "File exists"
 msgstr ""
 
 #: shared-bindings/supervisor/__init__.c shared-module/lvfontio/OnDiskFont.c
-#: shared-module/os/getenv.c
 msgid "File not found"
 msgstr ""
 
@@ -1254,7 +1268,7 @@ msgstr ""
 msgid "Internal define error"
 msgstr ""
 
-#: shared-bindings/pwmio/PWMOut.c shared-module/os/getenv.c
+#: shared-bindings/pwmio/PWMOut.c supervisor/shared/settings.c
 msgid "Internal error"
 msgstr ""
 
@@ -1303,8 +1317,8 @@ msgstr ""
 #: ports/raspberrypi/common-hal/picodvi/Framebuffer_RP2040.c py/argcheck.c
 #: shared-bindings/digitalio/DigitalInOut.c
 #: shared-bindings/epaperdisplay/EPaperDisplay.c
-#: shared-bindings/mipidsi/Display.c shared-bindings/pwmio/PWMOut.c
-#: shared-bindings/supervisor/__init__.c
+#: shared-bindings/i2cioexpander/IOPin.c shared-bindings/mipidsi/Display.c
+#: shared-bindings/pwmio/PWMOut.c shared-bindings/supervisor/__init__.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
 #: shared-module/lvfontio/OnDiskFont.c
 msgid "Invalid %q"
@@ -1343,6 +1357,10 @@ msgstr ""
 msgid "Invalid ROS domain ID"
 msgstr ""
 
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
+msgid "Invalid advertising data"
+msgstr ""
+
 #: ports/espressif/common-hal/espidf/__init__.c py/moderrno.c
 msgid "Invalid argument"
 msgstr ""
@@ -1351,17 +1369,12 @@ msgstr ""
 msgid "Invalid bits per value"
 msgstr ""
 
-#: shared-module/os/getenv.c
-#, c-format
-msgid "Invalid byte %.*s"
-msgstr ""
-
 #: ports/atmel-samd/common-hal/imagecapture/ParallelImageCapture.c
 #, c-format
 msgid "Invalid data_pins[%d]"
 msgstr ""
 
-#: shared-module/msgpack/__init__.c
+#: shared-module/msgpack/__init__.c supervisor/shared/settings.c
 msgid "Invalid format"
 msgstr ""
 
@@ -1392,16 +1405,12 @@ msgstr ""
 msgid "Invalid state"
 msgstr ""
 
-#: shared-module/os/getenv.c
+#: supervisor/shared/settings.c
 msgid "Invalid unicode escape"
 msgstr ""
 
 #: shared-bindings/aesio/aes.c
 msgid "Key must be 16, 24, or 32 bytes long"
-msgstr ""
-
-#: shared-module/os/getenv.c
-msgid "Key not found"
 msgstr ""
 
 #: shared-module/is31fl3741/FrameBuffer.c
@@ -1670,10 +1679,6 @@ msgstr ""
 msgid "Not playing"
 msgstr ""
 
-#: shared-module/jpegio/JpegDecoder.c
-msgid "Not supported JPEG standard"
-msgstr ""
-
 #: ports/espressif/common-hal/paralleldisplaybus/ParallelBus.c
 #: ports/espressif/common-hal/sdioio/SDCard.c
 #, c-format
@@ -1908,6 +1913,7 @@ msgid "Publishers can only be created from a parent node"
 msgstr ""
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Pull not used when direction is output."
 msgstr ""
 
@@ -2089,8 +2095,11 @@ msgstr ""
 
 #: ports/espressif/common-hal/socketpool/SocketPool.c
 #: ports/raspberrypi/common-hal/socketpool/SocketPool.c
-#: ports/zephyr-cp/common-hal/socketpool/SocketPool.c
 msgid "SocketPool can only be used with wifi.radio"
+msgstr ""
+
+#: ports/zephyr-cp/common-hal/socketpool/SocketPool.c
+msgid "SocketPool can only be used with wifi.radio or hostnetwork.HostNetwork"
 msgstr ""
 
 #: shared-bindings/aesio/aes.c
@@ -2400,6 +2409,10 @@ msgid ""
 "declined or ignored."
 msgstr ""
 
+#: shared-module/jpegio/JpegDecoder.c
+msgid "Unsupported JPEG (may be progressive)"
+msgstr ""
+
 #: shared-bindings/bitmaptools/__init__.c
 msgid "Unsupported colorspace"
 msgstr ""
@@ -2565,6 +2578,10 @@ msgstr ""
 
 #: extmod/modbinascii.c extmod/modhashlib.c py/objarray.c
 msgid "a bytes-like object is required"
+msgstr ""
+
+#: shared-bindings/i2cioexpander/IOExpander.c
+msgid "address out of range"
 msgstr ""
 
 #: shared-bindings/i2ctarget/I2CTarget.c
@@ -3819,6 +3836,7 @@ msgid "non-hex digit"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "non-zero timeout must be > 0.01"
 msgstr ""
 
@@ -3842,6 +3860,10 @@ msgstr ""
 msgid "not supported for input types"
 msgstr ""
 
+#: shared-bindings/i2cioexpander/IOExpander.c
+msgid "num_pins must be 8 or 16"
+msgstr ""
+
 #: extmod/ulab/code/numpy/create.c
 msgid "number of points must be at least 2"
 msgstr ""
@@ -3853,6 +3875,10 @@ msgstr ""
 #: py/obj.c
 #, c-format
 msgid "object '%s' isn't a tuple or list"
+msgstr ""
+
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "object does not support DigitalInOut protocol"
 msgstr ""
 
 #: py/obj.c
@@ -4294,6 +4320,7 @@ msgid "timeout duration exceeded the maximum supported value"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "timeout must be < 655.35 secs"
 msgstr ""
 

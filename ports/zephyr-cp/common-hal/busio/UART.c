@@ -126,7 +126,7 @@ void common_hal_busio_uart_set_baudrate(busio_uart_obj_t *self, uint32_t baudrat
     struct uart_config config;
     uart_config_get(self->uart_device, &config);
     config.baudrate = baudrate;
-    uart_config_set(self->uart_device, &config);
+    uart_configure(self->uart_device, &config);
 }
 
 mp_float_t common_hal_busio_uart_get_timeout(busio_uart_obj_t *self) {

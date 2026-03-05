@@ -21,6 +21,7 @@
 #include "py/stackctrl.h"
 
 #include "shared/readline/readline.h"
+#include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
 
 #include "background.h"
@@ -30,7 +31,6 @@
 #include "supervisor/cpu.h"
 #include "supervisor/filesystem.h"
 #include "supervisor/port.h"
-#include "supervisor/shared/cpu_regs.h"
 #include "supervisor/shared/reload.h"
 #include "supervisor/shared/safe_mode.h"
 #include "supervisor/shared/serial.h"
@@ -113,8 +113,8 @@
 uint8_t value_out = 0;
 #endif
 
-#if MICROPY_ENABLE_PYSTACK && CIRCUITPY_OS_GETENV
-#include "shared-module/os/__init__.h"
+#if CIRCUITPY_SETTINGS_TOML
+#include "supervisor/shared/settings.h"
 #endif
 
 static void reset_devices(void) {
@@ -132,17 +132,17 @@ static const char line_clear[] = "\x1b[2K\x1b[0G";
 #if MICROPY_ENABLE_PYSTACK || MICROPY_ENABLE_GC
 static uint8_t *_allocate_memory(safe_mode_t safe_mode, const char *env_key, size_t default_size, size_t *final_size) {
     *final_size = default_size;
-    #if CIRCUITPY_OS_GETENV
+    #if CIRCUITPY_SETTINGS_TOML
     if (safe_mode == SAFE_MODE_NONE) {
         mp_int_t size;
-        if (common_hal_os_getenv_int(env_key, &size) == GETENV_OK && size > 0) {
+        if (settings_get_int(env_key, &size) == SETTINGS_OK && size > 0) {
             *final_size = size;
         }
     }
     #endif
     uint8_t *ptr = port_malloc(*final_size, false);
 
-    #if CIRCUITPY_OS_GETENV
+    #if CIRCUITPY_SETTINGS_TOML
     if (ptr == NULL) {
         // Fallback to the build size.
         ptr = port_malloc(default_size, false);
@@ -1161,13 +1161,7 @@ int __attribute__((used)) main(void) {
 void gc_collect(void) {
     gc_collect_start();
 
-    // Load register values onto the stack. They get collected below with the rest of the stack.
-    size_t regs[SAVED_REGISTER_COUNT];
-    mp_uint_t sp = cpu_get_regs_and_sp(regs);
-
-    // This naively collects all object references from an approximate stack
-    // range.
-    gc_collect_root((void **)sp, ((mp_uint_t)port_stack_get_top() - sp) / sizeof(mp_uint_t));
+    gc_helper_collect_regs_and_stack();
 
     // This collects root pointers from the VFS mount table. Some of them may
     // have lost their references in the VM even though they are mounted.

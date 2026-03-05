@@ -38,8 +38,7 @@ ifeq ($(DEBUG), 1)
 	CFLAGS += -fno-inline -fno-ipa-sra
 else
 	CFLAGS += -DNDEBUG
-	OPTIMIZATION_FLAGS ?= -O2 -fno-inline-functions
-	CFLAGS += -ggdb3
+	OPTIMIZATION_FLAGS ?= -O2
 endif
 
 # to override compiler optimization level, set in boards/$(BOARD)/mpconfigboard.mk
@@ -212,9 +211,11 @@ ifneq ($(CIRCUITPY_USB),0)
 	endif
 endif
 
-SRC_S_UPPER = supervisor/shared/cpu_regs.S
 SRC_S = \
+	shared/runtime/gchelper_thumb1.s \
 	st_driver/cmsis_device_$(MCU_SERIES_LOWER)/Source/Templates/gcc/startup_$(MCU_VARIANT_LOWER).s
+
+SRC_C += shared/runtime/gchelper_native.c
 
 ifneq ($(FROZEN_MPY_DIR),)
 FROZEN_MPY_PY_FILES := $(shell find -L $(FROZEN_MPY_DIR) -type f -name '*.py')
@@ -229,7 +230,6 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_LIBM:.c=.o))
 endif
 OBJ += $(addprefix $(BUILD)/, $(SRC_CIRCUITPY_COMMON:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_S:.s=.o))
-OBJ += $(addprefix $(BUILD)/, $(SRC_S_UPPER:.S=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
 
 $(BUILD)/$(FATFS_DIR)/ff.o: COPT += -Os

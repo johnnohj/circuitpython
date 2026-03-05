@@ -22,7 +22,7 @@
 #include "supervisor/shared/reload.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(usb, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(cpusb, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define USB_DEVICE DT_NODELABEL(zephyr_udc0)
 
@@ -191,6 +191,20 @@ int _zephyr_disk_ioctl(struct disk_info *disk, uint8_t cmd, void *buff) {
 
 static void _msg_cb(struct usbd_context *const ctx, const struct usbd_msg *msg) {
     LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
+
+    if (usbd_can_detect_vbus(ctx)) {
+        if (msg->type == USBD_MSG_VBUS_READY) {
+            if (usbd_enable(ctx)) {
+                LOG_ERR("Failed to enable device support");
+            }
+        }
+
+        if (msg->type == USBD_MSG_VBUS_REMOVED) {
+            if (usbd_disable(ctx)) {
+                LOG_ERR("Failed to disable device support");
+            }
+        }
+    }
 }
 
 void usb_init(void) {
@@ -341,12 +355,14 @@ void usb_init(void) {
 
     printk("USB initialized\n");
 
-    err = usbd_enable(&main_usbd);
-    if (err) {
-        LOG_ERR("Failed to enable device support");
-        return;
+    if (!usbd_can_detect_vbus(&main_usbd)) {
+        err = usbd_enable(&main_usbd);
+        if (err) {
+            LOG_ERR("Failed to enable device support");
+            return;
+        }
+        printk("usbd enabled\n");
     }
-    printk("usbd enabled\n");
 }
 
 bool usb_connected(void) {

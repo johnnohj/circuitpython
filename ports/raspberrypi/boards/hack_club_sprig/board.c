@@ -62,9 +62,9 @@ void board_init(void) {
     bus->base.type = &fourwire_fourwire_type;
     common_hal_fourwire_fourwire_construct(bus,
         spi,
-        CIRCUITPY_BOARD_TFT_DC,
-        CIRCUITPY_BOARD_TFT_CS,
-        CIRCUITPY_BOARD_TFT_RESET,
+        MP_OBJ_FROM_PTR(CIRCUITPY_BOARD_TFT_DC),
+        MP_OBJ_FROM_PTR(CIRCUITPY_BOARD_TFT_CS),
+        MP_OBJ_FROM_PTR(CIRCUITPY_BOARD_TFT_RESET),
         30000000,
         0,
         0);

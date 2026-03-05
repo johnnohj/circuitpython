@@ -4,7 +4,7 @@ jinja2
 typer
 
 sh
-click
+click<8.2.0
 cpp-coveralls
 
 requests
@@ -25,8 +25,7 @@ intelhex
 # for building & testing natmods
 pyelftools
 
-# newer versions break ESP-IDF now
-cryptography<45
+cryptography
 
 # for web workflow minify
 minify_html
@@ -42,3 +41,5 @@ setuptools
 # For zephyr port
 tomlkit
 pytest
+pytest-rerunfailures
+perfetto

@@ -2,8 +2,8 @@
 name = "Nordic Semiconductor nRF7002 DK"
 
 [modules]
-__future__ = false
-_bleio = false
+__future__ = true
+_bleio = true # Zephyr board has _bleio
 _eve = false
 _pew = false
 _pixelmap = false
@@ -49,8 +49,10 @@ frequencyio = false
 getpass = false
 gifio = false
 gnss = false
-hashlib = false
+hashlib = true # Zephyr networking enabled
+hostnetwork = false
 i2cdisplaybus = true # Zephyr board has busio
+i2cioexpander = false
 i2ctarget = false
 imagecapture = false
 ipaddress = false
@@ -81,7 +83,7 @@ rainbowio = true
 random = true
 rclcpy = false
 rgbmatrix = false
-rotaryio = false
+rotaryio = true # Zephyr board has rotaryio
 rtc = false
 sdcardio = true # Zephyr board has busio
 sdioio = false

@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	chosen {
+		zephyr,sram = &sram0;
+	};
+};
+
+&sram0 {
+	compatible = "zephyr,memory-region", "mmio-sram";
+	zephyr,memory-region = "SRAM";
+};
+
+&flash0 {
+	/delete-node/ partitions;
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		circuitpy_partition: partition@0 {
+			label = "circuitpy";
+			reg = <0x00000000 DT_SIZE_K(1024)>;
+		};
+	};
+};
+
+/* Note: bsim doesn't have USB, so we don't include app.overlay */

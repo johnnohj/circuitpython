@@ -73,34 +73,34 @@ void common_hal_busio_i2c_unlock(busio_i2c_obj_t *self) {
     k_mutex_unlock(&self->mutex);
 }
 
-uint8_t common_hal_busio_i2c_write(busio_i2c_obj_t *self, uint16_t addr,
+mp_negative_errno_t common_hal_busio_i2c_write(busio_i2c_obj_t *self, uint16_t addr,
     const uint8_t *data, size_t len) {
 
     if (common_hal_busio_i2c_deinited(self)) {
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     int ret = i2c_write(self->i2c_device, data, len, addr);
     if (ret != 0) {
         // Map Zephyr error codes to errno
         if (ret == -ENOTSUP) {
-            return MP_EOPNOTSUPP;
+            return -MP_EOPNOTSUPP;
         } else if (ret == -EIO || ret == -ENXIO) {
-            return MP_EIO;
+            return -MP_EIO;
         } else if (ret == -EBUSY) {
-            return MP_EBUSY;
+            return -MP_EBUSY;
         }
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     return 0;
 }
 
-uint8_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t addr,
+mp_negative_errno_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t addr,
     uint8_t *data, size_t len) {
 
     if (common_hal_busio_i2c_deinited(self)) {
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     if (len == 0) {
@@ -111,23 +111,23 @@ uint8_t common_hal_busio_i2c_read(busio_i2c_obj_t *self, uint16_t addr,
     if (ret != 0) {
         // Map Zephyr error codes to errno
         if (ret == -ENOTSUP) {
-            return MP_EOPNOTSUPP;
+            return -MP_EOPNOTSUPP;
         } else if (ret == -EIO || ret == -ENXIO) {
-            return MP_EIO;
+            return -MP_EIO;
         } else if (ret == -EBUSY) {
-            return MP_EBUSY;
+            return -MP_EBUSY;
         }
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     return 0;
 }
 
-uint8_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t addr,
+mp_negative_errno_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t addr,
     uint8_t *out_data, size_t out_len, uint8_t *in_data, size_t in_len) {
 
     if (common_hal_busio_i2c_deinited(self)) {
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     // Use i2c_write_read for combined transaction with repeated start
@@ -135,13 +135,13 @@ uint8_t common_hal_busio_i2c_write_read(busio_i2c_obj_t *self, uint16_t addr,
     if (ret != 0) {
         // Map Zephyr error codes to errno
         if (ret == -ENOTSUP) {
-            return MP_EOPNOTSUPP;
+            return -MP_EOPNOTSUPP;
         } else if (ret == -EIO || ret == -ENXIO) {
-            return MP_EIO;
+            return -MP_EIO;
         } else if (ret == -EBUSY) {
-            return MP_EBUSY;
+            return -MP_EBUSY;
         }
-        return MP_EIO;
+        return -MP_EIO;
     }
 
     return 0;

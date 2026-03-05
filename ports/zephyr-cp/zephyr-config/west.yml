@@ -1,7 +1,13 @@
 manifest:
+  group-filter:
+    - +babblesim
   projects:
+    - name: nrf_hw_models
+      url: https://github.com/tannewt/ext_nRF_hw_models
+      revision: c2927847bdf2ee0af9c5459f4155c67f39f6837a
+      path: modules/bsim_hw_models/nrf_hw_models
     - name: zephyr
       url: https://github.com/adafruit/zephyr
-      revision: circuitpython-v4.3.0
+      revision: 589b2139926017d4d98724bac653ceb30802be9f
       clone-depth: 100
       import: true

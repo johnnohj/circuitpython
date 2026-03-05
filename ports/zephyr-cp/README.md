@@ -28,6 +28,20 @@ make BOARD=nordic_nrf7002dk
 This uses Zephyr's cmake to generate Makefiles that then delegate to
 `tools/cpbuild/build_circuitpython.py` to build the CircuitPython bits in parallel.
 
+## Running the native simulator
+
+From `ports/zephyr-cp`, run:
+
+```sh
+make run-sim
+```
+
+`run-sim` starts the native simulator in realtime.
+It prints the PTY path to connect to the simulator REPL.
+If a local `./CIRCUITPY/` folder exists, its files are used as the simulator's CIRCUITPY drive.
+
+Edit files in `./CIRCUITPY` (for example `code.py`) and rerun `make run-sim` to test changes.
+
 ## Testing other boards
 
 [Any Zephyr board](https://docs.zephyrproject.org/latest/boards/index.html#) can

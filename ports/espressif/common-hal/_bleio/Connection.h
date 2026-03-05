@@ -64,6 +64,7 @@ void bleio_connection_clear(bleio_connection_internal_t *self);
 
 int bleio_connection_event_cb(struct ble_gap_event *event, void *connection_in);
 
+void bleio_check_connected(uint16_t conn_handle);
 uint16_t bleio_connection_get_conn_handle(bleio_connection_obj_t *self);
 mp_obj_t bleio_connection_new_from_internal(bleio_connection_internal_t *connection);
 bleio_connection_internal_t *bleio_conn_handle_to_connection(uint16_t conn_handle);

@@ -1,10 +1,10 @@
 &is25wp128 {
-    partitions{
-        /delete-node/ storage_partition;
-        circuitpy_partition: partition@E20000 {
-			label = "circuitpy";
-			reg = <0x00E20000 (DT_SIZE_M(2) - DT_SIZE_K(128))>;
-		};
+    partitions {
+        /delete-node/ partition@e20000;
+        circuitpy_partition: partition@e20000 {
+            label = "circuitpy";
+            reg = <0x00e20000 (DT_SIZE_M(2) - DT_SIZE_K(128))>;
+        };
     };
 };
 

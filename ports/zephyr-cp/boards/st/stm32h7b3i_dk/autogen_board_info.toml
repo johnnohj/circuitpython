@@ -2,7 +2,7 @@
 name = "STMicroelectronics STM32H7B3I Discovery kit"
 
 [modules]
-__future__ = false
+__future__ = true
 _bleio = false
 _eve = false
 _pew = false
@@ -50,7 +50,9 @@ getpass = false
 gifio = false
 gnss = false
 hashlib = false
+hostnetwork = false
 i2cdisplaybus = true # Zephyr board has busio
+i2cioexpander = false
 i2ctarget = false
 imagecapture = false
 ipaddress = false
@@ -81,7 +83,7 @@ rainbowio = true
 random = true
 rclcpy = false
 rgbmatrix = false
-rotaryio = false
+rotaryio = true # Zephyr board has rotaryio
 rtc = false
 sdcardio = true # Zephyr board has busio
 sdioio = false

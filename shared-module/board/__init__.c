@@ -156,6 +156,10 @@ void reset_board_buses(void) {
             }
         }
         #endif
+        #if CIRCUITPY_I2CIOEXPANDER
+        // Assume the native I2C bus is used for IO Expander pins.
+        display_using_i2c = true;
+        #endif
         if (i2c_obj_created[instance]) {
             // make sure I2C lock is not held over a soft reset
             common_hal_busio_i2c_unlock(&i2c_obj[instance]);

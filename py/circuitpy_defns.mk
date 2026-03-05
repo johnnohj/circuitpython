@@ -255,6 +255,9 @@ endif
 ifeq ($(CIRCUITPY_I2CTARGET),1)
 SRC_PATTERNS += i2ctarget/%
 endif
+ifeq ($(CIRCUITPY_I2CIOEXPANDER),1)
+SRC_PATTERNS += i2cioexpander/%
+endif
 ifeq ($(CIRCUITPY_IMAGECAPTURE),1)
 SRC_PATTERNS += imagecapture/%
 endif
@@ -612,6 +615,7 @@ $(filter $(SRC_PATTERNS), \
 	canio/Match.c \
 	codeop/__init__.c \
 	countio/Edge.c \
+	digitalio/DigitalInOutProtocol.c \
 	digitalio/Direction.c \
 	digitalio/DriveMode.c \
 	digitalio/Pull.c \
@@ -725,6 +729,9 @@ SRC_SHARED_MODULE_ALL = \
 	dotclockframebuffer/__init__.c \
 	epaperdisplay/__init__.c \
 	epaperdisplay/EPaperDisplay.c \
+	i2cioexpander/IOExpander.c \
+	i2cioexpander/IOPin.c \
+	i2cioexpander/__init__.c \
 	floppyio/__init__.c \
 	fontio/BuiltinFont.c \
 	fontio/__init__.c \
@@ -952,7 +959,6 @@ SRC_SHARED_MODULE_INTERNAL = \
 $(filter $(SRC_PATTERNS), \
 	displayio/bus_core.c \
 	displayio/display_core.c \
-	os/getenv.c \
 	usb/utf16le.c \
 )
 

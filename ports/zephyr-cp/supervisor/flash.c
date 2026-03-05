@@ -21,7 +21,7 @@
 #include <zephyr/storage/flash_map.h>
 
 #define CIRCUITPY_PARTITION circuitpy_partition
-static struct flash_area *filesystem_area = NULL;
+static const struct flash_area *filesystem_area = NULL;
 
 #if !FIXED_PARTITION_EXISTS(CIRCUITPY_PARTITION)
 static struct flash_area _dynamic_area;

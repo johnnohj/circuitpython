@@ -215,7 +215,7 @@ static mp_obj_t bleio_adapter_start_advertising(mp_uint_t n_args, const mp_obj_t
         args[ARG_interval].u_obj = mp_obj_new_float(ADV_INTERVAL_DEFAULT);
     }
 
-    const mp_float_t interval = mp_obj_get_float(args[ARG_interval].u_obj);
+    const mp_float_t interval = mp_arg_validate_type_float(args[ARG_interval].u_obj, MP_QSTR_interval);
     if (interval < ADV_INTERVAL_MIN || interval > ADV_INTERVAL_MAX) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("interval must be in range %s-%s"),
             ADV_INTERVAL_MIN_STRING, ADV_INTERVAL_MAX_STRING);
@@ -223,7 +223,7 @@ static mp_obj_t bleio_adapter_start_advertising(mp_uint_t n_args, const mp_obj_t
 
     bool connectable = args[ARG_connectable].u_bool;
     bool anonymous = args[ARG_anonymous].u_bool;
-    uint32_t timeout = args[ARG_timeout].u_int;
+    const uint32_t timeout = (uint32_t)mp_arg_validate_int_min(args[ARG_timeout].u_int, 0, MP_QSTR_timeout);
     if (data_bufinfo.len > 31 && connectable && scan_response_bufinfo.len > 0) {
         mp_raise_bleio_BluetoothError(MP_ERROR_TEXT("Cannot have scan responses for extended, connectable advertisements."));
     }
@@ -306,7 +306,7 @@ static mp_obj_t bleio_adapter_start_scan(size_t n_args, const mp_obj_t *pos_args
 
     mp_float_t timeout = 0.0f;
     if (args[ARG_timeout].u_obj != mp_const_none) {
-        timeout = mp_obj_get_float(args[ARG_timeout].u_obj);
+        timeout = mp_arg_validate_obj_float_non_negative(args[ARG_timeout].u_obj, 0.0f, MP_QSTR_timeout);
     }
 
     if (args[ARG_interval].u_obj == MP_OBJ_NULL) {
@@ -317,7 +317,7 @@ static mp_obj_t bleio_adapter_start_scan(size_t n_args, const mp_obj_t *pos_args
         args[ARG_window].u_obj = mp_obj_new_float(WINDOW_DEFAULT);
     }
 
-    const mp_float_t interval = mp_obj_get_float(args[ARG_interval].u_obj);
+    const mp_float_t interval = mp_arg_validate_type_float(args[ARG_interval].u_obj, MP_QSTR_interval);
     if (interval < INTERVAL_MIN || interval > INTERVAL_MAX) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("interval must be in range %s-%s"), INTERVAL_MIN_STRING, INTERVAL_MAX_STRING);
     }
@@ -329,7 +329,7 @@ static mp_obj_t bleio_adapter_start_scan(size_t n_args, const mp_obj_t *pos_args
     }
     #pragma GCC diagnostic pop
 
-    const mp_float_t window = mp_obj_get_float(args[ARG_window].u_obj);
+    const mp_float_t window = mp_arg_validate_type_float(args[ARG_window].u_obj, MP_QSTR_window);
     if (window > interval) {
         mp_raise_ValueError(MP_ERROR_TEXT("window must be <= interval"));
     }
@@ -344,7 +344,9 @@ static mp_obj_t bleio_adapter_start_scan(size_t n_args, const mp_obj_t *pos_args
         }
     }
 
-    return common_hal_bleio_adapter_start_scan(self, prefix_bufinfo.buf, prefix_bufinfo.len, args[ARG_extended].u_bool, args[ARG_buffer_size].u_int, timeout, interval, window, args[ARG_minimum_rssi].u_int, args[ARG_active].u_bool);
+    const mp_int_t buffer_size = mp_arg_validate_int_min(args[ARG_buffer_size].u_int, 1, MP_QSTR_buffer_size);
+
+    return common_hal_bleio_adapter_start_scan(self, prefix_bufinfo.buf, prefix_bufinfo.len, args[ARG_extended].u_bool, buffer_size, timeout, interval, window, args[ARG_minimum_rssi].u_int, args[ARG_active].u_bool);
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(bleio_adapter_start_scan_obj, 1, bleio_adapter_start_scan);
 
@@ -416,7 +418,8 @@ static mp_obj_t bleio_adapter_connect(mp_uint_t n_args, const mp_obj_t *pos_args
     mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
 
     bleio_address_obj_t *address = mp_arg_validate_type(args[ARG_address].u_obj, &bleio_address_type, MP_QSTR_address);
-    mp_float_t timeout = mp_obj_get_float(args[ARG_timeout].u_obj);
+    const mp_float_t timeout =
+        mp_arg_validate_obj_float_non_negative(args[ARG_timeout].u_obj, 0.0f, MP_QSTR_timeout);
 
     return common_hal_bleio_adapter_connect(self, address, timeout);
 }

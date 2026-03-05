@@ -19,5 +19,14 @@ with mpconfigboard.open("rb") as f:
     mpconfigboard = tomllib.load(f)
 
 blobs = mpconfigboard.get("BLOBS", [])
+blob_fetch_args = mpconfigboard.get("blob_fetch_args", {})
 for blob in blobs:
-    subprocess.run(["west", "blobs", "fetch", blob], check=True)
+    args = blob_fetch_args.get(blob, [])
+    subprocess.run(["west", "blobs", "fetch", blob, *args], check=True)
+
+if board.endswith("bsim"):
+    subprocess.run(
+        ["make", "everything", "-j", "8"],
+        cwd=portdir / "tools" / "bsim",
+        check=True,
+    )

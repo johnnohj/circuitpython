@@ -130,7 +130,8 @@ msgstr "%q v %q musí být typu %q, ne %q"
 #: ports/raspberrypi/common-hal/rp2pio/StateMachine.c
 #: ports/raspberrypi/common-hal/usb_host/Port.c
 #: shared-bindings/digitalio/DigitalInOut.c
-#: shared-bindings/microcontroller/Pin.c shared-module/max3421e/Max3421E.c
+#: shared-bindings/i2cioexpander/IOPin.c shared-bindings/microcontroller/Pin.c
+#: shared-module/max3421e/Max3421E.c
 msgid "%q in use"
 msgstr "%q se právě používá"
 
@@ -143,7 +144,7 @@ msgid "%q indices must be integers, not %s"
 msgstr "Indexy %q musí být celá čísla, nikoli %s"
 
 #: ports/analog/common-hal/busio/SPI.c ports/analog/common-hal/busio/UART.c
-#: shared-module/bitbangio/SPI.c
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
 msgid "%q init failed"
 msgstr "Inicializace %q selhala"
 
@@ -246,6 +247,14 @@ msgstr "%q musí být typu %q, ne %q"
 msgid "%q must be power of 2"
 msgstr "%q musí být mocnina 2"
 
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "%q object missing '%q' attribute"
+msgstr ""
+
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "%q object missing '%q' method"
+msgstr ""
+
 #: shared-bindings/wifi/Monitor.c
 msgid "%q out of bounds"
 msgstr "%q je mimo hranice"
@@ -315,7 +324,7 @@ msgstr "%s chyba 0x%x"
 msgid "'%q' argument required"
 msgstr "Je vyžadován argument '%q'"
 
-#: py/proto.c
+#: py/proto.c shared-bindings/digitalio/DigitalInOutProtocol.c
 msgid "'%q' object does not support '%q'"
 msgstr "Objekt '%q' nepodporuje '%q'"
 
@@ -585,7 +594,7 @@ msgstr "Již běží"
 msgid "Already scanning for wifi networks"
 msgstr "Již skenuje wifi sítě"
 
-#: shared-module/os/getenv.c
+#: supervisor/shared/settings.c
 #, c-format
 msgid "An error occurred while retrieving '%s':\n"
 msgstr "Došlo k chybě při načítání '%s'\n"
@@ -782,6 +791,10 @@ msgstr "Nelze změnit USB zařízení"
 msgid "Cannot create a new Adapter; use _bleio.adapter;"
 msgstr "Není možné vytvořit nový adaptér; použití _bleio.adapter;"
 
+#: shared-module/i2cioexpander/IOExpander.c
+msgid "Cannot deinitialize board IOExpander"
+msgstr ""
+
 #: shared-bindings/displayio/Bitmap.c
 #: shared-bindings/memorymonitor/AllocationSize.c
 #: shared-bindings/pulseio/PulseIn.c
@@ -816,6 +829,7 @@ msgid "Cannot remount path when visible via USB."
 msgstr ""
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Cannot set value when direction is input."
 msgstr "Nelze nastavit hodnotu, když směr je vstup."
 
@@ -957,6 +971,7 @@ msgid "Done"
 msgstr "Hotovo"
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Drive mode not used when direction is input."
 msgstr ""
 
@@ -1095,7 +1110,6 @@ msgid "File exists"
 msgstr "soubor existuje"
 
 #: shared-bindings/supervisor/__init__.c shared-module/lvfontio/OnDiskFont.c
-#: shared-module/os/getenv.c
 msgid "File not found"
 msgstr "Soubor nenalezen"
 
@@ -1248,7 +1262,7 @@ msgstr "Interní audio buffer je příliš malý"
 msgid "Internal define error"
 msgstr ""
 
-#: shared-bindings/pwmio/PWMOut.c shared-module/os/getenv.c
+#: shared-bindings/pwmio/PWMOut.c supervisor/shared/settings.c
 msgid "Internal error"
 msgstr "Interní chyba"
 
@@ -1297,8 +1311,8 @@ msgstr ""
 #: ports/raspberrypi/common-hal/picodvi/Framebuffer_RP2040.c py/argcheck.c
 #: shared-bindings/digitalio/DigitalInOut.c
 #: shared-bindings/epaperdisplay/EPaperDisplay.c
-#: shared-bindings/mipidsi/Display.c shared-bindings/pwmio/PWMOut.c
-#: shared-bindings/supervisor/__init__.c
+#: shared-bindings/i2cioexpander/IOPin.c shared-bindings/mipidsi/Display.c
+#: shared-bindings/pwmio/PWMOut.c shared-bindings/supervisor/__init__.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
 #: shared-module/lvfontio/OnDiskFont.c
 msgid "Invalid %q"
@@ -1337,6 +1351,10 @@ msgstr "Chybná MAC adresa"
 msgid "Invalid ROS domain ID"
 msgstr ""
 
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
+msgid "Invalid advertising data"
+msgstr ""
+
 #: ports/espressif/common-hal/espidf/__init__.c py/moderrno.c
 msgid "Invalid argument"
 msgstr "Neplatný argument"
@@ -1345,17 +1363,12 @@ msgstr "Neplatný argument"
 msgid "Invalid bits per value"
 msgstr ""
 
-#: shared-module/os/getenv.c
-#, c-format
-msgid "Invalid byte %.*s"
-msgstr "Špatný byte %.*s"
-
 #: ports/atmel-samd/common-hal/imagecapture/ParallelImageCapture.c
 #, c-format
 msgid "Invalid data_pins[%d]"
 msgstr "Chybný data_pin[%d]"
 
-#: shared-module/msgpack/__init__.c
+#: shared-module/msgpack/__init__.c supervisor/shared/settings.c
 msgid "Invalid format"
 msgstr "Špatný formát"
 
@@ -1386,17 +1399,13 @@ msgstr "Chybný soket pro TLS"
 msgid "Invalid state"
 msgstr "Chybný stav"
 
-#: shared-module/os/getenv.c
+#: supervisor/shared/settings.c
 msgid "Invalid unicode escape"
 msgstr "Neplatná unicode escape sekvence"
 
 #: shared-bindings/aesio/aes.c
 msgid "Key must be 16, 24, or 32 bytes long"
 msgstr "Klíč musí být dlouhý 16, 24 nebo 32 bajtů"
-
-#: shared-module/os/getenv.c
-msgid "Key not found"
-msgstr "Klíč nenalezen"
 
 #: shared-module/is31fl3741/FrameBuffer.c
 msgid "LED mappings must match display size"
@@ -1664,10 +1673,6 @@ msgstr "Nepřipojený"
 msgid "Not playing"
 msgstr "Nehraje"
 
-#: shared-module/jpegio/JpegDecoder.c
-msgid "Not supported JPEG standard"
-msgstr ""
-
 #: ports/espressif/common-hal/paralleldisplaybus/ParallelBus.c
 #: ports/espressif/common-hal/sdioio/SDCard.c
 #, c-format
@@ -1903,6 +1908,7 @@ msgid "Publishers can only be created from a parent node"
 msgstr ""
 
 #: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/i2cioexpander/IOPin.c
 msgid "Pull not used when direction is output."
 msgstr ""
 
@@ -2084,9 +2090,12 @@ msgstr ""
 
 #: ports/espressif/common-hal/socketpool/SocketPool.c
 #: ports/raspberrypi/common-hal/socketpool/SocketPool.c
-#: ports/zephyr-cp/common-hal/socketpool/SocketPool.c
 msgid "SocketPool can only be used with wifi.radio"
 msgstr "SocketPool je možné použít pouze s wifi.radio"
+
+#: ports/zephyr-cp/common-hal/socketpool/SocketPool.c
+msgid "SocketPool can only be used with wifi.radio or hostnetwork.HostNetwork"
+msgstr ""
 
 #: shared-bindings/aesio/aes.c
 msgid "Source and destination buffers must be the same length"
@@ -2396,6 +2405,10 @@ msgid ""
 "declined or ignored."
 msgstr ""
 
+#: shared-module/jpegio/JpegDecoder.c
+msgid "Unsupported JPEG (may be progressive)"
+msgstr ""
+
 #: shared-bindings/bitmaptools/__init__.c
 msgid "Unsupported colorspace"
 msgstr "Nepodporovaný barevný prostor"
@@ -2566,6 +2579,10 @@ msgstr ""
 
 #: extmod/modbinascii.c extmod/modhashlib.c py/objarray.c
 msgid "a bytes-like object is required"
+msgstr ""
+
+#: shared-bindings/i2cioexpander/IOExpander.c
+msgid "address out of range"
 msgstr ""
 
 #: shared-bindings/i2ctarget/I2CTarget.c
@@ -3820,6 +3837,7 @@ msgid "non-hex digit"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "non-zero timeout must be > 0.01"
 msgstr "nenulový timeout musí být > 0.01"
 
@@ -3843,6 +3861,10 @@ msgstr "není implementováno pro komplexní dtype"
 msgid "not supported for input types"
 msgstr "není podporováno pro vstupní typy"
 
+#: shared-bindings/i2cioexpander/IOExpander.c
+msgid "num_pins must be 8 or 16"
+msgstr ""
+
 #: extmod/ulab/code/numpy/create.c
 msgid "number of points must be at least 2"
 msgstr ""
@@ -3855,6 +3877,10 @@ msgstr "objekt "
 #, c-format
 msgid "object '%s' isn't a tuple or list"
 msgstr "objekt '%s' není tuple or nebo list"
+
+#: shared-bindings/digitalio/DigitalInOutProtocol.c
+msgid "object does not support DigitalInOut protocol"
+msgstr ""
 
 #: py/obj.c
 msgid "object doesn't support item assignment"
@@ -4295,6 +4321,7 @@ msgid "timeout duration exceeded the maximum supported value"
 msgstr "timeout překročil maximální podporovanou hodnotu"
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "timeout must be < 655.35 secs"
 msgstr "timeout musí být < 655.35 s"
 
@@ -4586,6 +4613,13 @@ msgstr ""
 #: extmod/ulab/code/scipy/signal/signal.c
 msgid "zi must be of shape (n_section, 2)"
 msgstr ""
+
+#, c-format
+#~ msgid "Invalid byte %.*s"
+#~ msgstr "Špatný byte %.*s"
+
+#~ msgid "Key not found"
+#~ msgstr "Klíč nenalezen"
 
 #, c-format
 #~ msgid "%%c requires int or char"

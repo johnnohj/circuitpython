@@ -11,7 +11,11 @@
 
 #include "shared-bindings/microcontroller/Pin.h"  // for the pin definitions
 
+#if CIRCUITPY_MUTABLE_BOARD
+extern mp_obj_dict_t board_module_globals;
+#else
 extern const mp_obj_dict_t board_module_globals;
+#endif
 static const MP_DEFINE_STR_OBJ(board_module_id_obj, CIRCUITPY_BOARD_ID);
 
 mp_obj_t common_hal_board_get_i2c(const mp_int_t instance);
@@ -38,3 +42,7 @@ MP_DECLARE_CONST_FUN_OBJ_0(board_uart_obj);
 #define CIRCUITPYTHON_BOARD_DICT_STANDARD_ITEMS \
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_board) }, \
     { MP_ROM_QSTR(MP_QSTR_board_id), MP_ROM_PTR(&board_module_id_obj) },
+
+#define CIRCUITPYTHON_MUTABLE_BOARD_DICT_STANDARD_ITEMS \
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_board) }, \
+    { MP_ROM_QSTR(MP_QSTR_board_id), MP_OBJ_FROM_PTR(&board_module_id_obj) },

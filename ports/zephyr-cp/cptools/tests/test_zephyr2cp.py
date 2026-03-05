@@ -313,6 +313,45 @@ class TestFindRAMRegions:
         assert label == "reserved_mem"
         assert start == "__CUSTOM_REGION_end"
 
+    def test_memory_region_requires_sram_or_device_type(self):
+        """Test memory regions require mmio-sram compatibility or device_type=memory."""
+        dts = """
+/dts-v1/;
+
+/ {
+    #address-cells = <1>;
+    #size-cells = <1>;
+
+    sram0: memory@20000000 {
+        compatible = "mmio-sram";
+        reg = <0x20000000 0x40000>;
+    };
+
+    reserved_mem: memory@30000000 {
+        compatible = "zephyr,memory-region";
+        reg = <0x30000000 0x10000>;
+        zephyr,memory-region = "CUSTOM_REGION";
+    };
+
+    external_mem: memory@40000000 {
+        compatible = "zephyr,memory-region";
+        device_type = "memory";
+        reg = <0x40000000 0x20000>;
+        zephyr,memory-region = "EXT_REGION";
+    };
+
+    chosen {
+        zephyr,sram = &sram0;
+    };
+};
+"""
+        dt = parse_dts_string(dts)
+        result = find_ram_regions(dt)
+
+        assert len(result) == 2
+        assert result[0][0] == "sram0"
+        assert result[1][0] == "external_mem"
+
     def test_disabled_ram_excluded(self):
         """Test that disabled RAM regions are excluded."""
         dts = """

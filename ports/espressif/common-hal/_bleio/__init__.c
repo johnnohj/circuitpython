@@ -155,7 +155,7 @@ void check_notify(BaseType_t result) {
     mp_raise_msg(&mp_type_TimeoutError, NULL);
 }
 
-void common_hal_bleio_check_connected(uint16_t conn_handle) {
+void bleio_check_connected(uint16_t conn_handle) {
     if (conn_handle == BLEIO_HANDLE_INVALID) {
         mp_raise_ConnectionError(MP_ERROR_TEXT("Not connected"));
     }
