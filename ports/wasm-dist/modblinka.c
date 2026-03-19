@@ -121,6 +121,13 @@ int bp_events_pending(void) {
     return bp_ring_pending(_events_ring);
 }
 
+/* Flush events ring to OPFS events region for cross-worker visibility. */
+void bp_events_sync_to_opfs(void) {
+    if (!_events_ring_inited) return;
+    // Write the entire ring (header + data) to OPFS events region
+    opfs_write(OPFS_REGION_EVENTS, 0, _events_ring, sizeof(_events_ring));
+}
+
 /* ── _blinka.read_reg(addr) — wrapper over HAL ─────────────────────────── */
 
 static mp_obj_t blinka_read_reg(mp_obj_t addr_obj) {

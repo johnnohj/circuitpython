@@ -803,28 +803,7 @@ function initializeModuleAPI(Module) {
                 // Device present but no data response
             }
 
-            // Encode binary I2C event to events ring (zero Python call depth).
-            // bp_i2c_t: id(u8) addr(u8) len(u16 LE) [data...]
-            try {
-                const BP_I2C = 0x05;
-                const subMap = { 'i2c_read': 3, 'i2c_write': 2, 'i2c_write_read': 5 };
-                const sub = subMap[obj.cmd] || 0;
-                const addr = obj.addr || 0;
-                const dataArr = obj.data || [];
-                const readLen = obj.len || obj.read_len || 0;
-                // Pack bp_i2c_t header + optional data
-                const payloadLen = 4 + dataArr.length;
-                const ptr = Module._malloc(payloadLen);
-                Module.HEAPU8[ptr] = 0;          // id (bus 0)
-                Module.HEAPU8[ptr + 1] = addr;
-                Module.HEAPU8[ptr + 2] = readLen & 0xFF;
-                Module.HEAPU8[ptr + 3] = (readLen >> 8) & 0xFF;
-                for (let i = 0; i < dataArr.length; i++) {
-                    Module.HEAPU8[ptr + 4 + i] = dataArr[i] & 0xFF;
-                }
-                Module._bp_events_write(BP_I2C, sub, ptr, payloadLen);
-                Module._free(ptr);
-            } catch (_) {}
+            // Binary encoding handled by _bp_encode_hw_event in mp_bc_out_flush
         }
 
         if (obj.cmd === 'i2c_scan') {
@@ -881,6 +860,136 @@ function initializeModuleAPI(Module) {
             const blob = new Blob([Module.gc.snapshot()], { type: 'application/octet-stream' });
             return URL.createObjectURL(blob);
         },
+    };
+
+    // =========================================================================
+    // Binary event encoder — maps JSON hw events to binary protocol
+    //
+    // Called from mp_bc_out_flush (libpybroadcast.js) for every hw event.
+    // Runs at JS level, zero Python call depth. Writes to the C events ring
+    // via Module._bp_events_write().
+    // =========================================================================
+    const BP = { GPIO: 1, ANALOG: 2, PWM: 3, NEOPIXEL: 4, I2C: 5, SPI: 6, DISPLAY: 7, SLEEP: 8 };
+    const CMD_MAP = {
+        'gpio_init': [BP.GPIO, 1], 'gpio_write': [BP.GPIO, 2], 'gpio_read': [BP.GPIO, 3], 'gpio_deinit': [BP.GPIO, 4],
+        'analog_init': [BP.ANALOG, 1], 'analog_write': [BP.ANALOG, 2], 'analog_read': [BP.ANALOG, 3], 'analog_deinit': [BP.ANALOG, 4],
+        'pwm_init': [BP.PWM, 1], 'pwm_update': [BP.PWM, 2], 'pwm_deinit': [BP.PWM, 3],
+        'neo_init': [BP.NEOPIXEL, 1], 'neo_write': [BP.NEOPIXEL, 2], 'neo_deinit': [BP.NEOPIXEL, 3],
+        'i2c_init': [BP.I2C, 1], 'i2c_scan': [BP.I2C, 2], 'i2c_read': [BP.I2C, 3], 'i2c_write': [BP.I2C, 4], 'i2c_write_read': [BP.I2C, 5], 'i2c_deinit': [BP.I2C, 6],
+        'spi_init': [BP.SPI, 1], 'spi_configure': [BP.SPI, 2], 'spi_write': [BP.SPI, 3], 'spi_transfer': [BP.SPI, 4], 'spi_deinit': [BP.SPI, 5],
+        'display_init': [BP.DISPLAY, 1], 'display_refresh': [BP.DISPLAY, 2], 'display_deinit': [BP.DISPLAY, 3],
+        'time_sleep': [BP.SLEEP, 1],
+    };
+
+    // Pin name → register address for binary encoding
+    const PIN_ADDR = {};
+    for (let i = 0; i <= 13; i++) PIN_ADDR['D' + i] = i;
+    PIN_ADDR['LED'] = 0x0E; PIN_ADDR['BUTTON'] = 0x0F;
+    for (let i = 0; i <= 5; i++) PIN_ADDR['A' + i] = 0x10 + i;
+
+    Module._bp_encode_hw_event = function(obj) {
+        const mapping = CMD_MAP[obj.cmd];
+        if (!mapping) return; // unknown command, skip
+        const [type, sub] = mapping;
+
+        let payload;
+        switch (type) {
+            case BP.GPIO: {
+                // bp_gpio_t: pin(u8) dir(u8) pull(u8) pad(u8) value(u16 LE)
+                const pin = (typeof obj.pin === 'string') ? (PIN_ADDR[obj.pin] ?? 0) : (obj.pin ?? 0);
+                const dir = obj.direction === 'output' ? 1 : 0;
+                const pull = obj.pull === 'up' ? 1 : obj.pull === 'down' ? 2 : 0;
+                const val = obj.value ? 1 : 0;
+                payload = new Uint8Array([pin, dir, pull, 0, val & 0xFF, (val >> 8) & 0xFF]);
+                break;
+            }
+            case BP.ANALOG: {
+                const pin = (typeof obj.pin === 'string') ? (PIN_ADDR[obj.pin] ?? 0) : (obj.pin ?? 0);
+                const dir = obj.direction === 'output' ? 1 : 0;
+                const val = obj.value ?? 0;
+                payload = new Uint8Array([pin, dir, val & 0xFF, (val >> 8) & 0xFF]);
+                break;
+            }
+            case BP.PWM: {
+                const pin = (typeof obj.pin === 'string') ? (PIN_ADDR[obj.pin] ?? 0) : (obj.pin ?? 0);
+                const duty = obj.duty_cycle ?? 0;
+                const freq = obj.frequency ?? 0;
+                payload = new Uint8Array(8);
+                const dv = new DataView(payload.buffer);
+                dv.setUint8(0, pin);
+                dv.setUint8(1, 0);
+                dv.setUint16(2, duty, true);
+                dv.setUint32(4, freq, true);
+                break;
+            }
+            case BP.NEOPIXEL: {
+                const pin = (typeof obj.pin === 'string') ? (PIN_ADDR[obj.pin] ?? 0) : (obj.pin ?? 0);
+                const order = obj.order ?? 0;
+                const count = obj.n ?? 0;
+                // Header: pin(u8) order(u8) count(u16 LE)
+                const hdr = new Uint8Array([pin, order, count & 0xFF, (count >> 8) & 0xFF]);
+                if (obj.pixels instanceof Uint8Array) {
+                    // neo_write: header + pixel data
+                    payload = new Uint8Array(4 + obj.pixels.length);
+                    payload.set(hdr);
+                    payload.set(obj.pixels, 4);
+                } else {
+                    payload = hdr;
+                }
+                break;
+            }
+            case BP.I2C: {
+                // Already handled by the sensor interceptor for device events.
+                // Encode non-device events (init, deinit, scan) here.
+                const addr = obj.addr ?? 0;
+                const len = obj.len ?? obj.read_len ?? 0;
+                const dataArr = obj.data ?? [];
+                payload = new Uint8Array(4 + dataArr.length);
+                payload[0] = 0; // bus id
+                payload[1] = addr;
+                payload[2] = len & 0xFF;
+                payload[3] = (len >> 8) & 0xFF;
+                for (let i = 0; i < dataArr.length; i++) payload[4 + i] = dataArr[i] & 0xFF;
+                break;
+            }
+            case BP.SPI: {
+                const len = obj.len ?? 0;
+                const dataArr = obj.data ?? [];
+                payload = new Uint8Array(4 + dataArr.length);
+                payload[0] = 0;
+                payload[1] = 0;
+                payload[2] = len & 0xFF;
+                payload[3] = (len >> 8) & 0xFF;
+                for (let i = 0; i < dataArr.length; i++) payload[4 + i] = dataArr[i] & 0xFF;
+                break;
+            }
+            case BP.DISPLAY: {
+                const id = obj.id ?? 0;
+                const w = obj.width ?? 0;
+                const h = obj.height ?? 0;
+                payload = new Uint8Array(10);
+                const dv = new DataView(payload.buffer);
+                dv.setUint8(0, typeof id === 'number' ? id : 0);
+                dv.setUint8(1, 0);
+                dv.setUint16(2, w, true);
+                dv.setUint16(4, h, true);
+                dv.setUint32(6, 0, true); // fb_offset (0 = start of framebuf region)
+                break;
+            }
+            case BP.SLEEP: {
+                payload = new Uint8Array(4);
+                new DataView(payload.buffer).setUint32(0, obj.ms ?? 0, true);
+                break;
+            }
+            default:
+                return;
+        }
+
+        // Write to C events ring
+        const ptr = Module._malloc(payload.length);
+        Module.HEAPU8.set(payload, ptr);
+        Module._bp_events_write(type, sub, ptr, payload.length);
+        Module._free(ptr);
     };
 
     // =========================================================================

@@ -87,6 +87,13 @@ mergeInto(LibraryManager.library, {
                         try { Module._bcOutInterceptors[j](obj); } catch (_) {}
                     }
                 }
+                // Encode binary shadow for hw events into events ring.
+                // This runs at JS level (zero Python call depth) so it's
+                // safe for all event types including I2C during BME280 init.
+                if (obj.type === 'hw' && typeof Module._bp_events_write === 'function') {
+                    try { Module._bp_encode_hw_event(obj); } catch (_) {}
+                }
+
                 // Broadcast to other workers/contexts
                 if (Module._bc) {
                     Module._bc.postMessage(obj);
@@ -95,6 +102,12 @@ mergeInto(LibraryManager.library, {
                 // Skip malformed JSON lines
             }
         }
+
+        // Flush binary events ring to OPFS for cross-worker visibility
+        if (count > 0 && typeof Module._bp_events_sync_to_opfs === 'function') {
+            try { Module._bp_events_sync_to_opfs(); } catch (_) {}
+        }
+
         return count;
     },
 

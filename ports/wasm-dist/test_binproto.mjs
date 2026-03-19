@@ -245,6 +245,9 @@ print(','.join(str(b) for b in resp))
         FS.writeFile(`/flash/lib/${name}`, src);
     }
 
+    // Initialize OPFS (memory fallback in Node.js) before any events
+    await M.opfs.init();
+
     // Load sensor
     M.sensors.setSensorSimulatorClass(SensorSimulator);
     M.sensors.loadCatalog(catalog);
@@ -271,12 +274,27 @@ print("chip_id=0x{:02x}".format(buf[0]))
     const events = M.events.drain();
     assert(events.length > 0, `T10: events ring has ${events.length} binary event(s)`);
 
-    // Decode the I2C event
-    const i2cEvent = events.find(e => e[0] === 0x05); // BP_TYPE_I2C
-    assert(i2cEvent !== undefined, 'T10: found I2C binary event in ring');
-    if (i2cEvent) {
-        const evt = decodeToEvent(i2cEvent);
+    // ---- T10b: Verify OPFS events region has binary data after flush ----
+    const opfsEvents = M.opfs.read(M.opfs.EVENTS, 0, 32);
+    // Ring header: write_head(u32), read_head(u32), capacity(u32), flags(u32)
+    const evDv = new DataView(opfsEvents.buffer, opfsEvents.byteOffset, opfsEvents.byteLength);
+    const writeHead = evDv.getUint32(0, true);
+    assert(writeHead > 0, `T10b: OPFS events write_head > 0 (got ${writeHead})`);
+    const capacity = evDv.getUint32(8, true);
+    assert(capacity === 8192, `T10b: OPFS events capacity = 8192 (got ${capacity})`);
+
+    // Decode the I2C events — find the write_read (sub=5)
+    const i2cEvents = events.filter(e => e[0] === 0x05); // BP_TYPE_I2C
+    assert(i2cEvents.length > 0, `T10: found ${i2cEvents.length} I2C binary event(s) in ring`);
+    // Find the write_read event (sub byte = 5)
+    const writeReadEvt = i2cEvents.find(e => e[1] === 5);
+    if (writeReadEvt) {
+        const evt = decodeToEvent(writeReadEvt);
         assert(evt.addr === 0x77, `T10: binary I2C addr = 0x77 (got 0x${(evt.addr||0).toString(16)})`);
+    } else {
+        // Fall back to any I2C event with addr
+        const anyEvt = decodeToEvent(i2cEvents[i2cEvents.length - 1]);
+        assert(anyEvt.addr === 0x77, `T10: binary I2C addr = 0x77 (got 0x${(anyEvt.addr||0).toString(16)}, sub=${i2cEvents[i2cEvents.length-1][1]})`);
     }
 }
 

@@ -140,7 +140,8 @@ JSFLAGS += -s EXPORTED_FUNCTIONS="[\
 	_bp_encode,\
 	_bp_events_write,\
 	_bp_events_read,\
-	_bp_events_pending]"
+	_bp_events_pending,\
+	_bp_events_sync_to_opfs]"
 
 JSFLAGS += -s EXPORTED_RUNTIME_METHODS="[\
 	FS,\
