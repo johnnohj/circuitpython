@@ -1352,6 +1352,27 @@ pending_exception_check:
                 // occur every few instructions.
                 MICROPY_VM_HOOK_LOOP
 
+                // Step-wise yield check: if the JS driver has exhausted the
+                // step budget, suspend execution exactly like a generator yield.
+                // All state is in the heap-allocated code_state chain (stackless)
+                // so the C stack is clean.  JS resumes by calling mp_vm_step()
+                // again which re-enters at run_code_state.
+                #if MICROPY_VM_YIELD_ENABLED
+                if (mp_vm_should_yield()) {
+                    nlr_pop();
+                    code_state->ip = ip;
+                    code_state->sp = sp;
+                    code_state->exc_sp_idx = MP_CODE_STATE_EXC_SP_IDX_FROM_PTR(exc_stack, exc_sp);
+                    #ifdef MICROPY_VM_YIELD_SAVE_STATE
+                    // Save the innermost code_state so the stepping driver
+                    // can resume here instead of the outermost frame.
+                    MICROPY_VM_YIELD_SAVE_STATE(code_state);
+                    #endif
+                    FRAME_LEAVE();
+                    return MP_VM_RETURN_YIELD;
+                }
+                #endif
+
                 // Check for pending exceptions or scheduled tasks to run.
                 // Note: it's safe to just call mp_handle_pending(true), but
                 // we can inline the check for the common case where there is
