@@ -31,9 +31,6 @@ FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py
 QSTR_DEFS += qstrdefsport.h
 
 # Include py core make definitions.
-# CIRCUITPY is intentionally NOT defined — this follows the same pattern as
-# ports/wasm.  py/misc.h falls through to the #else branch which uses plain
-# const char* for error texts (no compression, no supervisor translate).
 include $(TOP)/py/py.mk
 
 ################################################################################
@@ -51,6 +48,7 @@ INC += -I$(VARIANT_DIR)
 CFLAGS += -std=c99 -Wall -Wdouble-promotion -Wfloat-conversion
 CFLAGS += -Os -DNDEBUG
 CFLAGS += $(INC)
+CFLAGS += -DCIRCUITPY=1
 
 ################################################################################
 # Emscripten / JS flags
@@ -163,7 +161,7 @@ SRC_SHARED = $(addprefix shared/,\
 	)
 
 # CircuitPython translate system — provides decompress/decompress_length
-# needed by py/mpprint.c when CIRCUITPY is defined (even as 0).
+# needed by py/mpprint.c
 SRC_SHARED += supervisor/shared/translate/translate.c
 
 SRC_C += \
