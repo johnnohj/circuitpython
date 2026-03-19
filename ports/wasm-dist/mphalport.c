@@ -24,10 +24,16 @@
 #include "library.h"
 #include "semihosting_wasm.h"
 #include "shared/runtime/interrupt_char.h"
+#include "opfs_regions.h"
 
 /* ── Hardware register file ──────────────────────────────────────────────── */
 
 static uint16_t hw_registers[HW_REG_COUNT];
+static int hw_opfs_enabled = 0;  // set to 1 after opfs_init() succeeds
+
+void hw_reg_enable_opfs(void) {
+    hw_opfs_enabled = 1;
+}
 
 uint16_t hw_reg_read(int addr) {
     if (addr < 0 || addr >= HW_REG_COUNT) { return 0; }
@@ -37,6 +43,10 @@ uint16_t hw_reg_read(int addr) {
 void hw_reg_write(int addr, uint16_t val) {
     if (addr < 0 || addr >= HW_REG_COUNT) { return; }
     hw_registers[addr] = val;
+    // Dual-write to OPFS region so other workers see the update
+    if (hw_opfs_enabled) {
+        opfs_write(OPFS_REGION_REGISTERS, addr * 2, &val, 2);
+    }
 }
 
 void hw_reg_write_batch(const char *json, size_t len) {
@@ -82,6 +92,22 @@ void hw_reg_write_batch(const char *json, size_t len) {
             hw_registers[addr] = (uint16_t)val;
         }
     }
+    // Bulk flush entire register file to OPFS after batch update
+    if (hw_opfs_enabled) {
+        opfs_write(OPFS_REGION_REGISTERS, 0, hw_registers, sizeof(hw_registers));
+    }
+}
+
+/* Sync local register cache from OPFS (for cross-worker reads). */
+void hw_reg_sync_from_opfs(void) {
+    if (!hw_opfs_enabled) { return; }
+    opfs_read(OPFS_REGION_REGISTERS, 0, hw_registers, sizeof(hw_registers));
+}
+
+/* Flush local register cache to OPFS (for cross-worker writes). */
+void hw_reg_sync_to_opfs(void) {
+    if (!hw_opfs_enabled) { return; }
+    opfs_write(OPFS_REGION_REGISTERS, 0, hw_registers, sizeof(hw_registers));
 }
 
 void hw_reg_sync_from_bc_in(void) {

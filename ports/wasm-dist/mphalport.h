@@ -83,6 +83,9 @@ uint16_t hw_reg_read(int addr);
 void     hw_reg_write(int addr, uint16_t val);
 void     hw_reg_write_batch(const char *json, size_t len);
 void     hw_reg_sync_from_bc_in(void);
+void     hw_reg_enable_opfs(void);      /* enable dual-write to OPFS region */
+void     hw_reg_sync_from_opfs(void);   /* pull register state from OPFS */
+void     hw_reg_sync_to_opfs(void);     /* push register state to OPFS */
 
 /* POSIX VFS retry macro (PEP 475 — retry on EINTR) */
 #if MICROPY_VFS_POSIX

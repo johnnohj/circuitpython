@@ -125,7 +125,22 @@ JSFLAGS += -s EXPORTED_FUNCTIONS="[\
 	_mp_async_request_delay,\
 	_mp_async_consume_delay,\
 	_mp_async_has_delay,\
-	_mp_js_set_deadline]"
+	_mp_js_set_deadline,\
+	_opfs_init,\
+	_opfs_read,\
+	_opfs_write,\
+	_opfs_region_size,\
+	_opfs_flush,\
+	_hw_reg_enable_opfs,\
+	_hw_reg_sync_from_opfs,\
+	_hw_reg_sync_to_opfs,\
+	_bp_ring_write,\
+	_bp_ring_read,\
+	_bp_ring_pending,\
+	_bp_encode,\
+	_bp_events_write,\
+	_bp_events_read,\
+	_bp_events_pending]"
 
 JSFLAGS += -s EXPORTED_RUNTIME_METHODS="[\
 	FS,\
@@ -146,6 +161,7 @@ JSFLAGS += --js-library libpyvm.js
 JSFLAGS += --js-library libpybroadcast.js
 JSFLAGS += --js-library libpytasks.js
 JSFLAGS += --js-library libpyasync.js
+JSFLAGS += --js-library libpyopfs.js
 
 ################################################################################
 # Source files
@@ -177,6 +193,7 @@ SRC_C += \
 	objjsproxy.c \
 	proxy_c.c \
 	modblinka.c \
+	binproto.c \
 
 SRC_QSTR += $(SRC_C) $(SRC_SHARED)
 

@@ -41,9 +41,16 @@ TX   = "TX";   RX   = "RX"
 const DIGITALIO_PY = `\
 import _blinka
 import json as _json
+import struct as _struct
 
 def _hw(msg):
     _blinka.send(_json.dumps(msg))
+
+# Binary protocol: pack bp_gpio_t (pin u8, dir u8, pull u8, pad u8, value u16 LE)
+_PULL_MAP = {"up": 1, "down": 2, None: 0}
+def _hw_gpio_bin(sub, pin_addr, direction=0, pull=0, value=0):
+    payload = _struct.pack('<BBBBH', pin_addr, direction, pull, 0, value)
+    _blinka.send_bin(_blinka.BP_GPIO, sub, payload)
 
 class Direction:
     INPUT  = "input"
@@ -70,6 +77,8 @@ class DigitalInOut:
         self._pull      = None
         _hw({"type": "hw", "cmd": "gpio_init",
               "pin": self._pin, "direction": "output"})
+        if self._reg_addr >= 0:
+            _hw_gpio_bin(_blinka.BP_INIT, self._reg_addr, direction=1)
         self.value = value
 
     def switch_to_input(self, pull=None):
@@ -78,6 +87,9 @@ class DigitalInOut:
         _hw({"type": "hw", "cmd": "gpio_init",
               "pin": self._pin, "direction": "input",
               "pull": pull})
+        if self._reg_addr >= 0:
+            _hw_gpio_bin(_blinka.BP_INIT, self._reg_addr, direction=0,
+                         pull=_PULL_MAP.get(pull, 0))
 
     @property
     def direction(self):
@@ -103,6 +115,8 @@ class DigitalInOut:
             _blinka.write_reg(self._reg_addr, 1 if v else 0)
         _hw({"type": "hw", "cmd": "gpio_write",
               "pin": self._pin, "value": v})
+        if self._reg_addr >= 0:
+            _hw_gpio_bin(_blinka.BP_WRITE, self._reg_addr, value=1 if v else 0)
 
     @property
     def pull(self):
@@ -110,6 +124,8 @@ class DigitalInOut:
 
     def deinit(self):
         _hw({"type": "hw", "cmd": "gpio_deinit", "pin": self._pin})
+        if self._reg_addr >= 0:
+            _hw_gpio_bin(_blinka.BP_DEINIT, self._reg_addr)
 
     def __enter__(self):
         return self

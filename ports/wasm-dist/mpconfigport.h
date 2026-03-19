@@ -38,6 +38,16 @@
 #define MICROPY_ENABLE_FINALIZER        (1)
 #define MICROPY_KBD_EXCEPTION           (1)
 
+/* ---- Native code emitter: WASM backend ---- */
+/* Enables @micropython.native and @micropython.viper to compile directly
+ * to WebAssembly bytecodes instead of being interpreted. The JS-side
+ * loader (library_asmwasm.js) wraps the emitted bytes into a valid WASM
+ * module and instantiates it via WebAssembly.compile().
+ *
+ * setjmp is called directly (not through mp_fun_table) because Emscripten's
+ * SUPPORT_LONGJMP=wasm requires static visibility of setjmp calls. */
+#define MICROPY_EMIT_WASM               (1)
+
 /* ---- Step-wise VM execution (libpyvm) ---- */
 /* When enabled, the VM dispatch loop checks mp_vm_should_yield() at every
  * branch point.  When it returns true, the VM saves state into the

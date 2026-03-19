@@ -31,6 +31,17 @@ function initializeModuleAPI(Module) {
                 const raw = fs.readFile(memfsPath);
                 obj.pixels = new Uint8Array(raw);
                 delete obj.fb_path;  // no longer needed
+
+                // Also write to OPFS framebuf region for cross-worker access
+                // Layout: [0:3] = width(u16 LE) + height(u16 LE), [4:] = RGB data
+                if (Module._opfsInitialized && obj.pixels.length > 0) {
+                    const w = obj.width || 0, h = obj.height || 0;
+                    const hdr = new Uint8Array(4);
+                    hdr[0] = w & 0xFF; hdr[1] = (w >> 8) & 0xFF;
+                    hdr[2] = h & 0xFF; hdr[3] = (h >> 8) & 0xFF;
+                    Module.opfs.write(Module.opfs.FRAMEBUF, 0, hdr);
+                    Module.opfs.write(Module.opfs.FRAMEBUF, 4, obj.pixels);
+                }
             } catch {}
         }
     }
@@ -374,6 +385,79 @@ function initializeModuleAPI(Module) {
             // Also write to /dev/bc_in for Python's sync_registers() to read
             FS.writeFile('/dev/bc_in', json);
         },
+
+        /** Enable OPFS dual-write for cross-worker register sharing. */
+        enableOpfs() {
+            Module._hw_reg_enable_opfs();
+        },
+
+        /** Pull register state from OPFS into the local cache. */
+        syncFromOpfs() {
+            Module._hw_reg_sync_from_opfs();
+        },
+
+        /** Push local register cache to OPFS. */
+        syncToOpfs() {
+            Module._hw_reg_sync_to_opfs();
+        },
+    };
+
+    // =========================================================================
+    // Module.opfs — OPFS region access
+    // =========================================================================
+    Module.opfs = {
+        /** Initialize OPFS regions (async — uses OPFS in browser, memory in Node). */
+        async init() {
+            await Module._opfs_init();
+            // Enable dual-write from register file to OPFS
+            Module._hw_reg_enable_opfs();
+        },
+
+        /** Get the current storage mode ('opfs' or 'memory'). */
+        get mode() { return Module._opfsMode || 'uninitialized'; },
+
+        /**
+         * Read bytes from an OPFS region.
+         * @param {number} regionId — OPFS_REGION_* constant (0-4)
+         * @param {number} offset
+         * @param {number} len
+         * @returns {Uint8Array}
+         */
+        read(regionId, offset, len) {
+            const ptr = Module._malloc(len);
+            const n = Module._opfs_read(regionId, offset, ptr, len);
+            const result = new Uint8Array(n);
+            result.set(Module.HEAPU8.subarray(ptr, ptr + n));
+            Module._free(ptr);
+            return result;
+        },
+
+        /**
+         * Write bytes to an OPFS region.
+         * @param {number} regionId
+         * @param {number} offset
+         * @param {Uint8Array} data
+         * @returns {number} bytes written
+         */
+        write(regionId, offset, data) {
+            const ptr = Module._malloc(data.length);
+            Module.HEAPU8.set(data, ptr);
+            const n = Module._opfs_write(regionId, offset, ptr, data.length);
+            Module._free(ptr);
+            return n;
+        },
+
+        /** Flush an OPFS region to persistent storage. */
+        flush(regionId) {
+            Module._opfs_flush(regionId);
+        },
+
+        /** Region ID constants. */
+        REGISTERS: 0,
+        SENSORS: 1,
+        EVENTS: 2,
+        FRAMEBUF: 3,
+        CONTROL: 4,
     };
 
     // =========================================================================
@@ -706,9 +790,41 @@ function initializeModuleAPI(Module) {
             const response = handler(obj.cmd, obj);
             if (response instanceof Uint8Array) {
                 try { FS.writeFile('/flash/i2c_response', response); } catch {}
+                // Also write to OPFS sensors region for cross-worker access
+                // Layout: [0:1] = response length (u16 LE), [2:2+len] = data
+                if (Module._opfsInitialized) {
+                    const hdr = new Uint8Array(2);
+                    hdr[0] = response.length & 0xFF;
+                    hdr[1] = (response.length >> 8) & 0xFF;
+                    Module.opfs.write(Module.opfs.SENSORS, 0, hdr);
+                    Module.opfs.write(Module.opfs.SENSORS, 2, response);
+                }
             } else if (response === true) {
                 // Device present but no data response
             }
+
+            // Encode binary I2C event to events ring (zero Python call depth).
+            // bp_i2c_t: id(u8) addr(u8) len(u16 LE) [data...]
+            try {
+                const BP_I2C = 0x05;
+                const subMap = { 'i2c_read': 3, 'i2c_write': 2, 'i2c_write_read': 5 };
+                const sub = subMap[obj.cmd] || 0;
+                const addr = obj.addr || 0;
+                const dataArr = obj.data || [];
+                const readLen = obj.len || obj.read_len || 0;
+                // Pack bp_i2c_t header + optional data
+                const payloadLen = 4 + dataArr.length;
+                const ptr = Module._malloc(payloadLen);
+                Module.HEAPU8[ptr] = 0;          // id (bus 0)
+                Module.HEAPU8[ptr + 1] = addr;
+                Module.HEAPU8[ptr + 2] = readLen & 0xFF;
+                Module.HEAPU8[ptr + 3] = (readLen >> 8) & 0xFF;
+                for (let i = 0; i < dataArr.length; i++) {
+                    Module.HEAPU8[ptr + 4 + i] = dataArr[i] & 0xFF;
+                }
+                Module._bp_events_write(BP_I2C, sub, ptr, payloadLen);
+                Module._free(ptr);
+            } catch (_) {}
         }
 
         if (obj.cmd === 'i2c_scan') {
@@ -764,6 +880,57 @@ function initializeModuleAPI(Module) {
         blobUrl() {
             const blob = new Blob([Module.gc.snapshot()], { type: 'application/octet-stream' });
             return URL.createObjectURL(blob);
+        },
+    };
+
+    // =========================================================================
+    // Module.events — Binary event ring buffer
+    // =========================================================================
+    Module.events = {
+        /** Check if there are pending binary events. */
+        pending() {
+            return !!Module._bp_events_pending();
+        },
+
+        /**
+         * Read the next binary event message.
+         * @returns {Uint8Array|null} — complete message (header + payload), or null
+         */
+        read() {
+            const maxSize = 1024;
+            const ptr = Module._malloc(maxSize);
+            const n = Module._bp_events_read(ptr, maxSize);
+            if (n === 0) { Module._free(ptr); return null; }
+            const msg = new Uint8Array(n);
+            msg.set(Module.HEAPU8.subarray(ptr, ptr + n));
+            Module._free(ptr);
+            return msg;
+        },
+
+        /**
+         * Drain all pending events, returning raw Uint8Array messages.
+         * @returns {Array<Uint8Array>}
+         */
+        drain() {
+            const msgs = [];
+            let msg;
+            while ((msg = this.read()) !== null) {
+                msgs.push(msg);
+            }
+            return msgs;
+        },
+
+        /**
+         * Write a binary event to the ring (from JS side).
+         * @param {number} type — BP_TYPE_* constant
+         * @param {number} sub — BP_SUB_* constant
+         * @param {Uint8Array} payload
+         */
+        write(type, sub, payload) {
+            const ptr = Module._malloc(payload.length);
+            Module.HEAPU8.set(payload, ptr);
+            Module._bp_events_write(type, sub, ptr, payload.length);
+            Module._free(ptr);
         },
     };
 
