@@ -92,6 +92,10 @@
 #define N_XTENSA (0)
 #endif
 
+#ifndef N_WASM
+#define N_WASM (0)
+#endif
+
 #ifndef N_XTENSAWIN
 #define N_XTENSAWIN (0)
 #endif
@@ -101,7 +105,7 @@
 #endif
 
 // wrapper around everything in this file
-#if N_X64 || N_X86 || N_THUMB || N_ARM || N_XTENSA || N_XTENSAWIN || N_RV32 || N_DEBUG
+#if N_X64 || N_X86 || N_THUMB || N_ARM || N_XTENSA || N_XTENSAWIN || N_RV32 || N_WASM || N_DEBUG
 
 // C stack layout for native functions:
 //  0:                          nlr_buf_t [optional]
@@ -2737,6 +2741,30 @@ static void emit_native_binary_op(emit_t *emit, mp_binary_op_t op) {
 
                 default:
                     break;
+            }
+            #elif N_WASM
+            // WASM comparisons: push both operands, compare, store boolean result
+            {
+                static const uint8_t wasm_cmp_ops[6 + 6] = {
+                    // unsigned
+                    WASM_OP_I32_LT_U,  // <
+                    WASM_OP_I32_GT_U,   // >
+                    WASM_OP_I32_EQ,     // ==
+                    WASM_OP_I32_LE_U,   // <=
+                    WASM_OP_I32_GE_U,   // >=
+                    WASM_OP_I32_NE,     // !=
+                    // signed
+                    WASM_OP_I32_LT_S,   // <
+                    WASM_OP_I32_GT_S,   // >
+                    WASM_OP_I32_EQ,     // ==
+                    WASM_OP_I32_LE_S,   // <=
+                    WASM_OP_I32_GE_S,   // >=
+                    WASM_OP_I32_NE,     // !=
+                };
+                asm_wasm_op_local_get(emit->as, REG_ARG_2);
+                asm_wasm_op_local_get(emit->as, reg_rhs);
+                asm_wasm_op_binop(emit->as, wasm_cmp_ops[op_idx]);
+                asm_wasm_op_local_set(emit->as, REG_RET);
             }
             #elif N_DEBUG
             asm_debug_setcc_reg_reg_reg(emit->as, op_idx, REG_RET, REG_ARG_2, reg_rhs);

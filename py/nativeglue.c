@@ -311,9 +311,12 @@ const mp_fun_table_t mp_fun_table = {
     mp_small_int_floor_divide,
     mp_small_int_modulo,
     mp_native_yield_from,
-    #if MICROPY_NLR_SETJMP
+    #if MICROPY_NLR_SETJMP && !MICROPY_EMIT_WASM
     setjmp,
     #else
+    // WASM: setjmp cannot be stored as a function pointer — Emscripten's
+    // SUPPORT_LONGJMP=wasm requires static call visibility. Native-emitted
+    // code calls setjmp directly instead of through this table.
     NULL,
     #endif
     // Additional entries for dynamic runtime, starts at index 50

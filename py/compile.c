@@ -103,6 +103,7 @@ static const emit_method_table_t *emit_native_table[] = {
     &emit_native_xtensa_method_table,
     &emit_native_xtensawin_method_table,
     &emit_native_rv32_method_table,
+    &emit_native_wasm_method_table,
     &emit_native_debug_method_table,
 };
 
@@ -122,6 +123,8 @@ static const emit_method_table_t *emit_native_table[] = {
 #define NATIVE_EMITTER(f) emit_native_xtensawin_##f
 #elif MICROPY_EMIT_RV32
 #define NATIVE_EMITTER(f) emit_native_rv32_##f
+#elif MICROPY_EMIT_WASM
+#define NATIVE_EMITTER(f) emit_native_wasm_##f
 #elif MICROPY_EMIT_NATIVE_DEBUG
 #define NATIVE_EMITTER(f) emit_native_debug_##f
 #else
