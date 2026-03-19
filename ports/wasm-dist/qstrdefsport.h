@@ -1,0 +1,16 @@
+// qstrs specific to this port
+// *FORMAT-OFF*
+Q(/lib)
+Q(asyncio.core)
+Q(pystack_space_exhausted)
+Q(__del__)
+Q(errno)
+Q(uctypes)
+Q(__repl_print__)
+Q(OrderedDict)
+Q(base)
+Q(function)
+Q(hash)
+Q(__class__)
+Q(__hash__)
+Q(__import__)
