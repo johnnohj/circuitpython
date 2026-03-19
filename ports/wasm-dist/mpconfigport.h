@@ -45,8 +45,13 @@
  * module and instantiates it via WebAssembly.compile().
  *
  * setjmp is called directly (not through mp_fun_table) because Emscripten's
- * SUPPORT_LONGJMP=wasm requires static visibility of setjmp calls. */
-#define MICROPY_EMIT_WASM               (1)
+ * SUPPORT_LONGJMP=wasm requires static visibility of setjmp calls.
+ *
+ * DISABLED pending asmwasm.c structured control flow fix: the emitter
+ * produces flat br/br_if without enclosing block/loop instructions.
+ * The JS runtime (library_asmwasm.js) is ready — the emitter needs to
+ * translate label-based jumps to WASM's structured block nesting. */
+// #define MICROPY_EMIT_WASM            (1)
 
 /* ---- Step-wise VM execution (libpyvm) ---- */
 /* When enabled, the VM dispatch loop checks mp_vm_should_yield() at every

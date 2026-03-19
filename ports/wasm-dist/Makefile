@@ -141,7 +141,9 @@ JSFLAGS += -s EXPORTED_FUNCTIONS="[\
 	_bp_events_write,\
 	_bp_events_read,\
 	_bp_events_pending,\
-	_bp_events_sync_to_opfs]"
+	_bp_events_sync_to_opfs,\
+	_mp_wasm_compile_native,\
+	_mp_wasm_call_native]"
 
 JSFLAGS += -s EXPORTED_RUNTIME_METHODS="[\
 	FS,\
@@ -154,7 +156,9 @@ JSFLAGS += -s EXPORTED_RUNTIME_METHODS="[\
 	UTF8ToString,\
 	stringToUTF8,\
 	lengthBytesUTF8,\
-	stringToNewUTF8]"
+	stringToNewUTF8,\
+	addFunction,\
+	removeFunction]"
 
 # Host OS JS libraries (virtual devices, hook, stdout capture, step-wise VM, IPC, tasks)
 JSFLAGS += --js-library library.js
@@ -163,6 +167,8 @@ JSFLAGS += --js-library libpybroadcast.js
 JSFLAGS += --js-library libpytasks.js
 JSFLAGS += --js-library libpyasync.js
 JSFLAGS += --js-library libpyopfs.js
+JSFLAGS += --js-library library_asmwasm.js
+JSFLAGS += -s ALLOW_TABLE_GROWTH=1
 
 ################################################################################
 # Source files

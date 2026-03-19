@@ -140,7 +140,22 @@ void mp_emit_glue_assign_native(mp_raw_code_t *rc, mp_raw_code_kind_t kind, cons
     // CIRCUITPY-CHANGE: async and generator are distinguished
     // For async, BOTH is_generator and is_async will be set.
     rc->is_async = (scope_flags & MP_SCOPE_FLAG_ASYNC) != 0;
+
+    #if MICROPY_EMIT_WASM
+    // WASM: compile the emitted bytecodes into a WebAssembly.Module and get
+    // a function table index. Replace fun_data with the callable index.
+    {
+        extern int mp_wasm_compile_native(const void *code, size_t len);
+        int fn_idx = mp_wasm_compile_native(fun_data, fun_len);
+        if (fn_idx != 0) {
+            rc->fun_data = (void *)(uintptr_t)fn_idx;
+        } else {
+            rc->fun_data = fun_data; // compilation failed, keep raw pointer
+        }
+    }
+    #else
     rc->fun_data = fun_data;
+    #endif
 
     #if MICROPY_PERSISTENT_CODE_SAVE
     rc->fun_data_len = fun_len;
