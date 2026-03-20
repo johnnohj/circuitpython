@@ -96,6 +96,19 @@
 #define N_WASM (0)
 #endif
 
+// WASM: intercept label assignments to emit marker opcodes for the JS rewriter.
+// emitnative.c calls mp_asm_base_label_assign directly; this macro wraps it
+// to also emit a WASM_MARKER_LABEL (0xFD) + label index.
+#if N_WASM
+static inline void wasm_label_assign_with_marker(mp_asm_base_t *as_base, size_t label_idx) {
+    extern void mp_asm_base_label_assign(mp_asm_base_t *, size_t);
+    mp_asm_base_label_assign(as_base, label_idx);
+    asm_wasm_emit_byte((asm_wasm_t *)as_base, 0xFD);
+    asm_wasm_emit_uleb128((asm_wasm_t *)as_base, label_idx);
+}
+#define mp_asm_base_label_assign(as_base, label_idx) wasm_label_assign_with_marker(as_base, label_idx)
+#endif
+
 #ifndef N_XTENSAWIN
 #define N_XTENSAWIN (0)
 #endif

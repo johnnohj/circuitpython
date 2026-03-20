@@ -487,7 +487,12 @@ MP_DEFINE_CONST_OBJ_TYPE(
 static mp_obj_t fun_viper_call(mp_obj_t self_in, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     mp_cstack_check();
     mp_obj_fun_bc_t *self = MP_OBJ_TO_PTR(self_in);
+    #if MICROPY_EMIT_WASM
+    // WASM: table index stored at bytecode[0], same as get_function_start
+    mp_call_fun_t fun = (mp_call_fun_t)((const uintptr_t *)self->bytecode)[0];
+    #else
     mp_call_fun_t fun = MICROPY_MAKE_POINTER_CALLABLE((void *)self->bytecode);
+    #endif
     return fun(self_in, n_args, n_kw, args);
 }
 

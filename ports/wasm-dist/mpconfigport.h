@@ -50,7 +50,10 @@
  * Control flow uses marker opcodes (0xFD/FE/FF) that the JS rewriter in
  * library_asmwasm.js transforms into proper block/loop/end nesting.
  * Module compilation, function table registration, and invocation all work.
- * Remaining: calling convention alignment (register/local layout). */
+ * Table index stored at bytecode[0]; get_function_start/viper_call read it.
+ * JS rewriter transforms marker opcodes to valid block/loop/end nesting.
+ * Module compiles and function EXECUTES — remaining: register mapping for
+ * REG_FUN_TABLE (param 0 = self_in, needs load chain to get fun_table). */
 // #define MICROPY_EMIT_WASM            (1)
 
 /* ---- Step-wise VM execution (libpyvm) ---- */

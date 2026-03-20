@@ -66,6 +66,8 @@ mergeInto(LibraryManager.library, {
         const branches = [];  // { pos, label_idx, conditional }
         let i = 0;
 
+        // Skip local declarations at the start of the function body
+        // Format: num_groups (uleb128), then for each group: count (uleb128), type (byte)
         function readUleb(arr, off) {
             let val = 0, shift = 0, b;
             do {
@@ -76,7 +78,16 @@ mergeInto(LibraryManager.library, {
             return [val, off];
         }
 
-        // First pass: find all markers
+        // Skip local declarations
+        const [numGroups, afterGroups] = readUleb(code, 0);
+        i = afterGroups;
+        for (let g = 0; g < numGroups; g++) {
+            const [_count, afterCount] = readUleb(code, i);
+            i = afterCount + 1; // +1 for the type byte
+        }
+        const localsEnd = i; // instructions start here
+
+        // First pass: find all markers (only in instruction region)
         while (i < code.length) {
             const op = code[i];
             if (op === MARKER_LABEL) {
@@ -121,8 +132,10 @@ mergeInto(LibraryManager.library, {
             .map(([idx, l]) => ({ idx: +idx, pos: l.pos }))
             .sort((a, b) => a.pos - b.pos);
 
-        // Build output
+        // Build output — copy local declarations verbatim, then rewrite instructions
         const out = [];
+        for (let ci = 0; ci < localsEnd; ci++) out.push(code[ci]);
+
         const blockStack = []; // { labelIdx, type: 'block'|'loop' }
 
         // Open blocks for all forward labels at the start (outermost = latest position)
@@ -131,7 +144,7 @@ mergeInto(LibraryManager.library, {
             out.push(OP_BLOCK, BLOCKTYPE_VOID);
         }
 
-        i = 0;
+        i = localsEnd;
         while (i < code.length) {
             const op = code[i];
 
@@ -212,6 +225,12 @@ mergeInto(LibraryManager.library, {
     $wasm_skip_instruction__deps: [],
     $wasm_skip_instruction: function(code, i) {
         const op = code[i++];
+        // Custom marker opcodes (1 uleb128 label index)
+        if (op === 0xFD || op === 0xFE || op === 0xFF) {
+            while (i < code.length && code[i] & 0x80) i++;
+            i++; // final byte of uleb128
+            return i;
+        }
         // Opcodes with uleb128 immediate(s)
         if ((op >= 0x20 && op <= 0x24) || op === 0x0C || op === 0x0D || op === 0x10) {
             // local.get/set/tee, global.get/set, br, br_if, call — 1 uleb128

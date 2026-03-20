@@ -142,17 +142,26 @@ void mp_emit_glue_assign_native(mp_raw_code_t *rc, mp_raw_code_kind_t kind, cons
     rc->is_async = (scope_flags & MP_SCOPE_FLAG_ASYNC) != 0;
 
     #if MICROPY_EMIT_WASM
-    // WASM: compile the emitted bytecodes into a WebAssembly.Module and get
-    // a function table index. Replace fun_data with the callable index.
+    // WASM: compile the emitted bytecodes (starting after the prelude pointer
+    // at offset sizeof(uintptr_t)) into a WebAssembly.Module. Store the
+    // resulting function table index at the start of fun_data, so that
+    // mp_obj_fun_native_get_function_start() returns it naturally:
+    //   get_function_start = bytecode + sizeof(uintptr_t) = table_index
+    // On WASM, function pointers ARE table indices, so call_indirect works.
     {
         extern int mp_wasm_compile_native(const void *code, size_t len);
+        // Pass the full emitter output (local declarations + instructions).
+        // asm_wasm_entry emits locals first, then instructions with markers.
         int fn_idx = mp_wasm_compile_native(fun_data, fun_len);
         if (fn_idx != 0) {
-            rc->fun_data = (void *)(uintptr_t)fn_idx;
-        } else {
-            rc->fun_data = fun_data; // compilation failed, keep raw pointer
+            // Store table index at bytecode[0] where get_function_start reads it.
+            // On WASM, function pointers are table indices — call_indirect uses
+            // the index directly, not a memory address.
+            uintptr_t *slot = (uintptr_t *)fun_data;
+            slot[0] = (uintptr_t)fn_idx;
         }
     }
+    rc->fun_data = fun_data;
     #else
     rc->fun_data = fun_data;
     #endif

@@ -87,7 +87,14 @@ static inline const uint8_t *mp_obj_fun_native_get_prelude_ptr(const mp_obj_fun_
 
 static inline void *mp_obj_fun_native_get_function_start(const mp_obj_fun_bc_t *fun_native) {
     // Obtain a pointer to the start of the function executable machine code.
+    #if MICROPY_EMIT_WASM
+    // WASM: the table index is stored at bytecode[0] (first uintptr_t).
+    // On WASM, function pointers are table indices, so we return the index
+    // as a pointer value (it's used with call_indirect, not dereferenced).
+    return (void *)((const uintptr_t *)fun_native->bytecode)[0];
+    #else
     return MICROPY_MAKE_POINTER_CALLABLE((void *)(fun_native->bytecode + sizeof(uintptr_t)));
+    #endif
 }
 
 static inline void *mp_obj_fun_native_get_generator_start(const mp_obj_fun_bc_t *fun_native) {
