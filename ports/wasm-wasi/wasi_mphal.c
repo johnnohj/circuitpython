@@ -33,10 +33,21 @@ int mp_hal_stdin_rx_chr(void) {
 }
 
 // ---- stdout ----
+// Writes to BOTH fd 1 (UART serial / wasmtime console) AND /dev/repl
+// (USB serial / xterm.js). Both coexist, like a real CircuitPython board.
+
+#ifdef MICROPY_OPFS_EXECUTOR
+#include "dev_repl.h"
+#endif
 
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     ssize_t ret;
     MP_HAL_RETRY_SYSCALL(ret, write(STDOUT_FILENO, str, len), {});
+
+    #ifdef MICROPY_OPFS_EXECUTOR
+    // Also write to /dev/repl stdout ring
+    dev_repl_stdout_write(str, len);
+    #endif
     return ret < 0 ? 0 : (mp_uint_t)ret;
 }
 

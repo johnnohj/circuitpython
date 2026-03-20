@@ -73,6 +73,7 @@ SRC_C = \
 	$(SRC_C_COMMON) \
 	main_opfs.c \
 	opfs_state.c \
+	dev_repl.c \
 
 
 else

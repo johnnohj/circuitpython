@@ -39,6 +39,7 @@
 #endif
 
 #include "opfs_state.h"
+#include "dev_repl.h"
 
 // ---- Configuration ----
 
@@ -70,13 +71,25 @@ static mp_obj_t pystack_buf[OPFS_PYSTACK_SIZE / sizeof(mp_obj_t)];
 // ---- Port-specific state ----
 
 static const char *_state_dir = OPFS_STATE_DIR;
+static const char *_repl_path = NULL;
 static int _checkpoint_counter = 0;
+static int _repl_initialized = 0;
 
 // ---- port_background_task() ----
-// Called by background_callback_run_all() at every VM branch point.
-// This is where we service OPFS device files.
+// Called via MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS at every
+// VM branch point. Services OPFS device files.
 
 void port_background_task(void) {
+    // Flush /dev/repl stdout ring to file
+    if (_repl_initialized) {
+        dev_repl_flush();
+
+        // Check for Ctrl-C from JS
+        if (dev_repl_check_interrupt()) {
+            mp_sched_keyboard_interrupt();
+        }
+    }
+
     // Periodic state checkpoint for crash recovery
     if (++_checkpoint_counter >= OPFS_CHECKPOINT_INTERVAL) {
         _checkpoint_counter = 0;
@@ -84,10 +97,6 @@ void port_background_task(void) {
         opfs_save_vm(_state_dir);
         opfs_save_pystack(_state_dir);
     }
-
-    // TODO Phase 3: check /dev/repl for Ctrl-C
-    // TODO Phase 3: flush /dev/registers
-    // TODO Phase 3: check /dev/sensors for responses
 }
 
 // Stubs for CircuitPython symbols (reset_into_safe_mode, stack_ok,
@@ -185,6 +194,20 @@ int main(int argc, char **argv) {
     opfs_save_heap(_state_dir);
     opfs_save_vm(_state_dir);
     opfs_save_pystack(_state_dir);
+
+    // Initialize /dev/repl (USB serial equivalent)
+    {
+        char repl_path[128];
+        snprintf(repl_path, sizeof(repl_path), "%s/../dev/repl", _state_dir);
+        // Ensure /dev/ directory exists
+        char dev_dir[128];
+        snprintf(dev_dir, sizeof(dev_dir), "%s/../dev", _state_dir);
+        mkdir(dev_dir, 0777);
+        if (dev_repl_init(repl_path) == 0) {
+            _repl_initialized = 1;
+            _repl_path = repl_path;
+        }
+    }
 
     // Run the program
     fprintf(stderr, "[opfs] running %zu bytes...\n", src_len);
