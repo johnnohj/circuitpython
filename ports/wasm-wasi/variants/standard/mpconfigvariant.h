@@ -1,0 +1,55 @@
+/*
+ * WASI standard variant
+ *
+ * Based on unix minimal variant. Enables enough features for a useful REPL.
+ */
+#pragma once
+
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
+
+// Disable native emitters (wasm32 target)
+#define MICROPY_EMIT_X86 (0)
+#define MICROPY_EMIT_X64 (0)
+#define MICROPY_EMIT_THUMB (0)
+#define MICROPY_EMIT_ARM (0)
+
+// Tune parser for smaller memory footprint
+#define MICROPY_ALLOC_QSTR_CHUNK_INIT (64)
+#define MICROPY_ALLOC_PARSE_RULE_INIT (8)
+#define MICROPY_ALLOC_PARSE_RULE_INC  (8)
+#define MICROPY_ALLOC_PARSE_RESULT_INIT (8)
+#define MICROPY_ALLOC_PARSE_RESULT_INC (8)
+#define MICROPY_ALLOC_PARSE_CHUNK_INIT (64)
+
+// Enable features for a useful REPL
+#define MICROPY_COMP_CONST_FOLDING (1)
+#define MICROPY_COMP_CONST_LITERAL (1)
+#define MICROPY_COMP_CONST_TUPLE (1)
+#define MICROPY_COMP_DOUBLE_TUPLE_ASSIGN (1)
+#define MICROPY_ENABLE_COMPILER (1)
+#define MICROPY_ENABLE_EXTERNAL_IMPORT (1)
+#define MICROPY_FULL_CHECKS (1)
+#define MICROPY_HELPER_REPL (1)
+#define MICROPY_KBD_EXCEPTION (1)
+#define MICROPY_MODULE_GETATTR (1)
+#define MICROPY_MULTIPLE_INHERITANCE (1)
+#define MICROPY_PY_ASSIGN_EXPR (1)
+#define MICROPY_PY_ASYNC_AWAIT (1)
+#define MICROPY_PY_ATTRTUPLE (1)
+#define MICROPY_PY_BUILTINS_DICT_FROMKEYS (1)
+#define MICROPY_PY_BUILTINS_RANGE_ATTRS (1)
+#define MICROPY_PY_GENERATOR_PEND_THROW (1)
+
+// Enable sys and os
+#define MICROPY_PY_SYS (1)
+#define MICROPY_PY_SYS_PATH (1)
+#define MICROPY_PY_SYS_ARGV (1)
+#define MICROPY_PY_OS (1)
+
+// Float support
+#define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_DOUBLE)
+#define MICROPY_LONGINT_IMPL (MICROPY_LONGINT_IMPL_MPZ)
+
+// Use MicroPython readline (not GNU readline)
+#define MICROPY_USE_READLINE (1)
+#define MICROPY_USE_READLINE_HISTORY (1)
