@@ -53,7 +53,9 @@
  * Table index stored at bytecode[0]; get_function_start/viper_call read it.
  * JS rewriter transforms marker opcodes to valid block/loop/end nesting.
  * REG_ARG_1=param0(self_in), REG_FUN_TABLE=local4(loaded from context). */
+#ifndef MICROPY_EMIT_WASM
 #define MICROPY_EMIT_WASM               (1)
+#endif
 
 /* ---- Step-wise VM execution (libpyvm) ---- */
 /* When enabled, the VM dispatch loop checks mp_vm_should_yield() at every

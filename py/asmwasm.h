@@ -178,6 +178,15 @@
 #define ASM_WASM_NUM_PARAMS     4
 #define ASM_WASM_NUM_EXTRA_LOCALS (ASM_WASM_NUM_REGS - ASM_WASM_NUM_PARAMS)
 
+// Number of register-local slots (REG_LOCAL_1..3).
+// On native architectures, register locals and the emitter's state stack
+// live in separate memory (CPU registers vs C stack frame). On WASM, both
+// are mapped to WASM locals. The state stack must start AFTER the register
+// locals to avoid collision. ASM_MOV_LOCAL_REG/ASM_MOV_REG_LOCAL add this
+// offset so state slot 0 maps to the first local after REG_LOCAL_3.
+#define ASM_WASM_REG_LOCAL_COUNT 3
+#define ASM_WASM_STATE_OFFSET   ASM_WASM_REG_LOCAL_COUNT
+
 // ---- Maximum nesting depth for blocks/loops ----
 #define ASM_WASM_MAX_BLOCK_DEPTH 32
 
@@ -333,16 +342,17 @@ void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
     } while (0)
 
 // ---- Register moves ----
+// State stack slots are offset past the register locals (see ASM_WASM_STATE_OFFSET).
 #define ASM_MOV_LOCAL_REG(as, local_num, reg) \
     do { \
         asm_wasm_op_local_get(as, reg); \
-        asm_wasm_op_local_set(as, ASM_WASM_REG_LOCAL_1 + (local_num)); \
+        asm_wasm_op_local_set(as, ASM_WASM_REG_LOCAL_1 + ASM_WASM_STATE_OFFSET + (local_num)); \
     } while (0)
 #define ASM_MOV_REG_IMM(as, reg_dest, imm) \
     asm_wasm_mov_reg_imm(as, reg_dest, imm)
 #define ASM_MOV_REG_LOCAL(as, reg_dest, local_num) \
     do { \
-        asm_wasm_op_local_get(as, ASM_WASM_REG_LOCAL_1 + (local_num)); \
+        asm_wasm_op_local_get(as, ASM_WASM_REG_LOCAL_1 + ASM_WASM_STATE_OFFSET + (local_num)); \
         asm_wasm_op_local_set(as, reg_dest); \
     } while (0)
 #define ASM_MOV_REG_REG(as, reg_dest, reg_src) \
@@ -351,7 +361,7 @@ void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
         asm_wasm_op_local_set(as, reg_dest); \
     } while (0)
 #define ASM_MOV_REG_LOCAL_ADDR(as, reg_dest, local_num) \
-    asm_wasm_mov_reg_local_addr(as, reg_dest, local_num)
+    asm_wasm_mov_reg_local_addr(as, reg_dest, ASM_WASM_STATE_OFFSET + (local_num))
 #define ASM_MOV_REG_PCREL(as, reg_dest, label) \
     asm_wasm_mov_reg_pcrel(as, reg_dest, label)
 

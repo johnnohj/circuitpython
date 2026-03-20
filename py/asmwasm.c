@@ -393,10 +393,13 @@ void asm_wasm_entry(asm_wasm_t *as, int num_locals) {
         }
     }
     as->block_depth = 0;
-    as->num_locals = ASM_WASM_NUM_REGS + num_locals;
+    as->num_locals = ASM_WASM_NUM_REGS + ASM_WASM_STATE_OFFSET + num_locals;
 
-    // Emit local declarations
-    uint extra_locals = ASM_WASM_NUM_EXTRA_LOCALS + num_locals;
+    // Emit local declarations.
+    // ASM_WASM_STATE_OFFSET accounts for the gap between register locals
+    // (REG_LOCAL_1..3) and the emitter's state stack. On WASM, both live
+    // in the same local index space, so we need extra locals to avoid overlap.
+    uint extra_locals = ASM_WASM_NUM_EXTRA_LOCALS + ASM_WASM_STATE_OFFSET + num_locals;
     if (extra_locals > 0) {
         asm_wasm_emit_uleb128(as, 1);
         asm_wasm_emit_uleb128(as, extra_locals);

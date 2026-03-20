@@ -48,26 +48,28 @@ mergeInto(LibraryManager.library, {
      * Algorithm:
      * 1. Scan for all LABEL markers and BR/BR_IF markers
      * 2. Classify each label as forward-target, backward-target, or both
-     * 3. For forward labels: wrap the region [first br to label .. label] in a block
-     * 4. For backward labels: wrap the region [label .. last br to label] in a loop
+     * 3. Detect while-loop patterns (forward-br + backward-label + condition
+     *    at bottom) and restructure into top-test loops via code motion
+     * 4. For remaining forward labels: wrap in blocks opened at function start
      * 5. Replace BR/BR_IF markers with real br/br_if using correct depth
+     *
+     * While-loop restructuring:
+     *   MicroPython emits bottom-test loops:
+     *     br F; label B; <body>; label F; <cond>; br_if B
+     *   WASM requires structured control flow, so we restructure to top-test:
+     *     block; loop; <cond>; i32.eqz; br_if 1; <body>; br 0; end; end
+     *   The condition bytes are moved from bottom to top of the loop.
      */
     $wasm_rewrite_control_flow__deps: ['$wasm_uleb128'],
     $wasm_rewrite_control_flow: function(code) {
         const MARKER_LABEL = 0xFD;
         const MARKER_BR    = 0xFE;
         const MARKER_BR_IF = 0xFF;
-        const OP_BLOCK  = 0x02, OP_LOOP = 0x03, OP_END = 0x0B;
+        const OP_BLOCK = 0x02, OP_LOOP = 0x03, OP_END = 0x0B;
         const OP_BR = 0x0C, OP_BR_IF = 0x0D, OP_RETURN = 0x0F;
+        const OP_I32_EQZ = 0x45;
         const BLOCKTYPE_VOID = 0x40;
 
-        // Parse: find all markers and their byte positions
-        const labels = {};    // label_idx → { pos, forward: bool, backward: bool }
-        const branches = [];  // { pos, label_idx, conditional }
-        let i = 0;
-
-        // Skip local declarations at the start of the function body
-        // Format: num_groups (uleb128), then for each group: count (uleb128), type (byte)
         function readUleb(arr, off) {
             let val = 0, shift = 0, b;
             do {
@@ -78,16 +80,19 @@ mergeInto(LibraryManager.library, {
             return [val, off];
         }
 
-        // Skip local declarations
+        // Skip local declarations at the start of the function body
+        let i = 0;
         const [numGroups, afterGroups] = readUleb(code, 0);
         i = afterGroups;
         for (let g = 0; g < numGroups; g++) {
             const [_count, afterCount] = readUleb(code, i);
             i = afterCount + 1; // +1 for the type byte
         }
-        const localsEnd = i; // instructions start here
+        const localsEnd = i;
 
-        // First pass: find all markers (only in instruction region)
+        // ── First pass: find all markers ──
+        const labels = {};    // label_idx → { pos, forward, backward }
+        const branches = [];  // { pos, labelIdx, conditional, end }
         while (i < code.length) {
             const op = code[i];
             if (op === MARKER_LABEL) {
@@ -96,49 +101,81 @@ mergeInto(LibraryManager.library, {
                 i = next;
             } else if (op === MARKER_BR || op === MARKER_BR_IF) {
                 const [labelIdx, next] = readUleb(code, i + 1);
-                branches.push({ pos: i, labelIdx, conditional: op === MARKER_BR_IF });
+                branches.push({ pos: i, labelIdx, conditional: op === MARKER_BR_IF, end: next });
                 i = next;
             } else {
-                // Skip regular WASM opcodes (variable length)
                 i = wasm_skip_instruction(code, i);
             }
         }
 
-        // Classify labels
+        // ── Classify labels ──
         for (const br of branches) {
             const lbl = labels[br.labelIdx];
             if (!lbl) continue;
-            if (br.pos < lbl.pos) {
-                lbl.forward = true;   // branch before label = forward
-            } else {
-                lbl.backward = true;  // branch after label = backward
-            }
+            if (br.pos < lbl.pos) lbl.forward = true;
+            else lbl.backward = true;
         }
 
-        // Build output: copy code, replacing markers with real instructions.
-        // Strategy: for each label position, insert block/loop/end as needed.
-        //
-        // Simple approach: process the code linearly. At each label marker:
-        // - If forward target: we already opened a block earlier, emit end
-        // - If backward target: emit loop header
-        //
-        // At each branch marker: emit br/br_if with correct depth
-        //
-        // We need to track the block stack to compute br depths.
+        // ── Detect while-loop patterns ──
+        // Pattern: unconditional br F (forward) immediately followed by
+        // MARKER_LABEL B (backward target), with F between B and back-edge.
+        // This is the standard bottom-test while loop that must be
+        // restructured into a top-test loop for WASM.
+        const whileLoops = {};           // bodyLabelIdx → { condLabelIdx, condBytes, backBranchEnd }
+        const whileCondLabels = new Set();  // condition label indices (excluded from forward blocks)
+        const whileBodyLabels = new Set();  // body label indices (get block+loop instead of plain loop)
+        const whileInitBranches = new Set(); // positions of initial "skip to cond" branches
 
-        // Sort forward labels by position (ascending) to open blocks
-        const forwardLabels = Object.entries(labels)
-            .filter(([_, l]) => l.forward)
-            .map(([idx, l]) => ({ idx: +idx, pos: l.pos }))
-            .sort((a, b) => a.pos - b.pos);
+        for (const br of branches) {
+            if (br.conditional) continue;
+            const condLbl = labels[br.labelIdx];
+            if (!condLbl || !condLbl.forward) continue;
 
-        // Build output — copy local declarations verbatim, then rewrite instructions
+            // Next marker after this br must be MARKER_LABEL for a backward target
+            if (br.end >= code.length || code[br.end] !== MARKER_LABEL) continue;
+            const [bodyLabelIdx, _bodyLabelEnd] = readUleb(code, br.end + 1);
+            const bodyLbl = labels[bodyLabelIdx];
+            if (!bodyLbl || !bodyLbl.backward) continue;
+
+            // F must be after B (condition is between body and back-edge)
+            if (condLbl.pos <= bodyLbl.pos) continue;
+
+            // Find the conditional backward branch to B after F
+            let backBr = null;
+            for (const br2 of branches) {
+                if (br2.labelIdx === bodyLabelIdx && br2.conditional && br2.pos > condLbl.pos) {
+                    backBr = br2;
+                    break;
+                }
+            }
+            if (!backBr) continue;
+
+            // Extract condition bytes: after MARKER_LABEL F up to MARKER_BR_IF B
+            const [, condStart] = readUleb(code, condLbl.pos + 1);
+            const condBytes = code.slice(condStart, backBr.pos);
+
+            whileLoops[bodyLabelIdx] = {
+                condLabelIdx: br.labelIdx,
+                condBytes: condBytes,
+                backBranchEnd: backBr.end,
+            };
+            whileCondLabels.add(br.labelIdx);
+            whileBodyLabels.add(bodyLabelIdx);
+            whileInitBranches.add(br.pos);
+        }
+
+        // ── Build output ──
         const out = [];
         for (let ci = 0; ci < localsEnd; ci++) out.push(code[ci]);
 
         const blockStack = []; // { labelIdx, type: 'block'|'loop' }
 
-        // Open blocks for all forward labels at the start (outermost = latest position)
+        // Open forward blocks at function start (excluding while-loop cond labels)
+        const forwardLabels = Object.entries(labels)
+            .filter(([idx, l]) => l.forward && !whileCondLabels.has(+idx))
+            .map(([idx, l]) => ({ idx: +idx, pos: l.pos }))
+            .sort((a, b) => a.pos - b.pos);
+
         for (let fi = forwardLabels.length - 1; fi >= 0; fi--) {
             blockStack.push({ labelIdx: forwardLabels[fi].idx, type: 'block' });
             out.push(OP_BLOCK, BLOCKTYPE_VOID);
@@ -152,55 +189,113 @@ mergeInto(LibraryManager.library, {
                 const [labelIdx, next] = readUleb(code, i + 1);
                 const lbl = labels[labelIdx];
 
-                // Close forward block if this label is a forward target
-                if (lbl.forward) {
-                    // Find and close this label's block
-                    const stackIdx = blockStack.findIndex(b => b.labelIdx === labelIdx && b.type === 'block');
-                    if (stackIdx >= 0) {
-                        // Close all blocks from top to this one (they must nest)
-                        // Actually, we should only close the innermost matching one.
-                        // Since forward blocks are opened outermost=latest, the
-                        // first (lowest pos) label should be innermost on the stack.
-                        // Pop everything above it and re-push after.
-                        const above = blockStack.splice(stackIdx);
-                        above.shift(); // remove this label's block
-                        out.push(OP_END);
-                        // Re-push remaining (shouldn't happen with simple nesting)
-                        for (const b of above) blockStack.push(b);
-                    }
-                }
+                if (whileBodyLabels.has(labelIdx)) {
+                    // ── While-loop body start ──
+                    // Emit block (exit target) + loop (back-edge target),
+                    // then the condition bytes moved from bottom.
+                    const wl = whileLoops[labelIdx];
 
-                // Open loop if this label is a backward target
-                if (lbl.backward) {
-                    blockStack.push({ labelIdx, type: 'loop' });
+                    // Exit block: br_if 1 from inside loop exits here
+                    blockStack.push({ labelIdx: -labelIdx - 1, type: 'block' });
+                    out.push(OP_BLOCK, BLOCKTYPE_VOID);
+                    // Loop header: br 0 from body end re-enters here
+                    blockStack.push({ labelIdx: labelIdx, type: 'loop' });
                     out.push(OP_LOOP, BLOCKTYPE_VOID);
+
+                    // Emit condition (moved from bottom to top of loop)
+                    for (let ci = 0; ci < wl.condBytes.length; ci++) {
+                        out.push(wl.condBytes[ci]);
+                    }
+                    // Invert condition and exit if false:
+                    // Original br_if meant "branch if true (continue)".
+                    // We need "exit if false" → i32.eqz + br_if 1.
+                    out.push(OP_I32_EQZ);
+                    out.push(OP_BR_IF);
+                    out.push(1); // depth 1 = exit block
+
+                    i = next;
+
+                } else if (whileCondLabels.has(labelIdx)) {
+                    // ── While-loop condition label ──
+                    // Body is done. Emit back-branch, close loop+block,
+                    // skip the original condition + back-branch bytes.
+                    let bodyLabelIdx = null;
+                    for (const [blIdx, wl] of Object.entries(whileLoops)) {
+                        if (wl.condLabelIdx === labelIdx) {
+                            bodyLabelIdx = +blIdx;
+                            break;
+                        }
+                    }
+                    const wl = whileLoops[bodyLabelIdx];
+
+                    // Back to loop header
+                    out.push(OP_BR);
+                    out.push(0); // depth 0 = loop
+                    // Close loop and exit block
+                    out.push(OP_END); // end loop
+                    out.push(OP_END); // end exit block
+
+                    // Remove loop and exit block from stack
+                    for (let si = blockStack.length - 1; si >= 0; si--) {
+                        if (blockStack[si].labelIdx === bodyLabelIdx && blockStack[si].type === 'loop') {
+                            blockStack.splice(si, 1);
+                            break;
+                        }
+                    }
+                    for (let si = blockStack.length - 1; si >= 0; si--) {
+                        if (blockStack[si].labelIdx === -bodyLabelIdx - 1 && blockStack[si].type === 'block') {
+                            blockStack.splice(si, 1);
+                            break;
+                        }
+                    }
+
+                    // Skip past original condition + back-branch
+                    i = wl.backBranchEnd;
+
+                } else {
+                    // ── Normal label ──
+                    if (lbl.forward) {
+                        const stackIdx = blockStack.findIndex(b => b.labelIdx === labelIdx && b.type === 'block');
+                        if (stackIdx >= 0) {
+                            const above = blockStack.splice(stackIdx);
+                            above.shift();
+                            out.push(OP_END);
+                            for (const b of above) blockStack.push(b);
+                        }
+                    }
+                    if (lbl.backward) {
+                        blockStack.push({ labelIdx, type: 'loop' });
+                        out.push(OP_LOOP, BLOCKTYPE_VOID);
+                    }
+                    i = next;
                 }
 
-                i = next;
             } else if (op === MARKER_BR || op === MARKER_BR_IF) {
                 const [labelIdx, next] = readUleb(code, i + 1);
 
-                // Find the target on the block stack
-                let depth = -1;
-                for (let si = blockStack.length - 1; si >= 0; si--) {
-                    if (blockStack[si].labelIdx === labelIdx) {
-                        depth = blockStack.length - 1 - si;
-                        break;
-                    }
-                }
-
-                if (depth < 0) {
-                    // Label not on stack — this is a forward jump past a backward
-                    // label's loop end. Use return as fallback.
-                    out.push(OP_RETURN);
+                if (whileInitBranches.has(i)) {
+                    // Skip the initial "jump to condition" — condition moved to loop top
+                    i = next;
                 } else {
-                    const realOp = (op === MARKER_BR_IF) ? OP_BR_IF : OP_BR;
-                    out.push(realOp);
-                    const depthBytes = wasm_uleb128(depth);
-                    for (let di = 0; di < depthBytes.length; di++) out.push(depthBytes[di]);
+                    // Normal branch: find target on block stack
+                    let depth = -1;
+                    for (let si = blockStack.length - 1; si >= 0; si--) {
+                        if (blockStack[si].labelIdx === labelIdx) {
+                            depth = blockStack.length - 1 - si;
+                            break;
+                        }
+                    }
+
+                    if (depth < 0) {
+                        out.push(OP_RETURN);
+                    } else {
+                        out.push((op === MARKER_BR_IF) ? OP_BR_IF : OP_BR);
+                        const depthBytes = wasm_uleb128(depth);
+                        for (let di = 0; di < depthBytes.length; di++) out.push(depthBytes[di]);
+                    }
+                    i = next;
                 }
 
-                i = next;
             } else {
                 // Copy regular instruction bytes
                 const next = wasm_skip_instruction(code, i);
@@ -209,7 +304,7 @@ mergeInto(LibraryManager.library, {
             }
         }
 
-        // Close any remaining open blocks (backward labels' loops)
+        // Close any remaining open blocks
         while (blockStack.length > 0) {
             blockStack.pop();
             out.push(OP_END);

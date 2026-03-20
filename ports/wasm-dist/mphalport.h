@@ -11,13 +11,18 @@
 #include <unistd.h>
 #include <errno.h>
 
-/* stdin: read from /dev/stdin; polls via mp_js_hook() when empty */
+#if MICROPY_WASI_HAL
+/* WASI: stdin/stdout via standard POSIX fd 0/1 */
+int mp_hal_stdin_rx_chr(void);
+#else
+/* Emscripten: stdin via semihosting virtual device */
 static inline int mp_hal_stdin_rx_chr(void) {
     extern int mp_semihosting_rx_char(void);
     return mp_semihosting_rx_char();
 }
+#endif
 
-/* stdout: write to /dev/stdout */
+/* stdout */
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len);
 void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len);
 
