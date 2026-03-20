@@ -1,19 +1,23 @@
 /*
  * WASI port configuration
  *
- * Headless MicroPython VM compiled with wasi-sdk.
+ * Headless CircuitPython VM compiled with wasi-sdk.
  * Based on the unix port, stripped of signals, TTY, and platform-specific code.
  * All I/O through WASI fd_read/fd_write.
  *
- * Does NOT set CIRCUITPY=1 — stays as a clean MicroPython port.
- * VM hooks are defined directly (same pattern as the unix port).
+ * The OPFS variant sets CIRCUITPY=1 and includes py/circuitpy_mpconfig.h
+ * for the standard VM hooks (RUN_BACKGROUND_TASKS → background_callback_run_all).
+ * The standard variant stays as plain MicroPython.
  */
 #pragma once
 
 #include <unistd.h>
 
-// Variant-specific definitions
+// Variant-specific definitions (loaded BEFORE circuitpy_mpconfig.h)
 #include "mpconfigvariant.h"
+
+// ITCM/DTCM linker macros (no-ops for WASI)
+#include "linker.h"
 
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
 #define MICROPY_PY_ASYNC_AWAIT (1)
@@ -31,7 +35,11 @@
 // ---- Type definitions (wasm32: sizeof(void*) == sizeof(int) == 4) ----
 typedef int mp_int_t;
 typedef unsigned int mp_uint_t;
+// mp_off_t: circuitpy_mpconfig.h defines it as long (32-bit on wasm32).
+// For the standard variant (no circuitpy_mpconfig.h), define it here.
+#ifndef MICROPY_OPFS_EXECUTOR
 typedef long long mp_off_t;  // 64-bit file offsets for OPFS
+#endif
 
 // alloca
 #include <alloca.h>
@@ -39,6 +47,7 @@ typedef long long mp_off_t;  // 64-bit file offsets for OPFS
 // ---- GC ----
 #define MICROPY_ENABLE_GC           (1)
 #define MICROPY_GCREGS_SETJMP       (1)
+#define MICROPY_ENABLE_SELECTIVE_COLLECT (1)
 
 // ---- VFS (POSIX — wasi-libc maps to WASI fd_* syscalls) ----
 #define MICROPY_ENABLE_FINALISER    (1)
@@ -73,19 +82,6 @@ extern const struct _mp_print_t mp_stderr_print;
 #define MICROPY_HW_BOARD_NAME   "WASM-WASI"
 #define MICROPY_HW_MCU_NAME     "wasm32"
 
-// ---- VM hooks + background tasks ----
-// OPFS variant: port_background_task() services OPFS device files
-// and periodically checkpoints state. Defined here directly —
-// no CIRCUITPY=1, no py/circuitpy_mpconfig.h needed.
-#ifdef MICROPY_OPFS_EXECUTOR
-extern void port_background_task(void);
-#define RUN_BACKGROUND_TASKS        do { port_background_task(); } while(0)
-#define MICROPY_VM_HOOK_LOOP        RUN_BACKGROUND_TASKS;
-#define MICROPY_VM_HOOK_RETURN      RUN_BACKGROUND_TASKS;
-#else
-#define RUN_BACKGROUND_TASKS        ((void)0)
-#endif
-
 // ---- dirent ----
 #ifndef _DIRENT_HAVE_D_TYPE
 #define _DIRENT_HAVE_D_TYPE (1)
@@ -95,3 +91,15 @@ extern void port_background_task(void);
 #endif
 
 #include <stdio.h>
+
+// ---- CircuitPython supervisor integration ----
+// For the OPFS variant: include py/circuitpy_mpconfig.h which provides
+// RUN_BACKGROUND_TASKS → background_callback_run_all() → port_background_task().
+// This is the standard CircuitPython VM hook infrastructure.
+//
+// For the standard variant: no-op hooks (plain MicroPython).
+#ifdef MICROPY_OPFS_EXECUTOR
+#include "py/circuitpy_mpconfig.h"
+#else
+#define RUN_BACKGROUND_TASKS        ((void)0)
+#endif

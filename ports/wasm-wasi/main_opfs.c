@@ -71,15 +71,14 @@ static mp_obj_t pystack_buf[OPFS_PYSTACK_SIZE / sizeof(mp_obj_t)];
 // ---- Port-specific state ----
 
 static const char *_state_dir = OPFS_STATE_DIR;
-static const char *_repl_path = NULL;
-static int _checkpoint_counter = 0;
 static int _repl_initialized = 0;
+static int _checkpoint_counter = 0;
 
-// ---- port_background_task() ----
-// Called via MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS at every
-// VM branch point. Services OPFS device files.
+// ---- OPFS device servicing ----
+// Called from supervisor/port.c:port_background_tick() (1x per ms)
+// via the standard supervisor_background_tick callback chain.
 
-void port_background_task(void) {
+void opfs_background_tick(void) {
     // Flush /dev/repl stdout ring to file
     if (_repl_initialized) {
         dev_repl_flush();
@@ -98,9 +97,6 @@ void port_background_task(void) {
         opfs_save_pystack(_state_dir);
     }
 }
-
-// Stubs for CircuitPython symbols (reset_into_safe_mode, stack_ok,
-// assert_heap_ok, decompress, decompress_length) are in wasi_mphal.c
 
 // ---- Execute: compile and run a program ----
 
@@ -182,9 +178,8 @@ int main(int argc, char **argv) {
     }
     #endif
 
-    // Set up sys.path
+    // Set up sys.path — append to the pre-allocated list
     #if MICROPY_PY_SYS_PATH
-    mp_sys_path = mp_obj_new_list(0, NULL);
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
     #endif
@@ -199,13 +194,11 @@ int main(int argc, char **argv) {
     {
         char repl_path[128];
         snprintf(repl_path, sizeof(repl_path), "%s/../dev/repl", _state_dir);
-        // Ensure /dev/ directory exists
         char dev_dir[128];
         snprintf(dev_dir, sizeof(dev_dir), "%s/../dev", _state_dir);
         mkdir(dev_dir, 0777);
         if (dev_repl_init(repl_path) == 0) {
             _repl_initialized = 1;
-            _repl_path = repl_path;
         }
     }
 

@@ -1,12 +1,16 @@
 ################################################################################
 # WASI port Makefile
 #
-# Headless CircuitPython/MicroPython VM compiled with wasi-sdk.
+# Headless CircuitPython VM compiled with wasi-sdk.
 # No Emscripten, no JavaScript. All I/O through WASI fd_read/fd_write.
 #
+# Variants:
+#   standard — simple REPL on stdin/stdout (plain MicroPython)
+#   opfs     — CIRCUITPY=1, supervisor infrastructure, OPFS-backed state
+#
 # Usage:
-#   make                          # build
-#   wasmtime build-standard/micropython.wasm  # run REPL
+#   make                          # build standard variant
+#   make VARIANT=opfs             # build OPFS executor variant
 ################################################################################
 
 VARIANT ?= standard
@@ -19,6 +23,7 @@ WASI_SYSROOT = $(WASI_SDK)/share/wasi-sysroot
 WASI_CC = $(WASI_SDK)/bin/clang-21
 
 include ../../py/mkenv.mk
+-include $(VARIANT_DIR)/mpconfigvariant.mk
 
 # Qstr definitions (must come before py.mk)
 QSTR_DEFS += qstrdefsport.h
@@ -47,7 +52,7 @@ CFLAGS += $(INC)
 # setjmp/longjmp via WASM Exception Handling (required for NLR)
 CFLAGS += -mllvm -wasm-enable-sjlj
 
-# Not a full CircuitPython build, but py.mk still needs these
+# py.mk needs these even without full CircuitPython build
 CIRCUITPY_MESSAGE_COMPRESSION_LEVEL ?= 0
 USB_NUM_ENDPOINT_PAIRS ?= 0
 CIRCUITPY_USB_DEVICE ?= 0
@@ -55,32 +60,51 @@ CIRCUITPY_USB_DEVICE ?= 0
 LDFLAGS += --target=wasm32-wasi
 LDFLAGS += --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mllvm -wasm-enable-sjlj
-# Link setjmp/longjmp support (WASM Exception Handling based)
 LDFLAGS += -lsetjmp
-# Initial memory: 2MB (static 256KB heap + stack + data)
 LDFLAGS += -Wl,--initial-memory=2097152
 
 ################################################################################
-# Source files — variant-dependent
+# Source files
 
-# Common HAL
+# Common HAL (used by all variants)
 SRC_C_COMMON = \
 	wasi_mphal.c \
 
-# Variant-specific main
+# CircuitPython supervisor stubs + translate (used by all variants with CIRCUITPY=1)
+SRC_SUPERVISOR = \
+	supervisor/shared/translate/translate.c \
+	supervisor/stub/filesystem.c \
+	supervisor/stub/safe_mode.c \
+	supervisor/stub/stack.c \
+
+# ---- Variant-specific sources ----
+
 ifeq ($(VARIANT),opfs)
+
+# OPFS variant: CircuitPython with supervisor infrastructure
+CFLAGS += -DCIRCUITPY=1
+
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main_opfs.c \
 	opfs_state.c \
 	dev_repl.c \
+	supervisor/port.c \
 
+SRC_SHARED_EXTRA = \
+	supervisor/shared/background_callback.c \
+	supervisor/shared/tick.c \
+	$(SRC_SUPERVISOR) \
 
 else
+
+# Standard variant: plain MicroPython REPL
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main.c \
 	gccollect.c \
+
+SRC_SHARED_EXTRA =
 
 endif
 
@@ -92,6 +116,9 @@ SRC_SHARED = $(addprefix shared/,\
 	readline/readline.c \
 	timeutils/timeutils.c \
 	)
+
+# Add supervisor sources (paths are relative to TOP)
+SRC_SHARED += $(SRC_SHARED_EXTRA)
 
 SRC_QSTR += $(SRC_C) $(SRC_SHARED)
 
