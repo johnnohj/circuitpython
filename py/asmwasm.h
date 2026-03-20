@@ -151,14 +151,20 @@
 //   param 3: arg3
 //   params + extra locals for temporaries and callee-saved values
 
-// WASM params match mp_call_fun_t: (self_in, n_args, n_kw, args)
-// REG_PARENT_ARG_1 = param 0 (self_in). emitnative.c loads REG_FUN_TABLE
-// from self_in's context. The args are extracted from params, not passed directly.
-#define ASM_WASM_REG_FUN_TABLE  0   // local 0: param 0 (self_in), then reloaded as fun_table
-#define ASM_WASM_REG_ARG_1      1   // local 1: param 1 (n_args)
-#define ASM_WASM_REG_ARG_2      2   // local 2: param 2 (n_kw)
-#define ASM_WASM_REG_ARG_3      3   // local 3: param 3 (args)
-#define ASM_WASM_REG_ARG_4      4   // local 4: extra local (scratch)
+// WASM function signature: (self_in, n_args, n_kw, args) → mp_obj_t
+// params 0-3 are the C function arguments.
+//
+// REG_ARG_1 = param 0 (self_in) — emitnative.c uses REG_PARENT_ARG_1 = REG_ARG_1
+// to access the function object, then loads REG_FUN_TABLE from it.
+// REG_FUN_TABLE is a separate local that gets overwritten with mp_fun_table ptr.
+//
+// The calling convention must match: REG_ARG_1..4 = params 0..3 (function args).
+// REG_FUN_TABLE is loaded from the function object in the prologue.
+#define ASM_WASM_REG_ARG_1      0   // local 0: param 0 (self_in) — REG_PARENT_ARG_1
+#define ASM_WASM_REG_ARG_2      1   // local 1: param 1 (n_args)
+#define ASM_WASM_REG_ARG_3      2   // local 2: param 2 (n_kw)
+#define ASM_WASM_REG_ARG_4      3   // local 3: param 3 (args)
+#define ASM_WASM_REG_FUN_TABLE  4   // local 4: extra local — loaded with mp_fun_table
 #define ASM_WASM_REG_TEMP0      5   // local 5: scratch
 #define ASM_WASM_REG_TEMP1      6   // local 6: scratch
 #define ASM_WASM_REG_TEMP2      7   // local 7: scratch

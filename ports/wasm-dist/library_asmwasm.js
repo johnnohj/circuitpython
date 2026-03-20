@@ -297,13 +297,20 @@ mergeInto(LibraryManager.library, {
             parts.push(new Uint8Array([0x01, 0x00, 0x00, 0x00])); // version 1
 
             // ── Type Section (section 1) ──
-            // mp_call_fun_t signature: (self_in, n_args, n_kw, args) -> mp_obj_t
-            // All i32 on wasm32
+            // Type 0: (i32,i32,i32,i32)->i32 — the compiled function signature
+            // Type 1: (i32,i32,i32,i32,i32)->i32 — trampoline: (table_idx, a1, a2, a3, a4)->ret
             const typePayload = new Uint8Array([
-                0x01,       // 1 type entry
+                0x02,       // 2 type entries
+                // Type 0: function signature
                 0x60,       // func type
                 0x04,       // 4 params
                 0x7F, 0x7F, 0x7F, 0x7F, // all i32
+                0x01,       // 1 result
+                0x7F,       // i32
+                // Type 1: trampoline signature
+                0x60,       // func type
+                0x05,       // 5 params
+                0x7F, 0x7F, 0x7F, 0x7F, 0x7F, // all i32
                 0x01,       // 1 result
                 0x7F,       // i32
             ]);
@@ -312,23 +319,35 @@ mergeInto(LibraryManager.library, {
             parts.push(typePayload);
 
             // ── Import Section (section 2) ──
-            // Import host's linear memory AND function table so call_indirect works
+            // Import host memory, function table, AND a trampoline function.
+            // The trampoline handles call_indirect with correct type signatures —
+            // it takes (table_index, arg1, arg2, arg3, arg4) and calls through
+            // the host's function table. This avoids type mismatches because
+            // the trampoline lives in the host module where all types are known.
+            //
+            // Types: 0 = (i32,i32,i32,i32)->i32 (function signature)
+            //        1 = (i32,i32,i32,i32,i32)->i32 (trampoline signature)
             const importPayload = wasm_concat([
-                new Uint8Array([0x02]),              // 2 imports
+                new Uint8Array([0x03]),              // 3 imports
                 // Import 1: memory
                 wasm_encode_str('env'),
                 wasm_encode_str('memory'),
                 new Uint8Array([0x02, 0x00, 0x01]),  // memory, min=0, max=1
-                // Import 2: function table (for call_indirect via mp_fun_table)
+                // Import 2: function table
                 wasm_encode_str('env'),
                 wasm_encode_str('__indirect_function_table'),
                 new Uint8Array([0x01, 0x70, 0x00, 0x00]),  // table, funcref, min=0, no max
+                // Import 3: trampoline function (call_fun_table)
+                wasm_encode_str('env'),
+                wasm_encode_str('call_fun_table'),
+                new Uint8Array([0x00, 0x01]),        // function, type index 1
             ]);
             parts.push(new Uint8Array([0x02]));
             parts.push(wasm_uleb128(importPayload.length));
             parts.push(importPayload);
 
             // ── Function Section (section 3) ──
+            // Function 1 (index 0 is the imported trampoline): type 0
             const funcPayload = new Uint8Array([0x01, 0x00]); // 1 func, type 0
             parts.push(new Uint8Array([0x03]));
             parts.push(wasm_uleb128(funcPayload.length));
@@ -338,7 +357,7 @@ mergeInto(LibraryManager.library, {
             const exportPayload = wasm_concat([
                 new Uint8Array([0x01]),          // 1 export
                 wasm_encode_str('f'),
-                new Uint8Array([0x00, 0x00]),    // function, index 0
+                new Uint8Array([0x00, 0x01]),    // function, index 1 (after imported trampoline)
             ]);
             parts.push(new Uint8Array([0x07]));
             parts.push(wasm_uleb128(exportPayload.length));
@@ -365,10 +384,20 @@ mergeInto(LibraryManager.library, {
             const memory = Module.wasmMemory || (Module.asm && Module.asm.memory);
             const table = (Module.asm && Module.asm.__indirect_function_table) ||
                           Module.wasmTable;
+            // Trampoline: calls through host function table with correct types.
+            // Takes (table_index, arg1, arg2, arg3, arg4) → result.
+            // Handles varying arities by always passing 4 args (unused ones ignored).
+            function call_fun_table(tbl_idx, a1, a2, a3, a4) {
+                const fn = table.get(tbl_idx);
+                if (!fn) return 0;
+                return fn(a1, a2, a3, a4) | 0;
+            }
+
             const instance = new WebAssembly.Instance(wasmModule, {
                 env: {
                     memory: memory,
                     __indirect_function_table: table,
+                    call_fun_table: call_fun_table,
                 },
             });
 

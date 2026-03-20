@@ -273,27 +273,23 @@ void asm_wasm_jump_if_reg_eq(asm_wasm_t *as, uint reg1, uint reg2, uint label) {
 // ---- Indirect call via mp_fun_table ----
 
 void asm_wasm_call_ind(asm_wasm_t *as, uint fun_table_idx, uint reg_temp) {
-    // call_indirect needs: [arg1..argN] on stack, then the table index.
-    // emitnative.c puts arguments in REG_ARG_* locals before calling emit_call.
-    // We push them all, then load the function pointer from mp_fun_table.
+    // Call through the imported trampoline (function index 0 in the mini-module).
+    // The trampoline calls the host's function table with correct type signatures,
+    // avoiding call_indirect type mismatches between varying mp_fun_table entries.
     //
-    // The type section defines signature: (i32, i32, i32, i32, i32) -> i32
-    // but emitnative.c uses varying numbers of args for different runtime calls.
-    // WASM call_indirect requires exactly the number matching the type signature.
-    // Push all 5 params (unused ones are just 0 from initialization).
-    // Push args that emitnative.c placed in REG_ARG_* before emit_call.
-    // The runtime functions in mp_fun_table have varying signatures but
-    // call_indirect needs exactly the declared type (4 params for mp_call_fun_t).
-    // REG_ARG_1..3 hold the actual arguments; REG_FUN_TABLE is fun_table base.
-    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_1);       // arg 1
-    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_2);       // arg 2
-    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_3);       // arg 3
-    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_4);       // arg 4
-    // Load the function table index from mp_fun_table[fun_table_idx]
+    // Trampoline signature: (table_index, arg1, arg2, arg3, arg4) -> i32
+    //
+    // Load the host function's table index from mp_fun_table[fun_table_idx]
     asm_wasm_op_local_get(as, ASM_WASM_REG_FUN_TABLE);
     asm_wasm_op_i32_load(as, 2, fun_table_idx * 4);
-    // call_indirect: pops table_index, then pops args matching type sig
-    asm_wasm_op_call_indirect(as, 0, 0);
+    // Push the 4 args from locals
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_1);
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_2);
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_3);
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_4);
+    // Call trampoline (imported function index 0)
+    asm_wasm_emit_byte(as, WASM_OP_CALL);
+    asm_wasm_emit_uleb128(as, 0); // function index 0 = imported trampoline
     // Store return value
     asm_wasm_op_local_set(as, ASM_WASM_REG_RET);
 }
