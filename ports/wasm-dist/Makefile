@@ -158,7 +158,9 @@ JSFLAGS += -s EXPORTED_RUNTIME_METHODS="[\
 	lengthBytesUTF8,\
 	stringToNewUTF8,\
 	addFunction,\
-	removeFunction]"
+	removeFunction,\
+	wasmMemory,\
+	wasmTable]"
 
 # Host OS JS libraries (virtual devices, hook, stdout capture, step-wise VM, IPC, tasks)
 JSFLAGS += --js-library library.js

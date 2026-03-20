@@ -109,6 +109,16 @@
 #define WASM_BLOCKTYPE_F32      0x7D
 #define WASM_BLOCKTYPE_F64      0x7C
 
+// Marker opcodes for the JS rewriter (not real WASM opcodes).
+// The C emitter uses these to mark label positions and branch targets.
+// library_asmwasm.js transforms them into proper block/loop/end nesting.
+#define WASM_MARKER_LABEL     0xFD  // followed by uleb128 label_idx
+#define WASM_MARKER_BR        0xFE  // followed by uleb128 label_idx (unconditional)
+#define WASM_MARKER_BR_IF     0xFF  // followed by uleb128 label_idx (conditional, value on stack)
+// Note: 0xFD-0xFF are in the "reserved" range of the WASM spec and won't
+// appear in valid WASM output. The JS rewriter replaces all markers before
+// passing to WebAssembly.Module().
+
 // Section IDs
 #define WASM_SECTION_TYPE       1
 #define WASM_SECTION_IMPORT     2
@@ -141,11 +151,14 @@
 //   param 3: arg3
 //   params + extra locals for temporaries and callee-saved values
 
-#define ASM_WASM_REG_FUN_TABLE  0   // local 0: mp_fun_table pointer
-#define ASM_WASM_REG_ARG_1      1   // local 1: first argument
-#define ASM_WASM_REG_ARG_2      2   // local 2: second argument
-#define ASM_WASM_REG_ARG_3      3   // local 3: third argument
-#define ASM_WASM_REG_ARG_4      4   // local 4: fourth argument
+// WASM params match mp_call_fun_t: (self_in, n_args, n_kw, args)
+// REG_PARENT_ARG_1 = param 0 (self_in). emitnative.c loads REG_FUN_TABLE
+// from self_in's context. The args are extracted from params, not passed directly.
+#define ASM_WASM_REG_FUN_TABLE  0   // local 0: param 0 (self_in), then reloaded as fun_table
+#define ASM_WASM_REG_ARG_1      1   // local 1: param 1 (n_args)
+#define ASM_WASM_REG_ARG_2      2   // local 2: param 2 (n_kw)
+#define ASM_WASM_REG_ARG_3      3   // local 3: param 3 (args)
+#define ASM_WASM_REG_ARG_4      4   // local 4: extra local (scratch)
 #define ASM_WASM_REG_TEMP0      5   // local 5: scratch
 #define ASM_WASM_REG_TEMP1      6   // local 6: scratch
 #define ASM_WASM_REG_TEMP2      7   // local 7: scratch
@@ -155,8 +168,8 @@
 #define ASM_WASM_REG_RET        5   // aliases TEMP0 (return value accumulator)
 #define ASM_WASM_NUM_REGS       11  // total locals needed
 
-// Number of extra locals beyond the 5 params (fun_table + 4 args)
-#define ASM_WASM_NUM_PARAMS     5
+// Number of extra locals beyond the 4 params
+#define ASM_WASM_NUM_PARAMS     4
 #define ASM_WASM_NUM_EXTRA_LOCALS (ASM_WASM_NUM_REGS - ASM_WASM_NUM_PARAMS)
 
 // ---- Maximum nesting depth for blocks/loops ----
@@ -178,6 +191,7 @@ typedef struct _asm_wasm_t {
     // Track which labels are backward targets (loop headers) vs forward.
     // Populated during COMPUTE pass, used during EMIT pass.
     uint8_t *label_is_loop;     // array[max_num_labels], 1 if backward target
+    uint8_t *label_is_forward;  // array[max_num_labels], 1 if forward target
 
     // Number of locals the function needs (params + extra + user locals)
     uint16_t num_locals;

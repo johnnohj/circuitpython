@@ -44,13 +44,6 @@ void asm_wasm_emit_byte(asm_wasm_t *as, uint8_t b) {
     }
 }
 
-static void emit_bytes(asm_wasm_t *as, const uint8_t *buf, size_t len) {
-    uint8_t *c = mp_asm_base_get_cur_to_write_bytes(&as->base, len);
-    if (c != NULL) {
-        memcpy(c, buf, len);
-    }
-}
-
 void asm_wasm_emit_uleb128(asm_wasm_t *as, uint32_t val) {
     do {
         uint8_t b = val & 0x7F;
@@ -67,7 +60,6 @@ void asm_wasm_emit_sleb128(asm_wasm_t *as, int32_t val) {
     while (more) {
         uint8_t b = val & 0x7F;
         val >>= 7;
-        // sign bit of byte is second high order bit (0x40)
         if ((val == 0 && !(b & 0x40)) || (val == -1 && (b & 0x40))) {
             more = false;
         } else {
@@ -99,7 +91,6 @@ void asm_wasm_op_i32_const(asm_wasm_t *as, int32_t val) {
     asm_wasm_emit_sleb128(as, val);
 }
 
-// Memory access with memarg (alignment + offset, both as uleb128)
 void asm_wasm_op_i32_load(asm_wasm_t *as, uint align, uint offset) {
     asm_wasm_emit_byte(as, WASM_OP_I32_LOAD);
     asm_wasm_emit_uleb128(as, align);
@@ -108,13 +99,13 @@ void asm_wasm_op_i32_load(asm_wasm_t *as, uint align, uint offset) {
 
 void asm_wasm_op_i32_load8_u(asm_wasm_t *as, uint offset) {
     asm_wasm_emit_byte(as, WASM_OP_I32_LOAD8_U);
-    asm_wasm_emit_uleb128(as, 0);  // align = 0 (byte aligned)
+    asm_wasm_emit_uleb128(as, 0);
     asm_wasm_emit_uleb128(as, offset);
 }
 
 void asm_wasm_op_i32_load16_s(asm_wasm_t *as, uint offset) {
     asm_wasm_emit_byte(as, WASM_OP_I32_LOAD16_S);
-    asm_wasm_emit_uleb128(as, 1);  // align = 1 (2-byte aligned)
+    asm_wasm_emit_uleb128(as, 1);
     asm_wasm_emit_uleb128(as, offset);
 }
 
@@ -146,8 +137,6 @@ void asm_wasm_op_call_indirect(asm_wasm_t *as, uint type_idx, uint table_idx) {
     asm_wasm_emit_uleb128(as, table_idx);
 }
 
-// ---- Control flow instructions ----
-
 void asm_wasm_op_block(asm_wasm_t *as, uint8_t blocktype) {
     asm_wasm_emit_byte(as, WASM_OP_BLOCK);
     asm_wasm_emit_byte(as, blocktype);
@@ -176,191 +165,144 @@ void asm_wasm_op_return(asm_wasm_t *as) {
     asm_wasm_emit_byte(as, WASM_OP_RETURN);
 }
 
-// ---- High-level control flow ----
-// Translates MicroPython's flat label-based jumps to WASM structured control
-// flow (block/loop/br).
-//
-// Strategy:
-// - During COMPUTE pass, label_assign records label positions. After the pass,
-//   we analyze which jumps are backward (target label offset < jump offset) and
-//   mark those labels as loop headers.
-// - During EMIT pass, label_assign either opens a block (forward) or a loop
-//   (backward). Jumps emit br/br_if with the appropriate nesting depth.
-//
-// This is a simplified approach that works for the patterns emitnative.c
-// generates (for-loops, if/else). More complex control flow (e.g., nested
-// exception handlers with multiple backward jumps) may need refinement.
+void asm_wasm_op_call(asm_wasm_t *as, uint func_idx) {
+    asm_wasm_emit_byte(as, WASM_OP_CALL);
+    asm_wasm_emit_uleb128(as, func_idx);
+}
 
-void asm_wasm_label_assign(asm_wasm_t *as, uint label) {
-    // Base class records offset for this label
-    mp_asm_base_label_assign(&as->base, label);
+// ============================================================================
+// Structured control flow
+//
+// WASM requires block/loop/end constructs — no arbitrary jumps. We translate
+// emitnative.c's flat label-based jumps using this scheme:
+//
+// At function entry, we open one void `block` per forward-target label,
+// nested from outermost (last label) to innermost (first label). Each
+// forward jump becomes `br N` where N is the depth to the target block.
+// At each forward label position, we emit `end` to close that block.
+//
+// For backward-target labels (loops), we emit `loop` at the label position
+// and `end` after the loop body. Backward jumps use `br` to re-enter.
+//
+// The function body is wrapped in an outer void block so that forward
+// branches never need to provide a return value on the stack.
+//
+// Block nesting (example with 2 forward labels F0, F1 and 1 loop label L0):
+//
+//   block $F1          ; outermost forward block
+//     block $F0        ; inner forward block
+//       ... code ...
+//       br_if 0        ; jump to F0 (depth 0 = innermost)
+//       ... code ...
+//       br 1           ; jump to F1 (depth 1 = one up)
+//       ... code ...
+//     end              ; F0 label position
+//     loop $L0         ; loop header
+//       ... code ...
+//       br_if 0        ; jump back to L0 (depth 0 = this loop)
+//     end              ; end of loop body
+//     ... code ...
+//   end                ; F1 label position
+//   local.get $ret
+//   return
+// ============================================================================
 
-    if (as->base.pass == MP_ASM_PASS_EMIT) {
-        if (as->label_is_loop != NULL && as->label_is_loop[label]) {
-            // This label is a loop header: emit loop instruction.
-            // Backward jumps to this label will use br to re-enter.
-            assert(as->block_depth < ASM_WASM_MAX_BLOCK_DEPTH);
-            as->block_stack[as->block_depth].label = label;
-            as->block_stack[as->block_depth].is_loop = 1;
-            as->block_depth++;
-            asm_wasm_op_loop(as, WASM_BLOCKTYPE_VOID);
-        } else {
-            // Forward target: the corresponding block was opened at the jump
-            // site. Here at the label we emit the end for that block.
-            // (This is handled by the jump functions.)
-        }
+// Helper: record a jump target during COMPUTE pass
+static void record_jump_target(asm_wasm_t *as, uint label) {
+    if (label >= as->base.max_num_labels) return;
+    size_t lbl_off = as->base.label_offsets[label];
+    if (as->label_is_loop != NULL &&
+        lbl_off != (size_t)-1 &&
+        lbl_off <= as->base.code_offset) {
+        as->label_is_loop[label] = 1;  // backward target
+    }
+    if (as->label_is_forward != NULL &&
+        (lbl_off == (size_t)-1 ||
+         lbl_off > as->base.code_offset)) {
+        as->label_is_forward[label] = 1;  // forward target
     }
 }
 
-// Find the block depth for a given label (for br operand calculation)
+// Find the br depth for a given label in the current block stack
 static uint find_block_depth(asm_wasm_t *as, uint label) {
-    // Search block stack from top (innermost) to bottom (outermost)
     for (int i = (int)as->block_depth - 1; i >= 0; i--) {
         if (as->block_stack[i].label == label) {
             return as->block_depth - 1 - i;
         }
     }
-    // Label not found in block stack — this shouldn't happen if
-    // label_assign was called correctly
-    assert(0 && "label not found in block stack");
+    // Not found — shouldn't happen
     return 0;
 }
 
+void asm_wasm_label_assign(asm_wasm_t *as, uint label) {
+    mp_asm_base_label_assign(&as->base, label);
+    // Emit a label marker. The JS rewriter uses these to build block structure.
+    asm_wasm_emit_byte(as, WASM_MARKER_LABEL);
+    asm_wasm_emit_uleb128(as, label);
+}
+
+// Emit a jump as a marker (the JS rewriter transforms to br/br_if + blocks)
+static void emit_jump_common(asm_wasm_t *as, uint label, bool conditional) {
+    asm_wasm_emit_byte(as, conditional ? WASM_MARKER_BR_IF : WASM_MARKER_BR);
+    asm_wasm_emit_uleb128(as, label);
+}
+
 void asm_wasm_jump(asm_wasm_t *as, uint label) {
-    if (as->base.pass == MP_ASM_PASS_EMIT) {
-        if (as->label_is_loop != NULL && as->label_is_loop[label]) {
-            // Backward jump: br to the loop block
-            uint depth = find_block_depth(as, label);
-            asm_wasm_op_br(as, depth);
-        } else {
-            // Forward jump: br out of enclosing block
-            // The block was opened before the jump, and end is at the label.
-            uint depth = find_block_depth(as, label);
-            asm_wasm_op_br(as, depth);
-        }
-    } else {
-        // COMPUTE pass: record that we jump to this label.
-        // If the label has already been assigned (offset < current offset),
-        // mark it as a backward target (loop).
-        if (as->label_is_loop != NULL &&
-            label < as->base.max_num_labels &&
-            as->base.label_offsets[label] != (size_t)-1 &&
-            as->base.label_offsets[label] <= as->base.code_offset) {
-            as->label_is_loop[label] = 1;
-        }
-        // Emit placeholder bytes (worst case: 2 bytes for br + uleb128)
-        asm_wasm_emit_byte(as, WASM_OP_BR);
-        asm_wasm_emit_uleb128(as, ASM_WASM_MAX_BLOCK_DEPTH);
-    }
+    emit_jump_common(as, label, false);
 }
 
 void asm_wasm_jump_if_reg_zero(asm_wasm_t *as, uint reg, uint label) {
-    // Push value, compare with zero, branch if true
     asm_wasm_op_local_get(as, reg);
     asm_wasm_op_i32_const(as, 0);
     asm_wasm_op_binop(as, WASM_OP_I32_EQ);
-    if (as->base.pass == MP_ASM_PASS_EMIT) {
-        uint depth = find_block_depth(as, label);
-        asm_wasm_op_br_if(as, depth);
-    } else {
-        if (as->label_is_loop != NULL &&
-            label < as->base.max_num_labels &&
-            as->base.label_offsets[label] != (size_t)-1 &&
-            as->base.label_offsets[label] <= as->base.code_offset) {
-            as->label_is_loop[label] = 1;
-        }
-        asm_wasm_emit_byte(as, WASM_OP_BR_IF);
-        asm_wasm_emit_uleb128(as, ASM_WASM_MAX_BLOCK_DEPTH);
-    }
+    emit_jump_common(as, label, true);
 }
 
 void asm_wasm_jump_if_reg_nonzero(asm_wasm_t *as, uint reg, uint label) {
-    // Push value, branch if nonzero (WASM br_if branches on nonzero)
     asm_wasm_op_local_get(as, reg);
-    if (as->base.pass == MP_ASM_PASS_EMIT) {
-        uint depth = find_block_depth(as, label);
-        asm_wasm_op_br_if(as, depth);
-    } else {
-        if (as->label_is_loop != NULL &&
-            label < as->base.max_num_labels &&
-            as->base.label_offsets[label] != (size_t)-1 &&
-            as->base.label_offsets[label] <= as->base.code_offset) {
-            as->label_is_loop[label] = 1;
-        }
-        asm_wasm_emit_byte(as, WASM_OP_BR_IF);
-        asm_wasm_emit_uleb128(as, ASM_WASM_MAX_BLOCK_DEPTH);
-    }
+    emit_jump_common(as, label, true);
 }
 
 void asm_wasm_jump_if_reg_eq(asm_wasm_t *as, uint reg1, uint reg2, uint label) {
     asm_wasm_op_local_get(as, reg1);
     asm_wasm_op_local_get(as, reg2);
     asm_wasm_op_binop(as, WASM_OP_I32_EQ);
-    if (as->base.pass == MP_ASM_PASS_EMIT) {
-        uint depth = find_block_depth(as, label);
-        asm_wasm_op_br_if(as, depth);
-    } else {
-        if (as->label_is_loop != NULL &&
-            label < as->base.max_num_labels &&
-            as->base.label_offsets[label] != (size_t)-1 &&
-            as->base.label_offsets[label] <= as->base.code_offset) {
-            as->label_is_loop[label] = 1;
-        }
-        asm_wasm_emit_byte(as, WASM_OP_BR_IF);
-        asm_wasm_emit_uleb128(as, ASM_WASM_MAX_BLOCK_DEPTH);
-    }
-}
-
-// ---- Direct call (by function index in the WASM module) ----
-// Used for functions that Emscripten cannot call indirectly (e.g., setjmp).
-void asm_wasm_op_call(asm_wasm_t *as, uint func_idx) {
-    asm_wasm_emit_byte(as, WASM_OP_CALL);
-    asm_wasm_emit_uleb128(as, func_idx);
+    emit_jump_common(as, label, true);
 }
 
 // ---- Indirect call via mp_fun_table ----
-// mp_fun_table is an array of function pointers in linear memory.
-// REG_FUN_TABLE holds the base address. To call entry [idx]:
-//   local.get fun_table_reg    (base address)
-//   i32.const idx * 4          (byte offset)
-//   i32.add                    (compute &table[idx])
-//   i32.load                   (load function pointer)
-//   call_indirect              (call through table)
-//
-// SPECIAL CASE: setjmp must be called directly, not through call_indirect.
-// Emscripten's SUPPORT_LONGJMP=wasm requires static visibility of setjmp
-// calls to insert WASM exception handling. The ASM_CALL_IND macro in
-// asmwasm.h detects MP_F_SETJMP and routes to asm_wasm_call_setjmp().
 
 void asm_wasm_call_ind(asm_wasm_t *as, uint fun_table_idx, uint reg_temp) {
-    // Load function address from mp_fun_table
+    // call_indirect needs: [arg1..argN] on stack, then the table index.
+    // emitnative.c puts arguments in REG_ARG_* locals before calling emit_call.
+    // We push them all, then load the function pointer from mp_fun_table.
+    //
+    // The type section defines signature: (i32, i32, i32, i32, i32) -> i32
+    // but emitnative.c uses varying numbers of args for different runtime calls.
+    // WASM call_indirect requires exactly the number matching the type signature.
+    // Push all 5 params (unused ones are just 0 from initialization).
+    // Push args that emitnative.c placed in REG_ARG_* before emit_call.
+    // The runtime functions in mp_fun_table have varying signatures but
+    // call_indirect needs exactly the declared type (4 params for mp_call_fun_t).
+    // REG_ARG_1..3 hold the actual arguments; REG_FUN_TABLE is fun_table base.
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_1);       // arg 1
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_2);       // arg 2
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_3);       // arg 3
+    asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_4);       // arg 4
+    // Load the function table index from mp_fun_table[fun_table_idx]
     asm_wasm_op_local_get(as, ASM_WASM_REG_FUN_TABLE);
-    asm_wasm_op_i32_const(as, fun_table_idx * 4);
-    asm_wasm_op_binop(as, WASM_OP_I32_ADD);
-    asm_wasm_op_i32_load(as, 2, 0);
-    // call_indirect with type signature 0, table 0
+    asm_wasm_op_i32_load(as, 2, fun_table_idx * 4);
+    // call_indirect: pops table_index, then pops args matching type sig
     asm_wasm_op_call_indirect(as, 0, 0);
+    // Store return value
+    asm_wasm_op_local_set(as, ASM_WASM_REG_RET);
 }
 
-// Direct call to setjmp — argument (jmp_buf pointer) should already be
-// in REG_ARG_1. Emits a direct `call $setjmp` so Emscripten can see it
-// statically and insert the proper WASM exception handling transform.
+// Direct call to setjmp
 void asm_wasm_call_setjmp(asm_wasm_t *as) {
-    // Push the jmp_buf argument onto the WASM stack
     asm_wasm_op_local_get(as, ASM_WASM_REG_ARG_1);
-    // Emit direct call to setjmp.
-    // The function index for setjmp in the final WASM module is resolved
-    // by the linker — we emit a call to the imported setjmp symbol.
-    // In Emscripten, setjmp is a well-known import that the compiler
-    // recognizes. We use WASM_OP_CALL with a placeholder index that
-    // the linker will resolve.
-    // For now, we rely on the fact that emitnative.c's NLR setup will
-    // put the jmp_buf address in REG_ARG_1 before calling us.
     asm_wasm_emit_byte(as, WASM_OP_CALL);
-    // Emit placeholder function index — the linker resolves "setjmp"
-    // to the correct index. During compilation, emcc sees the direct
-    // call and applies its setjmp/longjmp transform.
-    asm_wasm_emit_uleb128(as, 0); // placeholder, needs linker resolution
+    asm_wasm_emit_uleb128(as, 0);
 }
 
 // ---- Memory access with offset ----
@@ -383,28 +325,16 @@ void asm_wasm_ldrh_reg_reg_offset(asm_wasm_t *as, uint reg_dest, uint reg_base, 
     asm_wasm_op_local_set(as, reg_dest);
 }
 
-// ---- Register-immediate move ----
-
 void asm_wasm_mov_reg_imm(asm_wasm_t *as, uint reg_dest, int32_t imm) {
     asm_wasm_op_i32_const(as, imm);
     asm_wasm_op_local_set(as, reg_dest);
 }
 
-// ---- Local address ----
-// WASM doesn't have address-of for locals (they're not in linear memory).
-// For viper code that takes ptr to a local, we'd need to spill to memory.
-// For now, emit the local index as an immediate (placeholder).
 void asm_wasm_mov_reg_local_addr(asm_wasm_t *as, uint reg_dest, uint local_num) {
-    // TODO: Allocate stack frame in linear memory for addressable locals.
-    // For now, this is a stub that will need the JS runtime to handle.
-    asm_wasm_op_i32_const(as, 0); // placeholder
+    asm_wasm_op_i32_const(as, 0); // placeholder — WASM locals aren't addressable
     asm_wasm_op_local_set(as, reg_dest);
 }
 
-// ---- PC-relative label address ----
-// WASM doesn't have PC-relative addressing. Labels are branch targets, not
-// addresses. For code that needs label addresses (e.g., computed goto),
-// we emit 0 as a placeholder.
 void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label) {
     asm_wasm_op_i32_const(as, 0); // placeholder
     asm_wasm_op_local_set(as, reg_dest);
@@ -416,12 +346,17 @@ void asm_wasm_init(asm_wasm_t *as, size_t max_num_labels) {
     memset(as, 0, sizeof(*as));
     mp_asm_base_init(&as->base, max_num_labels);
     as->label_is_loop = m_new0(uint8_t, max_num_labels);
+    as->label_is_forward = m_new0(uint8_t, max_num_labels);
 }
 
 void asm_wasm_free(asm_wasm_t *as, bool free_code) {
     if (as->label_is_loop != NULL) {
         m_del(uint8_t, as->label_is_loop, as->base.max_num_labels);
         as->label_is_loop = NULL;
+    }
+    if (as->label_is_forward != NULL) {
+        m_del(uint8_t, as->label_is_forward, as->base.max_num_labels);
+        as->label_is_forward = NULL;
     }
     mp_asm_base_deinit(&as->base, free_code);
 }
@@ -430,49 +365,62 @@ void asm_wasm_start_pass(asm_wasm_t *as, uint pass) {
     mp_asm_base_start_pass(&as->base, pass);
     as->block_depth = 0;
     if (pass == MP_ASM_PASS_COMPUTE) {
-        // Clear loop markers for fresh analysis
         if (as->label_is_loop != NULL) {
             memset(as->label_is_loop, 0, as->base.max_num_labels);
+        }
+        if (as->label_is_forward != NULL) {
+            memset(as->label_is_forward, 0, as->base.max_num_labels);
         }
     }
 }
 
 bool asm_wasm_end_pass(asm_wasm_t *as) {
-    // Close any remaining open blocks
-    while (as->block_depth > 0) {
-        as->block_depth--;
-        asm_wasm_op_end(as);
-    }
-    // Final end for the function body
+    // The JS rewriter adds block/loop/end structure and the final end.
+    // We just emit the trailing end for the function body.
     asm_wasm_op_end(as);
-    return false; // no need to replay
+    return false;
 }
 
-// ---- Entry/exit ----
-// In a complete WASM module emitter, entry would emit the module header
-// (magic, version, type section, function section) and the code section
-// preamble (local declarations). For now, we just emit the function body
-// instructions — the JS-side loader wraps them into a valid module.
-
 void asm_wasm_entry(asm_wasm_t *as, int num_locals) {
+    // Lazy-init WASM-specific fields (EXPORT_FUN(new) only calls mp_asm_base_init)
+    if (as->label_is_loop == NULL && as->base.max_num_labels > 0) {
+        as->label_is_loop = m_new0(uint8_t, as->base.max_num_labels);
+        as->label_is_forward = m_new0(uint8_t, as->base.max_num_labels);
+    }
+    // Clear label analysis at start of each COMPUTE pass
+    if (as->base.pass == MP_ASM_PASS_COMPUTE) {
+        if (as->label_is_loop != NULL) {
+            memset(as->label_is_loop, 0, as->base.max_num_labels);
+        }
+        if (as->label_is_forward != NULL) {
+            memset(as->label_is_forward, 0, as->base.max_num_labels);
+        }
+    }
+    as->block_depth = 0;
     as->num_locals = ASM_WASM_NUM_REGS + num_locals;
 
-    // Emit local declarations for the extra locals (beyond params).
-    // Format: count of local declaration groups, then (count, type) pairs.
+    // Emit local declarations
     uint extra_locals = ASM_WASM_NUM_EXTRA_LOCALS + num_locals;
     if (extra_locals > 0) {
-        asm_wasm_emit_uleb128(as, 1);           // 1 group of locals
-        asm_wasm_emit_uleb128(as, extra_locals); // count
-        asm_wasm_emit_byte(as, WASM_TYPE_I32);   // type: i32
+        asm_wasm_emit_uleb128(as, 1);
+        asm_wasm_emit_uleb128(as, extra_locals);
+        asm_wasm_emit_byte(as, WASM_TYPE_I32);
     } else {
-        asm_wasm_emit_uleb128(as, 0);           // 0 local groups
+        asm_wasm_emit_uleb128(as, 0);
     }
 
     as->func_body_offset = as->base.code_offset;
+
+    // During EMIT pass, open blocks for all forward-target labels.
+    // They are opened in reverse label order so that the first forward
+    // label is the innermost block (lowest br depth).
+    // Block structure is handled by the JS rewriter in library_asmwasm.js.
+    // The C emitter produces flat code with special marker opcodes that the
+    // rewriter transforms into proper block/loop/end nesting.
 }
 
 void asm_wasm_exit(asm_wasm_t *as) {
-    // Push return value from REG_RET onto the stack
+    // Push return value and return explicitly
     asm_wasm_op_local_get(as, ASM_WASM_REG_RET);
     asm_wasm_op_return(as);
 }

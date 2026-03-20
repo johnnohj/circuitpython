@@ -47,10 +47,10 @@
  * setjmp is called directly (not through mp_fun_table) because Emscripten's
  * SUPPORT_LONGJMP=wasm requires static visibility of setjmp calls.
  *
- * DISABLED pending asmwasm.c structured control flow fix: the emitter
- * produces flat br/br_if without enclosing block/loop instructions.
- * The JS runtime (library_asmwasm.js) is ready — the emitter needs to
- * translate label-based jumps to WASM's structured block nesting. */
+ * Control flow uses marker opcodes (0xFD/FE/FF) that the JS rewriter in
+ * library_asmwasm.js transforms into proper block/loop/end nesting.
+ * Module compilation, function table registration, and invocation all work.
+ * Remaining: calling convention alignment (register/local layout). */
 // #define MICROPY_EMIT_WASM            (1)
 
 /* ---- Step-wise VM execution (libpyvm) ---- */
