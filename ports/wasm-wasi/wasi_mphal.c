@@ -102,17 +102,9 @@ void mp_hal_get_random(size_t n, void *buf) {
     }
 }
 
-// ---- CircuitPython stubs ----
-// For the standard variant (no CIRCUITPY=1), py/*.c still references
-// some supervisor symbols. The OPFS variant gets these from
-// supervisor/stub/*.c and supervisor/shared/translate/translate.c.
-#if !CIRCUITPY
-void reset_into_safe_mode(int safe_mode) { (void)safe_mode; }
-bool stack_ok(void) { return true; }
-void assert_heap_ok(void) { }
-
-#include "supervisor/shared/translate/compressed_string.h"
-uint16_t decompress_length(mp_rom_error_text_t compressed) { (void)compressed; return 0; }
-char *decompress(mp_rom_error_text_t compressed, char *decompressed) { (void)compressed; if (decompressed) decompressed[0] = '\0'; return decompressed; }
-void serial_write_compressed(mp_rom_error_text_t compressed) { (void)compressed; }
-#endif
+// CircuitPython stubs (reset_into_safe_mode, stack_ok, assert_heap_ok,
+// decompress, serial_write_compressed) are provided by:
+//   supervisor/stub/safe_mode.c
+//   supervisor/stub/stack.c
+//   supervisor/shared/translate/translate.c
+// Included in all variants via SRC_SUPERVISOR in the Makefile.

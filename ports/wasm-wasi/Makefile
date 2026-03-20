@@ -52,7 +52,8 @@ CFLAGS += $(INC)
 # setjmp/longjmp via WASM Exception Handling (required for NLR)
 CFLAGS += -mllvm -wasm-enable-sjlj
 
-# py.mk needs these even without full CircuitPython build
+# CircuitPython mode (same as unix port): enables CP code paths in py/*.c
+CFLAGS += -DCIRCUITPY=1
 CIRCUITPY_MESSAGE_COMPRESSION_LEVEL ?= 0
 USB_NUM_ENDPOINT_PAIRS ?= 0
 CIRCUITPY_USB_DEVICE ?= 0
@@ -61,7 +62,7 @@ LDFLAGS += --target=wasm32-wasi
 LDFLAGS += --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mllvm -wasm-enable-sjlj
 LDFLAGS += -lsetjmp
-LDFLAGS += -Wl,--initial-memory=2097152
+LDFLAGS += -Wl,--initial-memory=4194304
 
 ################################################################################
 # Source files
@@ -81,30 +82,26 @@ SRC_SUPERVISOR = \
 
 ifeq ($(VARIANT),opfs)
 
-# OPFS variant: CircuitPython with supervisor infrastructure
-CFLAGS += -DCIRCUITPY=1
-
+# OPFS variant: executor with state checkpointing + VM hooks
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main_opfs.c \
 	opfs_state.c \
 	dev_repl.c \
-	supervisor/port.c \
 
 SRC_SHARED_EXTRA = \
-	supervisor/shared/background_callback.c \
-	supervisor/shared/tick.c \
 	$(SRC_SUPERVISOR) \
 
 else
 
-# Standard variant: plain MicroPython REPL
+# Standard variant: simple REPL
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main.c \
 	gccollect.c \
 
-SRC_SHARED_EXTRA =
+SRC_SHARED_EXTRA = \
+	$(SRC_SUPERVISOR) \
 
 endif
 

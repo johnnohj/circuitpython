@@ -74,11 +74,13 @@ static const char *_state_dir = OPFS_STATE_DIR;
 static int _repl_initialized = 0;
 static int _checkpoint_counter = 0;
 
-// ---- OPFS device servicing ----
-// Called from supervisor/port.c:port_background_tick() (1x per ms)
-// via the standard supervisor_background_tick callback chain.
+// ---- port_background_task() ----
+// Called via MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS at every
+// VM branch point. Services OPFS device files and handles periodic
+// state checkpointing. Same role as port_background_task() on real
+// hardware ports (USB endpoints, serial, etc.)
 
-void opfs_background_tick(void) {
+void port_background_task(void) {
     // Flush /dev/repl stdout ring to file
     if (_repl_initialized) {
         dev_repl_flush();
@@ -178,10 +180,12 @@ int main(int argc, char **argv) {
     }
     #endif
 
-    // Set up sys.path — append to the pre-allocated list
+    // sys.path is initialized by mp_init() via runtime.c
+    // Just append /lib to it
     #if MICROPY_PY_SYS_PATH
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
+    if (mp_sys_path != MP_OBJ_NULL) {
+        mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
+    }
     #endif
 
     // Create state directory and save initial state
