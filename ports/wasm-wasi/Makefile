@@ -82,14 +82,24 @@ SRC_SUPERVISOR = \
 
 ifeq ($(VARIANT),opfs)
 
-# OPFS variant: executor with state checkpointing + VM hooks
+# OPFS variant: full supervisor background task infrastructure
+# Uses py/circuitpy_mpconfig.h for VM hooks → background_callback_run_all
+# → port_background_task → supervisor_tick → filesystem_background chain
+
+# FatFS config (supervisor/filesystem.h includes vfs_fat.h)
+INC += -I$(TOP)/lib/oofatfs
+CFLAGS += -DFFCONF_H=\"ffconf.h\"
+
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main_opfs.c \
 	opfs_state.c \
 	dev_repl.c \
+	supervisor/port.c \
 
 SRC_SHARED_EXTRA = \
+	supervisor/shared/background_callback.c \
+	supervisor/shared/tick.c \
 	$(SRC_SUPERVISOR) \
 
 else
@@ -128,13 +138,13 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 
 .PHONY: all clean test
 
-all: $(BUILD)/micropython.wasm
+all: $(BUILD)/circuitpython.wasm
 
-$(BUILD)/micropython.wasm: $(OBJ)
+$(BUILD)/circuitpython.wasm: $(OBJ)
 	$(ECHO) "LINK $@"
 	$(Q)$(LD) $(LDFLAGS) -o $@ $(OBJ)
 
-test: $(BUILD)/micropython.wasm
+test: $(BUILD)/circuitpython.wasm
 	wasmtime $<
 
 clean:

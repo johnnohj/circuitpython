@@ -34,7 +34,11 @@
 // ---- Type definitions (wasm32: sizeof(void*) == sizeof(int) == 4) ----
 typedef int mp_int_t;
 typedef unsigned int mp_uint_t;
-typedef long long mp_off_t;  // 64-bit file offsets for OPFS
+// mp_off_t: the OPFS variant includes circuitpy_mpconfig.h which
+// typedefs it as `long`. For the standard variant, define here.
+#ifndef MICROPY_OPFS_EXECUTOR
+typedef long long mp_off_t;
+#endif
 
 // alloca
 #include <alloca.h>
@@ -77,16 +81,26 @@ extern const struct _mp_print_t mp_stderr_print;
 #define MICROPY_HW_BOARD_NAME   "WASM-WASI"
 #define MICROPY_HW_MCU_NAME     "wasm32"
 
+// ---- CircuitPython feature flags needed by shared-bindings/ headers ----
+// These are normally set by mpconfigboard.h (included via circuitpy_mpconfig.h),
+// but we don't include that. Define them here for headers that check them.
+#ifndef CIRCUITPY_PROCESSOR_COUNT
+#define CIRCUITPY_PROCESSOR_COUNT   (1)
+#endif
+#ifndef CIRCUITPY_NVM
+#define CIRCUITPY_NVM               (0)
+#endif
+#ifndef CIRCUITPY_WATCHDOG
+#define CIRCUITPY_WATCHDOG          (0)
+#endif
+
 // ---- VM hooks + background tasks ----
-// OPFS variant: port_background_task() services OPFS device files.
-// Standard variant: no-op.
-// Both follow the unix port pattern — no py/circuitpy_mpconfig.h.
-#ifdef MICROPY_OPFS_EXECUTOR
-extern void port_background_task(void);
-#define RUN_BACKGROUND_TASKS        do { port_background_task(); } while(0)
-#define MICROPY_VM_HOOK_LOOP        RUN_BACKGROUND_TASKS;
-#define MICROPY_VM_HOOK_RETURN      RUN_BACKGROUND_TASKS;
-#else
+// OPFS variant: uses py/circuitpy_mpconfig.h which provides
+//   MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS → background_callback_run_all()
+//   background_callback_run_all() calls port_background_task() (supervisor/port.c)
+//   then runs queued callbacks including supervisor_background_tick
+// Standard variant: no-op hooks.
+#ifndef MICROPY_OPFS_EXECUTOR
 #define RUN_BACKGROUND_TASKS        ((void)0)
 #endif
 
@@ -99,3 +113,11 @@ extern void port_background_task(void);
 #endif
 
 #include <stdio.h>
+
+// ---- CircuitPython base config for OPFS variant ----
+// Provides RUN_BACKGROUND_TASKS, VM hooks, type sizes, etc.
+// Must come AFTER our type definitions. mpconfigboard.h is included
+// by circuitpy_mpconfig.h — provides board-level feature flags.
+#ifdef MICROPY_OPFS_EXECUTOR
+#include "py/circuitpy_mpconfig.h"
+#endif

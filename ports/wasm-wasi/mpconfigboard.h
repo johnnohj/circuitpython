@@ -37,11 +37,24 @@ extern void wasi_critical_end(void);
 #define CALLBACK_CRITICAL_END       (wasi_critical_end())
 
 #define CIRCUITPY_MICROCONTROLLER   (0)
+#define CIRCUITPY_PROCESSOR_COUNT   (1)
+#define CIRCUITPY_NVM               (0)
+#define CIRCUITPY_WATCHDOG          (0)
 
-// Feature flags referenced by py/*.c
+// CircuitPython feature flags
+// circuitpy_mpconfig.h maps MICROPY_PY_SYS → CIRCUITPY_SYS, etc.
+// These must be defined since we don't include py/circuitpy_defns.mk.
 #ifndef CIRCUITPY_FULL_BUILD
 #define CIRCUITPY_FULL_BUILD        (0)
 #endif
+#define CIRCUITPY_SYS               (1)
+#define CIRCUITPY_OS                (1)
+
+// Disable features that pull in large dependencies
+#define MICROPY_VFS_FAT             (0)
+#define MICROPY_VFS_LFS1            (0)
+#define MICROPY_VFS_LFS2            (0)
+
 #ifndef CIRCUITPY_JSON
 #define CIRCUITPY_JSON              (0)
 #endif

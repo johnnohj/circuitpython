@@ -2,15 +2,18 @@
  * main_opfs.c — OPFS-backed executor for WASI CircuitPython
  *
  * The VM runs normally on the C stack — no yield mechanism needed.
- * Background tasks (OPFS device servicing, state checkpointing) run
- * via the standard CircuitPython infrastructure:
+ * Background tasks run via the standard CircuitPython infrastructure:
  *
  *   MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS
- *     → background_callback_run_all() → port_background_task()
+ *     → background_callback_run_all()
+ *       → port_background_task() [supervisor/port.c: simulates tick ISR]
+ *       → [queued callbacks]
+ *         → supervisor_background_tick()
+ *           → port_background_tick() → opfs_background_tick() [this file]
  *
- * port_background_task() is where we:
- *   - Check /dev/repl for stdin (Ctrl-C)
- *   - Flush /dev/registers if dirty
+ * opfs_background_tick() is where we:
+ *   - Flush /dev/repl stdout ring to file
+ *   - Check /dev/repl for Ctrl-C from JS
  *   - Periodically checkpoint state to /state/ for crash recovery
  *
  * The worker runs the program to completion (or forever, for code.py
@@ -74,13 +77,12 @@ static const char *_state_dir = OPFS_STATE_DIR;
 static int _repl_initialized = 0;
 static int _checkpoint_counter = 0;
 
-// ---- port_background_task() ----
-// Called via MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS at every
-// VM branch point. Services OPFS device files and handles periodic
-// state checkpointing. Same role as port_background_task() on real
-// hardware ports (USB endpoints, serial, etc.)
+// ---- opfs_background_tick() ----
+// Called from supervisor/port.c:port_background_tick() which fires
+// via the supervisor_tick → supervisor_background_tick callback chain.
+// Services OPFS device files: /dev/repl, state checkpointing.
 
-void port_background_task(void) {
+void opfs_background_tick(void) {
     // Flush /dev/repl stdout ring to file
     if (_repl_initialized) {
         dev_repl_flush();

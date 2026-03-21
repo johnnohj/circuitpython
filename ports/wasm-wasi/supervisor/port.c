@@ -183,3 +183,41 @@ void port_start_background_tick(void) {
 void port_finish_background_tick(void) {
     // No debug pin toggling on WASI
 }
+
+// ---- Port heap (used by py/gc.c split-heap support) ----
+
+void *port_malloc(size_t size, bool dma_capable) {
+    (void)dma_capable;
+    return malloc(size);
+}
+
+void port_free(void *ptr) {
+    free(ptr);
+}
+
+size_t gc_get_max_new_split(void) {
+    return 0;  // No split heap support
+}
+
+// ---- Interrupt control (used by py/scheduler.c) ----
+
+void common_hal_mcu_disable_interrupts(void) {
+    _critical_depth++;
+}
+
+void common_hal_mcu_enable_interrupts(void) {
+    if (_critical_depth > 0) {
+        _critical_depth--;
+    }
+}
+
+void common_hal_mcu_delay_us(uint32_t us) {
+    struct timespec ts = { .tv_sec = us / 1000000, .tv_nsec = (us % 1000000) * 1000 };
+    nanosleep(&ts, NULL);
+}
+
+// ---- GC collection ----
+
+void port_gc_collect(void) {
+    // No port-specific GC roots
+}
