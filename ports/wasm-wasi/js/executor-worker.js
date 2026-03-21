@@ -70,8 +70,15 @@ async function initAndRun(wasmUrl, code) {
         await wasi.preopenDir('/circuitpy', circuitpyDir);
 
         // Compile and instantiate WASM
-        const wasmResponse = await fetch(wasmUrl);
-        const wasmModule = await WebAssembly.compileStreaming(wasmResponse);
+        let wasmModule;
+        try {
+            wasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
+        } catch (e) {
+            // Fallback if compileStreaming fails (wrong MIME type, etc.)
+            const response = await fetch(wasmUrl);
+            const bytes = await response.arrayBuffer();
+            wasmModule = await WebAssembly.compile(bytes);
+        }
         const instance = await WebAssembly.instantiate(wasmModule, wasi.getImports());
         wasi.setInstance(instance);
 

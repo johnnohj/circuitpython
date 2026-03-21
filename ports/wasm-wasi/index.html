@@ -95,7 +95,7 @@ print([x*x for x in range(6)])
 
             worker.postMessage({
                 type: 'init',
-                wasmUrl: './build-opfs/circuitpython.wasm',
+                wasmUrl: '/build-opfs/circuitpython.wasm',
                 code: code,
             });
         });
