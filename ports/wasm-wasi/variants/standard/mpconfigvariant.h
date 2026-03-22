@@ -33,8 +33,12 @@
 #define MICROPY_PY_COLLECTIONS              (1)
 #define MICROPY_PY_COLLECTIONS_ORDEREDDICT  (1)
 #define MICROPY_PY_DESCRIPTORS              (1)
+#define MICROPY_PY_ARRAY_SLICE_ASSIGN       (1)
 #define MICROPY_PY_SYS_STDFILES             (1)
 #define MICROPY_PY_JSON                     (1)
+#define MICROPY_PY_TIME                     (1)
+#define MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME (1)
+#define MICROPY_PY_TIME_TIME_TIME_NS        (1)
 
 // ---- CIRCUITPY_FULL_BUILD features (pure software, no hardware) ----
 // Error reporting
