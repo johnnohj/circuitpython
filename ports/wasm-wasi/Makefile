@@ -144,15 +144,32 @@ SRC_SHARED = $(addprefix shared/,\
 # Add supervisor sources (paths are relative to TOP)
 SRC_SHARED += $(SRC_SHARED_EXTRA)
 
-# CircuitPython shared-module sources needed by enabled CIRCUITPY_* modules
+# CircuitPython shared-bindings + shared-module sources.
+# These are the CircuitPython module implementations that call our
+# common-hal functions. On real ports, circuitpy_defns.mk adds these
+# automatically; we list them explicitly until we integrate that.
 SRC_CIRCUITPY = \
+	shared-bindings/time/__init__.c \
+	shared-bindings/os/__init__.c \
+	shared-bindings/random/__init__.c \
+	shared-bindings/math/__init__.c \
+	shared-bindings/struct/__init__.c \
+	shared-module/time/__init__.c \
+	shared-module/os/__init__.c \
+	shared-module/random/__init__.c \
+	shared-module/struct/__init__.c \
 	shared-module/warnings/__init__.c \
 
-SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_CIRCUITPY)
+# Port-specific common-hal (only functions shared-module doesn't provide)
+SRC_COMMON_HAL = \
+	common-hal/os/__init__.c \
+
+SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_CIRCUITPY) $(SRC_COMMON_HAL)
 
 OBJ += $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_SHARED:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_CIRCUITPY:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 
 ################################################################################
