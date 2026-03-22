@@ -106,6 +106,14 @@ void mp_hal_get_random(size_t n, void *buf) {
     }
 }
 
+// ---- supervisor_ticks_ms ----
+// Required by extmod/modasyncio.c when CIRCUITPY=1 and not unix/apple.
+// Matches shared-bindings/supervisor/__init__.c: wraps to 29-bit range.
+mp_obj_t supervisor_ticks_ms(void) {
+    uint64_t ms = (uint64_t)mp_hal_ticks_ms();
+    return mp_obj_new_int((mp_int_t)((ms + 0x1fff0000) % (1 << 29)));
+}
+
 // CircuitPython stubs (reset_into_safe_mode, stack_ok, assert_heap_ok,
 // decompress, serial_write_compressed) are provided by:
 //   supervisor/stub/safe_mode.c

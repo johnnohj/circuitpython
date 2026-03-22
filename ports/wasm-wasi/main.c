@@ -29,7 +29,7 @@
 
 // Heap size for GC
 #ifndef MICROPY_GC_HEAP_SIZE
-#define MICROPY_GC_HEAP_SIZE (256 * 1024)
+#define MICROPY_GC_HEAP_SIZE (512 * 1024)
 #endif
 
 static int handle_uncaught_exception(mp_obj_base_t *exc) {
@@ -147,7 +147,7 @@ static int do_repl(void) {
 MP_NOINLINE int main_(int argc, char **argv);
 
 int main(int argc, char **argv) {
-    mp_cstack_init_with_sp_here(40000);
+    mp_cstack_init_with_sp_here(64000);
     return main_(argc, argv);
 }
 
@@ -178,22 +178,75 @@ MP_NOINLINE int main_(int argc, char **argv) {
     }
     #endif
 
+    // Parse --micropypath from args (before the script filename).
+    // Using args instead of env avoids wasi-libc environ buffer issues.
+    const char *micropypath = NULL;
+    int script_arg = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--micropypath") == 0 && i + 1 < argc) {
+            micropypath = argv[++i];
+        } else if (argv[i][0] != '-') {
+            script_arg = i;
+            break;
+        }
+    }
+
+    // sys.path: mp_init() already sets ["", ".frozen"].
+    // Add /lib, then colon-separated entries from --micropypath.
     #if MICROPY_PY_SYS_PATH
-    mp_sys_path = mp_obj_new_list(0, NULL);
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
+    if (micropypath != NULL) {
+        const char *p = micropypath;
+        while (*p) {
+            const char *end = strchr(p, ':');
+            if (end == NULL) {
+                end = p + strlen(p);
+            }
+            if (end > p && !(end - p == 7 && memcmp(p, ".frozen", 7) == 0)) {
+                char entry[end - p + 1];
+                memcpy(entry, p, end - p);
+                entry[end - p] = '\0';
+                mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str(entry)));
+            }
+            p = *end ? end + 1 : end;
+        }
+    }
     #endif
 
-    // TODO: sys.argv — mp_sys_argv is a const macro in CircuitPython
-    // (pre-allocated list in VM state), needs investigation
-    (void)argc;
-    (void)argv;
+    // sys.argv: populate from WASI args (script + user args, not our flags)
+    #if MICROPY_PY_SYS_ARGV
+    for (int i = script_arg; i < argc && i > 0; i++) {
+        mp_obj_list_append(mp_sys_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
+    }
+    #endif
 
     int ret = 0;
-    if (argc > 1) {
+    if (script_arg > 0) {
+        // Replace sys.path[0] ("") with script's directory so that
+        // imported module __file__ attributes get absolute paths.
+        #if MICROPY_PY_SYS_PATH
+        {
+            const char *script = argv[script_arg];
+            const char *last_slash = strrchr(script, '/');
+            if (last_slash) {
+                size_t dir_len = last_slash - script;
+                char dir[dir_len + 1];
+                memcpy(dir, script, dir_len);
+                dir[dir_len] = '\0';
+                mp_obj_t *path_items;
+                size_t path_len;
+                mp_obj_list_get(mp_sys_path, &path_len, &path_items);
+                if (path_len > 0) {
+                    path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_str(dir));
+                } else {
+                    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str(dir)));
+                }
+            }
+        }
+        #endif
         nlr_buf_t nlr;
         if (nlr_push(&nlr) == 0) {
-            mp_lexer_t *lex = mp_lexer_new_from_file(qstr_from_str(argv[1]));
+            mp_lexer_t *lex = mp_lexer_new_from_file(qstr_from_str(argv[script_arg]));
             qstr source_name = lex->source_name;
             mp_parse_tree_t pt = mp_parse(lex, MP_PARSE_FILE_INPUT);
             mp_obj_t mod = mp_compile(&pt, source_name, false);

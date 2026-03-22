@@ -1,7 +1,10 @@
 /*
  * WASI standard variant
  *
- * Based on unix minimal variant. Enables enough features for a useful REPL.
+ * ROM level stays at CORE_FEATURES to avoid pulling in modules that need
+ * supervisor or hardware. We explicitly enable the features CircuitPython
+ * hardcodes in py/circuitpy_mpconfig.h, plus the CIRCUITPY_FULL_BUILD
+ * features that are pure software (no hardware dependencies).
  */
 #pragma once
 
@@ -21,7 +24,44 @@
 #define MICROPY_ALLOC_PARSE_RESULT_INC (8)
 #define MICROPY_ALLOC_PARSE_CHUNK_INIT (64)
 
-// Enable features for a useful REPL
+// ---- Features CircuitPython hardcodes ON (circuitpy_mpconfig.h) ----
+// These are always-on regardless of CIRCUITPY_FULL_BUILD.
+#define MICROPY_PY_BUILTINS_SLICE_ATTRS     (1)
+#define MICROPY_PY_BUILTINS_SLICE_INDICES   (1)
+#define MICROPY_PY_BUILTINS_MEMORYVIEW      (1)
+#define MICROPY_PY_BUILTINS_STR_UNICODE     (1)
+#define MICROPY_PY_COLLECTIONS              (1)
+#define MICROPY_PY_COLLECTIONS_ORDEREDDICT  (1)
+#define MICROPY_PY_DESCRIPTORS              (1)
+#define MICROPY_PY_SYS_STDFILES             (1)
+#define MICROPY_PY_JSON                     (1)
+
+// ---- CIRCUITPY_FULL_BUILD features (pure software, no hardware) ----
+// Error reporting
+#define MICROPY_ERROR_REPORTING             (MICROPY_ERROR_REPORTING_NORMAL)
+#define MICROPY_CPYTHON_COMPAT             (1)
+#define MICROPY_CPYTHON_EXCEPTION_CHAIN    (1)
+#define MICROPY_BUILTIN_METHOD_CHECK_SELF_ARG (1)
+
+// Python language completeness
+#define MICROPY_PY_ALL_SPECIAL_METHODS     (1)
+#define MICROPY_PY_REVERSE_SPECIAL_METHODS (1)
+#define MICROPY_PY_BUILTINS_COMPLEX        (1)
+#define MICROPY_PY_BUILTINS_FROZENSET      (1)
+#define MICROPY_PY_BUILTINS_NOTIMPLEMENTED (1)
+#define MICROPY_PY_BUILTINS_STR_CENTER     (1)
+#define MICROPY_PY_BUILTINS_STR_PARTITION  (1)
+#define MICROPY_PY_BUILTINS_STR_SPLITLINES (1)
+#define MICROPY_PY_FUNCTION_ATTRS          (1)
+#define MICROPY_PY_DOUBLE_TYPECODE         (1)
+#define MICROPY_PY_BUILTINS_POW3           (1)
+
+// Collections
+#define MICROPY_PY_COLLECTIONS_DEQUE       (1)
+#define MICROPY_PY_COLLECTIONS_DEQUE_ITER  (1)
+#define MICROPY_PY_COLLECTIONS_DEQUE_SUBSCR (1)
+
+// ---- Features for a useful REPL ----
 #define MICROPY_COMP_CONST_FOLDING (1)
 #define MICROPY_COMP_CONST_LITERAL (1)
 #define MICROPY_COMP_CONST_TUPLE (1)

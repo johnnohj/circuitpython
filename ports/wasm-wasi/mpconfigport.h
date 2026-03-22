@@ -70,7 +70,7 @@ typedef long long mp_off_t;
 
 // Import and sys.path
 #define MICROPY_MODULE_OVERRIDE_MAIN_IMPORT (1)
-#define MICROPY_PY_SYS_PATH_ARGV_DEFAULTS (0)
+#define MICROPY_PY_SYS_PATH_ARGV_DEFAULTS (1)
 
 // ---- Debugging / error output ----
 extern const struct _mp_print_t mp_stderr_print;

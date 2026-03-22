@@ -63,6 +63,7 @@ LDFLAGS += --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mllvm -wasm-enable-sjlj
 LDFLAGS += -lsetjmp
 LDFLAGS += -Wl,--initial-memory=4194304
+LDFLAGS += -Wl,-z,stack-size=524288
 
 ################################################################################
 # Source files
@@ -70,6 +71,7 @@ LDFLAGS += -Wl,--initial-memory=4194304
 # Common HAL (used by all variants)
 SRC_C_COMMON = \
 	wasi_mphal.c \
+	modringio.c \
 
 # CircuitPython supervisor stubs + translate (used by all variants with CIRCUITPY=1)
 SRC_SUPERVISOR = \
