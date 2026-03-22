@@ -80,16 +80,22 @@ SRC_C_COMMON = \
 	wasi_mphal.c \
 	modringio.c \
 
-# CircuitPython supervisor (shared by both variants)
-# Both variants use circuitpy_mpconfig.h which enables VM hooks →
-# background_callback_run_all → port_background_task chain.
-SRC_SUPERVISOR = \
+# CircuitPython supervisor (shared across variants)
+SRC_SUPERVISOR_COMMON = \
 	supervisor/shared/background_callback.c \
-	supervisor/shared/tick.c \
 	supervisor/shared/translate/translate.c \
 	supervisor/stub/filesystem.c \
 	supervisor/stub/safe_mode.c \
 	supervisor/stub/stack.c \
+
+# tick.c provides mp_hal_delay_ms and supervisor tick counters.
+# The reactor variant provides its own yield-based delay, so it
+# excludes tick.c and stubs the few functions other code needs.
+ifneq ($(VARIANT),reactor)
+SRC_SUPERVISOR = $(SRC_SUPERVISOR_COMMON) supervisor/shared/tick.c
+else
+SRC_SUPERVISOR = $(SRC_SUPERVISOR_COMMON)
+endif
 
 # FatFS config (supervisor/filesystem.h includes vfs_fat.h)
 INC += -I$(TOP)/lib/oofatfs
@@ -104,6 +110,14 @@ SRC_C = \
 	main_opfs.c \
 	opfs_state.c \
 	dev_repl.c \
+	supervisor/port.c \
+
+else ifeq ($(VARIANT),reactor)
+
+SRC_C = \
+	$(SRC_C_COMMON) \
+	main_reactor.c \
+	gccollect.c \
 	supervisor/port.c \
 
 else

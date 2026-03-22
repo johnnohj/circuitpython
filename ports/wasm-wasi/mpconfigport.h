@@ -75,11 +75,16 @@ extern const struct _mp_print_t mp_stderr_print;
 #define MICROPY_ERROR_PRINTER (&mp_stderr_print)
 
 // ---- VM hooks + background tasks ----
-// OPFS variant: circuitpy_mpconfig.h provides RUN_BACKGROUND_TASKS
-//   → background_callback_run_all() → port_background_task()
-// Standard variant: no-op hooks (no supervisor loop).
-#ifndef MICROPY_OPFS_EXECUTOR
-#define RUN_BACKGROUND_TASKS        ((void)0)
+// circuitpy_mpconfig.h provides RUN_BACKGROUND_TASKS →
+// background_callback_run_all() → port_background_task()
+
+// ---- VM yield (reactor variant) ----
+// When enabled, the VM checks mp_vm_should_yield() at branch points
+// and returns MP_VM_RETURN_YIELD with state saved for resumption.
+#if MICROPY_VM_YIELD_ENABLED
+extern int mp_vm_should_yield(void);
+extern void *mp_vm_yield_state;
+#define MICROPY_VM_YIELD_SAVE_STATE(cs) do { mp_vm_yield_state = (void *)(cs); } while (0)
 #endif
 
 // ---- dirent ----
