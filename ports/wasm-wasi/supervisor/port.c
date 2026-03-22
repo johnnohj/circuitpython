@@ -167,13 +167,13 @@ void port_background_task(void) {
     }
 }
 
-// Defined in main_opfs.c — services OPFS device files
-extern void opfs_background_tick(void);
-
 void port_background_tick(void) {
     // Port-specific periodic work (called inside supervisor_background_tick).
-    // Services OPFS device files: flush /dev/repl, check Ctrl-C, checkpoint state.
+    #ifdef MICROPY_OPFS_EXECUTOR
+    // OPFS variant: service device files (flush /dev/repl, check Ctrl-C, checkpoint state).
+    extern void opfs_background_tick(void);
     opfs_background_tick();
+    #endif
 }
 
 void port_start_background_tick(void) {

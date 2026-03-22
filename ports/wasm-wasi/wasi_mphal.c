@@ -83,16 +83,7 @@ uint64_t mp_hal_time_ns(void) {
     return (uint64_t)tv.tv_sec * 1000000000ULL + (uint64_t)tv.tv_nsec;
 }
 
-// mp_hal_delay_ms is provided by supervisor/shared/tick.c (OPFS variant)
-// or can be defined here for the standard variant:
-#ifndef MICROPY_OPFS_EXECUTOR
-void mp_hal_delay_ms(mp_uint_t ms) {
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-}
-#endif
+// mp_hal_delay_ms is provided by supervisor/shared/tick.c for both variants.
 
 // ---- Random ----
 

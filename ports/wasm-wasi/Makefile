@@ -24,6 +24,13 @@ WASI_CC = $(WASI_SDK)/bin/clang-21
 
 include ../../py/mkenv.mk
 -include $(VARIANT_DIR)/mpconfigvariant.mk
+include mpconfigport.mk
+
+# CircuitPython module configuration (194 CIRCUITPY_* → CFLAGS)
+# This is what makes us a CircuitPython port, not a MicroPython port.
+# mpconfigboard.h provides board-level overrides; circuitpy_mpconfig.mk
+# sets defaults and emits -DCIRCUITPY_FOO=$(CIRCUITPY_FOO) for each.
+include $(TOP)/py/circuitpy_mpconfig.mk
 
 # Qstr definitions (must come before py.mk)
 QSTR_DEFS += qstrdefsport.h
@@ -73,24 +80,24 @@ SRC_C_COMMON = \
 	wasi_mphal.c \
 	modringio.c \
 
-# CircuitPython supervisor stubs + translate (used by all variants with CIRCUITPY=1)
+# CircuitPython supervisor (shared by both variants)
+# Both variants use circuitpy_mpconfig.h which enables VM hooks →
+# background_callback_run_all → port_background_task chain.
 SRC_SUPERVISOR = \
+	supervisor/shared/background_callback.c \
+	supervisor/shared/tick.c \
 	supervisor/shared/translate/translate.c \
 	supervisor/stub/filesystem.c \
 	supervisor/stub/safe_mode.c \
 	supervisor/stub/stack.c \
 
-# ---- Variant-specific sources ----
-
-ifeq ($(VARIANT),opfs)
-
-# OPFS variant: full supervisor background task infrastructure
-# Uses py/circuitpy_mpconfig.h for VM hooks → background_callback_run_all
-# → port_background_task → supervisor_tick → filesystem_background chain
-
 # FatFS config (supervisor/filesystem.h includes vfs_fat.h)
 INC += -I$(TOP)/lib/oofatfs
 CFLAGS += -DFFCONF_H=\"ffconf.h\"
+
+# ---- Variant-specific sources ----
+
+ifeq ($(VARIANT),opfs)
 
 SRC_C = \
 	$(SRC_C_COMMON) \
@@ -99,23 +106,17 @@ SRC_C = \
 	dev_repl.c \
 	supervisor/port.c \
 
-SRC_SHARED_EXTRA = \
-	supervisor/shared/background_callback.c \
-	supervisor/shared/tick.c \
-	$(SRC_SUPERVISOR) \
-
 else
 
-# Standard variant: simple REPL
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main.c \
 	gccollect.c \
-
-SRC_SHARED_EXTRA = \
-	$(SRC_SUPERVISOR) \
+	supervisor/port.c \
 
 endif
+
+SRC_SHARED_EXTRA = $(SRC_SUPERVISOR)
 
 SRC_SHARED = $(addprefix shared/,\
 	runtime/gchelper_generic.c \
@@ -129,10 +130,15 @@ SRC_SHARED = $(addprefix shared/,\
 # Add supervisor sources (paths are relative to TOP)
 SRC_SHARED += $(SRC_SHARED_EXTRA)
 
-SRC_QSTR += $(SRC_C) $(SRC_SHARED)
+# CircuitPython shared-module sources needed by enabled CIRCUITPY_* modules
+SRC_CIRCUITPY = \
+	shared-module/warnings/__init__.c \
+
+SRC_QSTR += $(SRC_C) $(SRC_SHARED) $(SRC_CIRCUITPY)
 
 OBJ += $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_SHARED:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_CIRCUITPY:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 
 ################################################################################

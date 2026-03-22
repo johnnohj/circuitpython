@@ -1,25 +1,26 @@
 /*
  * WASI port configuration
  *
- * Headless CircuitPython VM compiled with wasi-sdk.
- * Based on the unix port pattern: sets CIRCUITPY=1 in CFLAGS for
- * CircuitPython code paths in py/*.c, but does NOT include
- * py/circuitpy_mpconfig.h (no full supervisor infrastructure yet).
+ * CircuitPython VM compiled with wasi-sdk. Both variants (standard
+ * and OPFS) include py/circuitpy_mpconfig.h for full CircuitPython
+ * configuration. Board-level CIRCUITPY_* flags are in mpconfigboard.h.
  *
- * VM hooks defined directly by the port (same as unix).
+ * This file provides:
+ *   - WASM/WASI platform adaptations (types, VFS, paths)
+ *   - Definitions that must precede circuitpy_mpconfig.h
+ *   - circuitpy_mpconfig.h include (which pulls in mpconfigboard.h)
  */
 #pragma once
 
 #include <unistd.h>
 
-// Variant-specific definitions
+// Variant-specific definitions (ROM level, emitter disables, etc.)
 #include "mpconfigvariant.h"
 
 // ITCM/DTCM linker macros (no-ops for WASI)
 #include "linker.h"
 
 #define CIRCUITPY_MICROPYTHON_ADVANCED (1)
-#define MICROPY_PY_ASYNC_AWAIT (1)
 #define MICROPY_PY_UCTYPES (0)
 
 #ifndef MICROPY_CONFIG_ROM_LEVEL
@@ -34,11 +35,7 @@
 // ---- Type definitions (wasm32: sizeof(void*) == sizeof(int) == 4) ----
 typedef int mp_int_t;
 typedef unsigned int mp_uint_t;
-// mp_off_t: the OPFS variant includes circuitpy_mpconfig.h which
-// typedefs it as `long`. For the standard variant, define here.
-#ifndef MICROPY_OPFS_EXECUTOR
-typedef long long mp_off_t;
-#endif
+// mp_off_t provided by circuitpy_mpconfig.h (typedef long).
 
 // alloca
 #include <alloca.h>
@@ -77,29 +74,10 @@ extern const struct _mp_print_t mp_stderr_print;
 #define MICROPY_DEBUG_PRINTER (&mp_stderr_print)
 #define MICROPY_ERROR_PRINTER (&mp_stderr_print)
 
-// ---- Platform identification ----
-#define MICROPY_HW_BOARD_NAME   "WASM-WASI"
-#define MICROPY_HW_MCU_NAME     "wasm32"
-
-// ---- CircuitPython feature flags needed by shared-bindings/ headers ----
-// These are normally set by mpconfigboard.h (included via circuitpy_mpconfig.h),
-// but we don't include that. Define them here for headers that check them.
-#ifndef CIRCUITPY_PROCESSOR_COUNT
-#define CIRCUITPY_PROCESSOR_COUNT   (1)
-#endif
-#ifndef CIRCUITPY_NVM
-#define CIRCUITPY_NVM               (0)
-#endif
-#ifndef CIRCUITPY_WATCHDOG
-#define CIRCUITPY_WATCHDOG          (0)
-#endif
-
 // ---- VM hooks + background tasks ----
-// OPFS variant: uses py/circuitpy_mpconfig.h which provides
-//   MICROPY_VM_HOOK_LOOP → RUN_BACKGROUND_TASKS → background_callback_run_all()
-//   background_callback_run_all() calls port_background_task() (supervisor/port.c)
-//   then runs queued callbacks including supervisor_background_tick
-// Standard variant: no-op hooks.
+// OPFS variant: circuitpy_mpconfig.h provides RUN_BACKGROUND_TASKS
+//   → background_callback_run_all() → port_background_task()
+// Standard variant: no-op hooks (no supervisor loop).
 #ifndef MICROPY_OPFS_EXECUTOR
 #define RUN_BACKGROUND_TASKS        ((void)0)
 #endif
@@ -114,10 +92,8 @@ extern const struct _mp_print_t mp_stderr_print;
 
 #include <stdio.h>
 
-// ---- CircuitPython base config for OPFS variant ----
-// Provides RUN_BACKGROUND_TASKS, VM hooks, type sizes, etc.
+// ---- CircuitPython base config ----
+// Provides module enables, VM hooks, type sizes, etc.
 // Must come AFTER our type definitions. mpconfigboard.h is included
-// by circuitpy_mpconfig.h — provides board-level feature flags.
-#ifdef MICROPY_OPFS_EXECUTOR
+// by circuitpy_mpconfig.h — provides board-level CIRCUITPY_* flags.
 #include "py/circuitpy_mpconfig.h"
-#endif
