@@ -102,3 +102,18 @@ extern void *mp_vm_yield_state;
 // Must come AFTER our type definitions. mpconfigboard.h is included
 // by circuitpy_mpconfig.h — provides board-level CIRCUITPY_* flags.
 #include "py/circuitpy_mpconfig.h"
+
+// ---- Force REPL output through mp_hal_stdout_tx_strn ----
+// circuitpy_mpconfig.h sets MICROPY_PY_SYS_STDFILES=1, which makes
+// MP_PYTHON_PRINTER (in mpprint.h) use sys.stdout (a VFS posix fd).
+// That bypasses mp_hal_stdout_tx_strn and our terminal display hook.
+// Override the condition so mpprint.h picks the mp_plat_print path.
+#undef MICROPY_PY_SYS_STDFILES
+#define MICROPY_PY_SYS_STDFILES (0)
+
+// circuitpy_mpconfig.h unconditionally sets MICROPY_REPL_EVENT_DRIVEN=0.
+// Override it here if the variant header set it to 1.
+#ifdef MICROPY_WORKER
+#undef MICROPY_REPL_EVENT_DRIVEN
+#define MICROPY_REPL_EVENT_DRIVEN (1)
+#endif

@@ -14,6 +14,7 @@
 
 #define MICROPY_HW_BOARD_NAME       "WASM-WASI"
 #define MICROPY_HW_MCU_NAME         "wasm32"
+#define CIRCUITPY_BOARD_ID          "wasm_wasi"
 
 // ---- Filesystem ----
 // No flash filesystem — we use VFS POSIX over WASI fd_* syscalls.
@@ -29,14 +30,36 @@
 #define CIRCUITPY_USB_DEVICE        (0)
 #define USB_NUM_ENDPOINT_PAIRS      (0)
 
-// ---- No hardware peripherals ----
+// ---- Hardware peripherals ----
+// Default: off. The worker variant enables these via mpconfigvariant.h
+// and provides C common-hal backed by OPFS endpoints.
+// The reactor uses frozen Python shims instead (modules/*.py).
+#ifndef CIRCUITPY_MICROCONTROLLER
 #define CIRCUITPY_MICROCONTROLLER   (0)
+#endif
 #define CIRCUITPY_PROCESSOR_COUNT   (1)
+#ifndef CIRCUITPY_DIGITALIO
+#define CIRCUITPY_DIGITALIO         (0)
+#endif
+#ifndef CIRCUITPY_ANALOGIO
+#define CIRCUITPY_ANALOGIO          (0)
+#endif
+#ifndef CIRCUITPY_PWMIO
+#define CIRCUITPY_PWMIO             (0)
+#endif
+#ifndef CIRCUITPY_NEOPIXEL_WRITE
+#define CIRCUITPY_NEOPIXEL_WRITE    (0)
+#endif
+#ifndef CIRCUITPY_BOARD
+#define CIRCUITPY_BOARD             (0)
+#endif
+
+// ---- Bus I/O: worker enables via mpconfigvariant.h ----
+#ifndef CIRCUITPY_BUSIO
+#define CIRCUITPY_BUSIO             (0)
+#endif
 #define CIRCUITPY_NVM               (0)
 #define CIRCUITPY_WATCHDOG          (0)
-#define CIRCUITPY_DIGITALIO         (0)
-#define CIRCUITPY_ANALOGIO          (0)
-#define CIRCUITPY_BUSIO             (0)
 #define CIRCUITPY_AUDIOBUSIO        (0)
 #define CIRCUITPY_AUDIOIO           (0)
 #define CIRCUITPY_AUDIOCORE         (0)
@@ -44,19 +67,53 @@
 #define CIRCUITPY_BITBANGIO         (0)
 #define CIRCUITPY_BLEIO_HCI         (0)
 #define CIRCUITPY_COUNTIO           (0)
-#define CIRCUITPY_DISPLAYIO         (0)
 #define CIRCUITPY_FREQUENCYIO       (0)
 #define CIRCUITPY_I2CTARGET         (0)
 #define CIRCUITPY_KEYPAD            (0)
-#define CIRCUITPY_NEOPIXEL_WRITE    (0)
 #define CIRCUITPY_PIXELBUF          (0)
 #define CIRCUITPY_PULSEIO           (0)
-#define CIRCUITPY_PWMIO             (0)
 #define CIRCUITPY_ROTARYIO          (0)
 #define CIRCUITPY_SDCARDIO          (0)
 #define CIRCUITPY_TOUCHIO           (0)
 
-// ---- No status bar (no display/USB serial) ----
+// ---- Display ----
+// C displayio pipeline is worker-only (set in variants/worker/mpconfigvariant.h).
+// Non-worker variants use a frozen Python displayio shim that writes to OPFS.
+// Defaults here disable the C pipeline; the worker variant overrides them.
+#ifndef CIRCUITPY_DISPLAYIO
+#define CIRCUITPY_DISPLAYIO         (0)
+#endif
+#ifndef CIRCUITPY_FRAMEBUFFERIO
+#define CIRCUITPY_FRAMEBUFFERIO     (0)
+#endif
+#ifndef CIRCUITPY_TERMINALIO
+#define CIRCUITPY_TERMINALIO        (0)
+#endif
+#ifndef CIRCUITPY_FONTIO
+#define CIRCUITPY_FONTIO            (0)
+#endif
+#ifndef CIRCUITPY_REPL_LOGO
+#define CIRCUITPY_REPL_LOGO         (0)
+#endif
+#define CIRCUITPY_DISPLAY_LIMIT     (1)
+
+// Bus display drivers disabled everywhere (no SPI/I2C/parallel hardware)
+#define CIRCUITPY_BUSDISPLAY        (0)
+#define CIRCUITPY_FOURWIRE          (0)
+#define CIRCUITPY_EPAPERDISPLAY     (0)
+#define CIRCUITPY_I2CDISPLAYBUS     (0)
+#define CIRCUITPY_PARALLELDISPLAYBUS (0)
+
+// Optional displayio sub-features disabled everywhere
+#define CIRCUITPY_VECTORIO          (0)
+#define CIRCUITPY_GIFIO             (0)
+#define CIRCUITPY_BITMAPFILTER      (0)
+#define CIRCUITPY_BITMAPTOOLS       (0)
+#define CIRCUITPY_LVFONTIO          (0)
+#define CIRCUITPY_TILEPALETTEMAPPER (0)
+#define CIRCUITPY_ONDISKBITMAP      (0)
+
+// ---- Status bar (displayed on terminal) ----
 #define CIRCUITPY_STATUS_BAR        (0)
 
 // ---- Pure software features — enable ----

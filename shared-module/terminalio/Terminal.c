@@ -173,6 +173,23 @@ void common_hal_terminalio_terminal_construct(terminalio_terminal_obj_t *self,
     common_hal_displayio_tilegrid_set_top_left(self->scroll_area, 0, 1);
 }
 
+#if CIRCUITPY_TERMINALIO_VT100
+static uint32_t _select_color(uint16_t ascii_color) {
+    uint32_t color_value = 0;
+    if ((ascii_color & 1) > 0) {
+        color_value += 0xff0000;
+    }
+    if ((ascii_color & 2) > 0) {
+        color_value += 0x00ff00;
+    }
+    if ((ascii_color & 4) > 0) {
+        color_value += 0x0000ff;
+    }
+
+    return color_value;
+}
+#endif
+
 size_t common_hal_terminalio_terminal_write(terminalio_terminal_obj_t *self, const byte *data, size_t len, int *errcode) {
     #define SCRNMOD(x) (((x) + (self->scroll_area->top_left_y)) % (self->scroll_area->height_in_tiles))
 
@@ -181,22 +198,8 @@ size_t common_hal_terminalio_terminal_write(terminalio_terminal_obj_t *self, con
         return len;
     }
 
+
     #if CIRCUITPY_TERMINALIO_VT100
-    uint32_t _select_color(uint16_t ascii_color) {
-        uint32_t color_value = 0;
-        if ((ascii_color & 1) > 0) {
-            color_value += 0xff0000;
-        }
-        if ((ascii_color & 2) > 0) {
-            color_value += 0x00ff00;
-        }
-        if ((ascii_color & 4) > 0) {
-            color_value += 0x0000ff;
-        }
-
-        return color_value;
-    }
-
     displayio_palette_t *terminal_palette = self->scroll_area->pixel_shader;
     #endif
 

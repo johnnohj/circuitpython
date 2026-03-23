@@ -27,6 +27,10 @@
 #include "shared/readline/readline.h"
 #endif
 
+#if CIRCUITPY_DISPLAYIO
+#include "board_display.h"
+#endif
+
 // Heap size for GC
 #ifndef MICROPY_GC_HEAP_SIZE
 #define MICROPY_GC_HEAP_SIZE (512 * 1024)
@@ -162,6 +166,14 @@ MP_NOINLINE int main_(int argc, char **argv) {
     #endif
 
     mp_init();
+
+    #if CIRCUITPY_DISPLAYIO
+    // Initialize the framebuffer display and supervisor terminal.
+    // This creates the "built-in display" that renders the REPL
+    // terminal with the Blinka logo and built-in font, just like
+    // a CircuitPython board with a built-in screen.
+    board_display_init();
+    #endif
 
     #if MICROPY_VFS_POSIX
     {
