@@ -433,6 +433,14 @@
 #define MICROPY_EMIT_WASM (0)
 #endif
 
+// Whether to use WASM native exception handling (try/catch/throw) instead
+// of setjmp/longjmp for NLR.  Only meaningful when MICROPY_EMIT_WASM is
+// enabled.  Requires browser/runtime support for the WASM exception
+// handling proposal (shipped in Chrome 91+, Firefox 100+, Safari 15.2+).
+#ifndef MICROPY_WASM_EXCEPTION_HANDLING
+#define MICROPY_WASM_EXCEPTION_HANDLING (MICROPY_EMIT_WASM)
+#endif
+
 // CIRCUITPY-CHANGE: make sure MICROPY_EMIT_NATIVE_DEBUG is defined
 #ifndef MICROPY_EMIT_NATIVE_DEBUG
 #define MICROPY_EMIT_NATIVE_DEBUG (0)

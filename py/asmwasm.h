@@ -47,6 +47,42 @@
 #define WASM_OP_BR_TABLE        0x0E
 #define WASM_OP_RETURN          0x0F
 
+// Exception handling (legacy model — Phase 3, universally supported)
+// Replaces MicroPython's NLR setjmp/longjmp mechanism with native WASM
+// structured exception handling.  No stack unwinding, no re-entrancy.
+//
+//   try blocktype        ;; begin try block
+//     <body>             ;; if throw occurs, jump to catch
+//   catch tagidx         ;; handle exception with specific tag
+//     <handler>          ;; exception payload on stack
+//   catch_all            ;; handle any exception
+//     <handler>
+//   end
+//
+// Tag section (section ID 13) declares exception tags:
+//   tag ::= 0x00 typeidx  (attribute=exception, type=functype with empty results)
+//
+// Import kind 0x04 imports tags from the host environment.
+#if MICROPY_WASM_EXCEPTION_HANDLING
+#define WASM_OP_TRY             0x06
+#define WASM_OP_CATCH           0x07
+#define WASM_OP_THROW           0x08
+#define WASM_OP_RETHROW         0x09
+#define WASM_OP_DELEGATE        0x18
+#define WASM_OP_CATCH_ALL       0x19
+
+// Phase 4 (try_table) — available in newer engines, future migration path
+// #define WASM_OP_THROW_REF    0x0A
+// #define WASM_OP_TRY_TABLE    0x1F
+
+// Tag section
+#define WASM_SECTION_TAG        13
+#define WASM_TAG_ATTR_EXCEPTION 0x00
+
+// Import/export kinds
+#define WASM_IMPORT_KIND_TAG    0x04
+#endif // MICROPY_WASM_EXCEPTION_HANDLING
+
 // Call
 #define WASM_OP_CALL            0x10
 #define WASM_OP_CALL_INDIRECT   0x11
@@ -218,6 +254,15 @@ typedef struct _asm_wasm_t {
     // Offset where the function body starts (after local declarations).
     // Used to patch the function body size at end of pass.
     size_t func_body_offset;
+
+    #if MICROPY_WASM_EXCEPTION_HANDLING
+    // Exception handling state.
+    // nlr_tag_index: tag index for the NLR exception tag (declared in the
+    //   tag section or imported from the host). Used with throw/catch.
+    // try_depth: nesting depth of try blocks (for rethrow depth calculation).
+    uint16_t nlr_tag_index;
+    uint16_t try_depth;
+    #endif
 } asm_wasm_t;
 
 // ---- Core assembler functions ----
@@ -267,6 +312,25 @@ void asm_wasm_call_ind(asm_wasm_t *as, uint fun_table_idx, uint reg_temp);
 
 // Direct call to setjmp (bypasses mp_fun_table for Emscripten compatibility)
 void asm_wasm_call_setjmp(asm_wasm_t *as);
+
+// Exception handling — WASM native try/catch/throw
+// Replaces nlr_push/nlr_pop/setjmp with structured WASM exceptions.
+// Requires MICROPY_WASM_EXCEPTION_HANDLING=1.
+#if MICROPY_WASM_EXCEPTION_HANDLING
+void asm_wasm_op_try(asm_wasm_t *as, uint8_t blocktype);
+void asm_wasm_op_catch(asm_wasm_t *as, uint tag_idx);
+void asm_wasm_op_catch_all(asm_wasm_t *as);
+void asm_wasm_op_throw(asm_wasm_t *as, uint tag_idx);
+void asm_wasm_op_rethrow(asm_wasm_t *as, uint depth);
+
+// High-level NLR replacement: emits try/catch instead of nlr_push/setjmp.
+// nlr_push becomes: try (result i32) ... catch $nlr_tag ... end
+// nlr_pop becomes: end (closes the try block)
+// These are called from the ASM_CALL_IND macro when idx == MP_F_NLR_PUSH/POP.
+void asm_wasm_nlr_push(asm_wasm_t *as);
+void asm_wasm_nlr_pop(asm_wasm_t *as);
+void asm_wasm_nlr_push_tail(asm_wasm_t *as);
+#endif // MICROPY_WASM_EXCEPTION_HANDLING
 
 // Memory access with offset (word_offset in words, not bytes)
 void asm_wasm_ldr_reg_reg_offset(asm_wasm_t *as, uint reg_dest, uint reg_base, uint word_offset);
@@ -328,6 +392,33 @@ void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
         asm_wasm_op_local_get(as, reg); \
         asm_wasm_op_return(as); \
     } while (0)
+#if MICROPY_WASM_EXCEPTION_HANDLING
+// With native WASM exception handling, nlr_push becomes try/catch and
+// nlr_pop becomes end.  No setjmp/longjmp, no stack unwinding.
+//
+//   nlr_push:  try (result i32)   ;; returns 0 on normal flow
+//   setjmp:    (nop)              ;; absorbed into try
+//   nlr_pop:   catch $nlr_tag     ;; exception lands here
+//              end                ;; returns non-zero on exception
+//
+// emitnative.c checks nlr_push return value: 0 = success, !0 = exception.
+// The try block yields 0 on normal flow; the catch block yields the
+// exception pointer (non-zero).
+#define N_NLR_SETJMP (0)
+#define ASM_CALL_IND(as, idx) \
+    do { \
+        if ((idx) == MP_F_NLR_PUSH) { \
+            asm_wasm_nlr_push(as); \
+        } else if ((idx) == MP_F_NLR_POP) { \
+            asm_wasm_nlr_pop(as); \
+        } else if ((idx) == MP_F_SETJMP) { \
+            asm_wasm_nlr_push_tail(as); \
+        } else { \
+            asm_wasm_call_ind(as, idx, ASM_WASM_REG_TEMP2); \
+        } \
+    } while (0)
+#else
+// Fallback: Emscripten-style setjmp/longjmp.
 // Emscripten SUPPORT_LONGJMP=wasm cannot handle indirect calls to setjmp
 // (storing &setjmp in mp_fun_table triggers "Indirect use of setjmp is not
 // supported"). For the setjmp entry, we emit a direct call instead.
@@ -340,6 +431,7 @@ void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
             asm_wasm_call_ind(as, idx, ASM_WASM_REG_TEMP2); \
         } \
     } while (0)
+#endif // MICROPY_WASM_EXCEPTION_HANDLING
 
 // ---- Register moves ----
 // State stack slots are offset past the register locals (see ASM_WASM_STATE_OFFSET).
