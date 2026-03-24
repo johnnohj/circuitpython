@@ -61,8 +61,16 @@ CFLAGS += -Os -DNDEBUG
 CFLAGS += -D_POSIX_C_SOURCE=199309L
 CFLAGS += $(INC)
 
-# setjmp/longjmp via WASM Exception Handling (required for NLR)
+# Exception handling: WASM native EH for setjmp/longjmp (NLR).
+# -mllvm -wasm-enable-sjlj: transforms C setjmp/longjmp calls to use
+#   WASM EH (__wasm_setjmp/__wasm_longjmp from libsetjmp.a).
+# -fwasm-exceptions: enables WASM EH for C++ throw/catch (used by
+#   nlrwasm.cpp for direct WASM throw in nlr_jump).
+# Together they ensure ALL exception paths use WASM EH, not emulation.
+# Requires a runtime that supports the WASM EH proposal
+# (Node.js/V8, Chrome 91+, Firefox 100+, Safari 15.2+).
 CFLAGS += -mllvm -wasm-enable-sjlj
+CFLAGS += -fwasm-exceptions
 
 # CircuitPython mode (same as unix port): enables CP code paths in py/*.c
 CFLAGS += -DCIRCUITPY=1
@@ -73,6 +81,7 @@ CIRCUITPY_USB_DEVICE ?= 0
 LDFLAGS += --target=wasm32-wasi
 LDFLAGS += --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mllvm -wasm-enable-sjlj
+LDFLAGS += -fwasm-exceptions
 LDFLAGS += -lsetjmp
 LDFLAGS += -Wl,--initial-memory=4194304
 LDFLAGS += -Wl,-z,stack-size=524288

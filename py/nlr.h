@@ -111,6 +111,12 @@
     #else
         #error Unsupported RISC-V variant.
     #endif
+#elif defined(__wasm32__) || defined(__wasm__) || defined(__EMSCRIPTEN__)
+    // WASM: uses setjmp/longjmp compiled to WASM EH via -wasm-enable-sjlj.
+    // MICROPY_NLR_WASM enables nlrwasm.c which provides the nlr_jump
+    // implementation and documents the path to native WASM EH builtins.
+    #define MICROPY_NLR_SETJMP (1)
+    #define MICROPY_NLR_WASM (1)
 #else
     #define MICROPY_NLR_SETJMP (1)
     //#warning "No native NLR support for this arch, using setjmp implementation"
@@ -144,6 +150,10 @@
 
 #ifndef MICROPY_NLR_SETJMP
 #define MICROPY_NLR_SETJMP (0)
+#endif
+
+#ifndef MICROPY_NLR_WASM
+#define MICROPY_NLR_WASM (0)
 #endif
 
 #ifndef MICROPY_NLR_THUMB

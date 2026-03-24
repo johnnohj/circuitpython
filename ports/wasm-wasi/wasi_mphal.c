@@ -238,6 +238,23 @@ mp_obj_t supervisor_ticks_ms(void) {
     return mp_obj_new_int((mp_int_t)((ms + 0x1fff0000) % (1 << 29)));
 }
 
+// ---- Native WASM compilation stub ----
+// emitglue.c calls mp_wasm_compile_native() to build a WASM module from
+// emitted native code.  In a browser, the JS host provides the real
+// implementation (reads WASM linear memory, builds WebAssembly.Module,
+// adds to function table).  In CLI/test mode (wasmtime, Node without
+// the JS runtime), this stub returns 0 → the compiler falls back to
+// bytecode interpretation.  The user's code still works; it just
+// runs interpreted instead of native.
+#if MICROPY_EMIT_WASM
+__attribute__((weak))
+int mp_wasm_compile_native(const void *code, size_t len) {
+    (void)code;
+    (void)len;
+    return 0;  // 0 = compilation failed, fall back to bytecode
+}
+#endif
+
 // CircuitPython stubs (reset_into_safe_mode, stack_ok, assert_heap_ok,
 // decompress, serial_write_compressed) are provided by:
 //   supervisor/stub/safe_mode.c

@@ -59,6 +59,22 @@ typedef unsigned int mp_uint_t;
 #define MICROPY_STACKLESS_STRICT    (0)
 #endif
 
+// ---- Native WASM code emission ----
+// Python functions compile to native WASM instructions (no @native needed).
+// Unsupported patterns (generators with complex closures, etc.) fall back
+// to bytecode interpretation silently.
+//
+// MICROPY_EMIT_WASM enables the compiler path (py/emitnwasm.c).
+// MICROPY_WASM_EXCEPTION_HANDLING replaces setjmp/longjmp with try/catch.
+// MICROPY_WASM_COOPERATIVE_YIELD adds budget checks at loop headers.
+//
+// mp_wasm_compile_native() is called by emitglue.c to build a WASM module
+// from the emitted code. On WASI, the JS host provides this as an import.
+// When unavailable (CLI/test), returns 0 → falls back to bytecode.
+#ifndef MICROPY_EMIT_WASM
+#define MICROPY_EMIT_WASM           (1)
+#endif
+
 // ---- Path limits ----
 #ifndef PATH_MAX
 #define PATH_MAX 256
