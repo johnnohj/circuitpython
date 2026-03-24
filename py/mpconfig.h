@@ -441,6 +441,15 @@
 #define MICROPY_WASM_EXCEPTION_HANDLING (MICROPY_EMIT_WASM)
 #endif
 
+// Whether to emit cooperative yield checks at backward branches in native
+// WASM code.  At each loop header, a budget counter is decremented; when
+// it reaches zero, the function returns MP_VM_RETURN_YIELD.  This prevents
+// infinite loops in native code from freezing the browser event loop.
+// Only meaningful when MICROPY_EMIT_WASM is enabled.
+#ifndef MICROPY_WASM_COOPERATIVE_YIELD
+#define MICROPY_WASM_COOPERATIVE_YIELD (MICROPY_EMIT_WASM)
+#endif
+
 // CIRCUITPY-CHANGE: make sure MICROPY_EMIT_NATIVE_DEBUG is defined
 #ifndef MICROPY_EMIT_NATIVE_DEBUG
 #define MICROPY_EMIT_NATIVE_DEBUG (0)

@@ -276,6 +276,17 @@ typedef struct _asm_wasm_t {
     #define ASM_WASM_MAX_YIELD_LABELS 64
     uint16_t num_yield_labels;
     uint16_t yield_labels[ASM_WASM_MAX_YIELD_LABELS];
+
+    #if MICROPY_WASM_COOPERATIVE_YIELD
+    // Cooperative yield: at each backward branch (loop header), decrement
+    // a budget counter and return if exhausted.  This prevents infinite
+    // loops in native code from freezing the browser.
+    //
+    // The budget local is an extra WASM local (i32) added to every function.
+    // It's initialized from a global or parameter at function entry.
+    // When it reaches zero, the function returns MP_VM_RETURN_YIELD.
+    uint16_t yield_budget_local;  // WASM local index for budget counter
+    #endif
 } asm_wasm_t;
 
 // ---- Core assembler functions ----
@@ -370,6 +381,13 @@ void asm_wasm_jump_reg(asm_wasm_t *as, uint reg);
 // Register a yield re-entry label. Called during code generation so the
 // br_table knows all possible targets. Returns the state index assigned.
 uint asm_wasm_register_yield_label(asm_wasm_t *as, uint label);
+
+// Cooperative yield: emit a budget check at backward branches (loop headers).
+// Decrements budget counter, returns MP_VM_RETURN_YIELD when exhausted.
+// Called from asm_wasm_label_assign for backward-target labels.
+#if MICROPY_WASM_COOPERATIVE_YIELD
+void asm_wasm_emit_yield_check(asm_wasm_t *as);
+#endif
 
 // ---- GENERIC ASM API ----
 // These macros are used by emitnative.c to generate architecture-independent

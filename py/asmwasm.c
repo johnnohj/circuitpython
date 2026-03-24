@@ -239,6 +239,16 @@ void asm_wasm_label_assign(asm_wasm_t *as, uint label) {
     // Emit a label marker. The JS rewriter uses these to build block structure.
     asm_wasm_emit_byte(as, WASM_MARKER_LABEL);
     asm_wasm_emit_uleb128(as, label);
+
+    #if MICROPY_WASM_COOPERATIVE_YIELD
+    // At backward branch targets (loop headers), emit a budget check.
+    // This prevents native while-True loops from freezing the browser.
+    if (as->label_is_loop != NULL &&
+        label < as->base.max_num_labels &&
+        as->label_is_loop[label]) {
+        asm_wasm_emit_yield_check(as);
+    }
+    #endif
 }
 
 // Emit a jump as a marker (the JS rewriter transforms to br/br_if + blocks)
@@ -434,6 +444,62 @@ void asm_wasm_nlr_pop(asm_wasm_t *as) {
 
 #endif // MICROPY_WASM_EXCEPTION_HANDLING
 
+// ---- Cooperative yield ----
+//
+// At each backward branch (loop header), we emit:
+//
+//   local.get $budget
+//   i32.const 1
+//   i32.sub
+//   local.tee $budget
+//   i32.eqz
+//   if
+//     i32.const MP_VM_RETURN_YIELD    ;; signal "budget exhausted"
+//     return
+//   end
+//
+// The budget local is allocated as an extra WASM local in asm_wasm_entry.
+// It's initialized to a default value (e.g., 256 iterations per yield).
+// The JS host calls the function again after doing event-loop work.
+//
+// This is the native-code equivalent of MICROPY_VM_HOOK_LOOP in vm.c.
+// For the bytecode interpreter, the hook runs RUN_BACKGROUND_TASKS.
+// For native WASM code, we return to JS and let JS run background tasks.
+
+#if MICROPY_WASM_COOPERATIVE_YIELD
+
+// Default budget: number of loop iterations before yielding.
+// Higher = more throughput, lower = more responsive.
+#ifndef MICROPY_WASM_YIELD_BUDGET
+#define MICROPY_WASM_YIELD_BUDGET 256
+#endif
+
+// Return value indicating "budget exhausted, call me again".
+// Must match MP_VM_RETURN_YIELD if defined, otherwise use a distinct value.
+#ifndef MP_VM_RETURN_YIELD
+#define MP_VM_RETURN_YIELD 0x7F
+#endif
+
+void asm_wasm_emit_yield_check(asm_wasm_t *as) {
+    // Decrement budget, check if zero
+    asm_wasm_op_local_get(as, as->yield_budget_local);
+    asm_wasm_op_i32_const(as, 1);
+    asm_wasm_op_binop(as, WASM_OP_I32_SUB);
+    asm_wasm_op_local_tee(as, as->yield_budget_local);
+    asm_wasm_emit_byte(as, WASM_OP_I32_EQZ);
+
+    // if (budget == 0) return MP_VM_RETURN_YIELD
+    asm_wasm_emit_byte(as, WASM_OP_IF);
+    asm_wasm_emit_byte(as, WASM_BLOCKTYPE_VOID);
+    asm_wasm_op_i32_const(as, MP_VM_RETURN_YIELD);
+    asm_wasm_op_local_set(as, ASM_WASM_REG_RET);
+    asm_wasm_op_local_get(as, ASM_WASM_REG_RET);
+    asm_wasm_op_return(as);
+    asm_wasm_op_end(as);
+}
+
+#endif // MICROPY_WASM_COOPERATIVE_YIELD
+
 // ---- Memory access with offset ----
 
 void asm_wasm_ldr_reg_reg_offset(asm_wasm_t *as, uint reg_dest, uint reg_base, uint word_offset) {
@@ -624,22 +690,40 @@ void asm_wasm_entry(asm_wasm_t *as, int num_locals) {
         }
     }
     as->block_depth = 0;
-    as->num_locals = ASM_WASM_NUM_REGS + ASM_WASM_STATE_OFFSET + num_locals;
+
+    // Calculate total locals needed.
+    uint base_locals = ASM_WASM_NUM_EXTRA_LOCALS + ASM_WASM_STATE_OFFSET + num_locals;
+    #if MICROPY_WASM_COOPERATIVE_YIELD
+    // Reserve one extra local for the yield budget counter.
+    // It sits after all other locals.
+    as->yield_budget_local = ASM_WASM_NUM_REGS + ASM_WASM_STATE_OFFSET + num_locals;
+    base_locals += 1;
+    #endif
+    as->num_locals = ASM_WASM_NUM_REGS + ASM_WASM_STATE_OFFSET + num_locals
+        #if MICROPY_WASM_COOPERATIVE_YIELD
+        + 1
+        #endif
+        ;
 
     // Emit local declarations.
     // ASM_WASM_STATE_OFFSET accounts for the gap between register locals
     // (REG_LOCAL_1..3) and the emitter's state stack. On WASM, both live
     // in the same local index space, so we need extra locals to avoid overlap.
-    uint extra_locals = ASM_WASM_NUM_EXTRA_LOCALS + ASM_WASM_STATE_OFFSET + num_locals;
-    if (extra_locals > 0) {
+    if (base_locals > 0) {
         asm_wasm_emit_uleb128(as, 1);
-        asm_wasm_emit_uleb128(as, extra_locals);
+        asm_wasm_emit_uleb128(as, base_locals);
         asm_wasm_emit_byte(as, WASM_TYPE_I32);
     } else {
         asm_wasm_emit_uleb128(as, 0);
     }
 
     as->func_body_offset = as->base.code_offset;
+
+    #if MICROPY_WASM_COOPERATIVE_YIELD
+    // Initialize the budget counter to the default value.
+    asm_wasm_op_i32_const(as, MICROPY_WASM_YIELD_BUDGET);
+    asm_wasm_op_local_set(as, as->yield_budget_local);
+    #endif
 
     // During EMIT pass, open blocks for all forward-target labels.
     // They are opened in reverse label order so that the first forward
