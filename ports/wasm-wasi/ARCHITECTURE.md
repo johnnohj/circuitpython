@@ -258,71 +258,87 @@ The OPFS endpoint format is the only contract between them.
    instance.  They share no Python state.  The OPFS endpoint format
    is the only contract between them.
 
-## Target Architecture: Python as WASM
+## Key Insight: The Interpreter IS Already WASM
 
-The current split-port model is a stepping stone.  The target is:
+The bytecode interpreter (vm.c) compiles to WASM instructions.
+When Python does `1 + 2`, the interpreter calls `mp_binary_op()`
+— a WASM function calling another WASM function.  We don't need
+to compile Python to new WASM modules.  We need to make the
+existing interpreter use WASM's native features.
 
-**One WASM instance.  Python compiles to native WASM instructions.
-JS orchestrates execution by calling WASM exports.  No interpreter
-loop.  No split port.  No OPFS for IPC.**
+**`-fwasm-exceptions`** does exactly this.  It makes the C
+setjmp/longjmp (used for NLR exception handling) compile to
+native WASM try/catch/throw instructions.  Every `try/except`
+in every Python file benefits — bytecoded, frozen, REPL —
+without any native emission or new WASM modules.
 
-### Native WASM compilation
+The `py/asmwasm.c` infrastructure (exception handling, generators,
+cooperative yield) remains available if runtime WASM compilation
+becomes practical in the future.  For now, `MICROPY_EMIT_WASM=0`.
 
-`py/asmwasm.c` compiles Python functions to native WASM instructions.
-Enabled by default (`MICROPY_EMIT_WASM=1`).  No `@native` decorator
-needed.  Users write `code.py` unchanged.  Functions that can't
-compile fall back to bytecode interpretation silently.
-
-### WASM features map to Python semantics
-
-Every Python feature that's hard to compile natively on ARM/x86 is
-hard because of C platform constraints.  WASM doesn't have them:
-
-| Python feature     | C/ARM problem              | WASM solution               |
-|--------------------|----------------------------|-----------------------------|
-| try/except         | setjmp/longjmp             | Native try/catch/throw      |
-| yield / generators | Stack frame save/restore   | State machine + return      |
-| Cooperative yield  | longjmp stack unwind       | Normal function return      |
-| Closures           | Heap-alloc frame + fptr    | funcref + captured vars     |
-| NLR (exceptions)   | Platform-specific asm      | WASM exception handling     |
-
-The WASM native emitter can support MORE Python features than the
-ARM emitter.  No setjmp/longjmp emulation.  No re-entrancy.
-
-### Single-instance model
+## Target Architecture
 
 ```
-┌─────────────────────────────────────┐
-│         One WASM Instance            │
-│                                      │
-│  Python VM    C display    common-hal│
-│  (objects)    (TileGrid)   (state)   │
-│                                      │
-│  All in one flat linear memory       │
-└──────────────┬───────────────────────┘
-               │
-        WASM exports
-               │
-    ┌──────────▼──────────┐
-    │   JS event loop      │
-    │   (the supervisor)   │
-    │                      │
-    │   Calls WASM exports │
-    │   Reads linear memory│
-    │   Paints Canvas      │
-    └──────────────────────┘
+┌─────────────────────┐     ┌──────────────────────────┐
+│   Main Thread        │     │   Web Worker              │
+│                      │     │                            │
+│  Light supervisor    │     │  Full CircuitPython VM     │
+│  JS event loop       │     │  C display pipeline        │
+│  DOM / Canvas        │     │  common-hal state           │
+│  Keyboard input      │     │  Bytecode interpreter      │
+│                      │     │  (-fwasm-exceptions for EH) │
+└──────────┬───────────┘     └──────────┬─────────────────┘
+           │                            │
+           └──────────┬─────────────────┘
+                      │
+             IPC bus (deployment-dependent):
+             ┌────────▼────────┐
+             │  SharedArrayBuffer (if CORS headers present)
+             │  OPFS files     (if CORS headers present)
+             │  MEMFS / IDBFS  (no special headers needed)
+             └─────────────────┘
 ```
 
-JS calls `mp_vm_step()`, reads framebuffer from linear memory,
-paints Canvas.  No OPFS for IPC.  No postMessage.  No polling.
-Worker is optional — same WASM exports, routed via postMessage
-if the main thread needs to stay free.
+### IPC bus options
 
-### Three-piece convergence
+All three use the same binary formats (binproto.h, hw_opfs
+endpoint layouts).  The choice is deployment-dependent:
 
-1. **asmwasm.c** — Python functions become WASM functions
-2. **binproto.h** — compact binary protocol for hardware operations
-3. **Shared linear memory** — JS reads/writes Python objects directly
+| Bus              | Headers needed  | Latency     | Persistence |
+|------------------|-----------------|-------------|-------------|
+| SharedArrayBuffer| COOP + COEP     | ~0 (shared) | No          |
+| OPFS             | COOP + COEP     | ~1ms (I/O)  | Yes         |
+| MEMFS / IDBFS    | None            | ~1ms        | IDBFS: yes  |
 
-OPFS becomes a persistence layer (code.py, settings.toml) rather
-than an IPC bus.  The bus is WASM linear memory itself.
+**If CORS headers are present**: OPFS sync access AND
+SharedArrayBuffer are both available (same headers enable both).
+SAB for hot paths (framebuffer, keyboard), OPFS for persistence.
+
+**If no CORS headers**: MEMFS for IPC (in-memory, no persistence),
+IDBFS for persistence (code.py, settings.toml).  Works on any
+static host (GitHub Pages, S3, etc.).
+
+### What runs where
+
+**Main thread (light)**:
+- JS supervisor loop (`requestAnimationFrame`)
+- DOM event handling (keyboard, mouse, resize)
+- Canvas painting (reads framebuffer from shared memory or fetch)
+- Lifecycle management (auto-reload, safe mode)
+
+**Worker (full-fat)**:
+- Full CircuitPython VM (bytecode interpreter with WASM EH)
+- C display pipeline (framebufferio, terminalio, fontio)
+- common-hal implementations (GPIO, I2C, SPI state)
+- Event-driven REPL or code.py execution
+- `RUN_BACKGROUND_TASKS` = return to JS (cooperative yield)
+
+### Convergence pieces
+
+1. **binproto.h** — compact binary protocol for hardware operations
+2. **Shared memory** — SAB or WASM linear memory for hot paths
+3. **`-fwasm-exceptions`** — clean NLR for the interpreter, no sjlj
+
+Persistence (code.py, settings.toml) via IDBFS (no headers) or
+OPFS (with headers).  The IPC bus is internal — external connection
+points (common-hal, mp_hal_*) remain the same regardless.
