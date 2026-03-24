@@ -465,8 +465,99 @@ void asm_wasm_mov_reg_local_addr(asm_wasm_t *as, uint reg_dest, uint local_num) 
 }
 
 void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label) {
-    asm_wasm_op_i32_const(as, 0); // placeholder
+    // On ARM/x86, this loads the native address of `label` into a register.
+    // On WASM, we store a STATE INDEX that br_table will dispatch on.
+    // The index is assigned by register_yield_label during code generation.
+    //
+    // During COMPUTE pass: register the label, get its index.
+    // During EMIT pass: emit i32.const <index>.
+    uint idx = asm_wasm_register_yield_label(as, label);
+    asm_wasm_op_i32_const(as, (int32_t)idx);
     asm_wasm_op_local_set(as, reg_dest);
+}
+
+uint asm_wasm_register_yield_label(asm_wasm_t *as, uint label) {
+    // Check if this label is already registered
+    for (uint i = 0; i < as->num_yield_labels; i++) {
+        if (as->yield_labels[i] == label) {
+            return i + 1;  // +1 because index 0 = first entry (start of body)
+        }
+    }
+    // Register new yield label
+    if (as->num_yield_labels < ASM_WASM_MAX_YIELD_LABELS) {
+        as->yield_labels[as->num_yield_labels] = label;
+        as->num_yield_labels++;
+    }
+    return as->num_yield_labels;  // 1-based index (0 = initial entry)
+}
+
+void asm_wasm_jump_reg(asm_wasm_t *as, uint reg) {
+    // Generator re-entry dispatch via br_table.
+    //
+    // The state index in `reg` was saved by asm_wasm_mov_reg_pcrel.
+    // Index 0 = first entry (fall through to generator body start).
+    // Index N = re-entry after the Nth yield point.
+    //
+    // We emit:
+    //   block $L0          ;; target for index 0 (initial entry)
+    //     block $L1        ;; target for index 1 (first yield re-entry)
+    //       block $L2      ;; target for index 2
+    //         ...
+    //         local.get <reg>
+    //         br_table 0 1 2 ... N  ;; default = 0 (initial entry)
+    //       end             ;; $LN lands here → jump to label N
+    //       <marker: jump to yield_labels[N-1]>
+    //     end               ;; $L1 lands here
+    //     <marker: jump to yield_labels[0]>
+    //   end                 ;; $L0 lands here (fall through = initial entry)
+    //
+    // IMPORTANT: br_table targets are relative to block nesting.
+    // br 0 = innermost block, br N = Nth enclosing block.
+    // The block nesting is: $L0 outermost, $L(N) innermost.
+    // So br_table entry for state S should branch to depth (num_yields - S).
+
+    uint n = as->num_yield_labels;
+
+    if (n == 0) {
+        // No yield points — this shouldn't happen in a generator, but
+        // emit a simple return as fallback.
+        asm_wasm_op_local_get(as, reg);
+        asm_wasm_op_return(as);
+        return;
+    }
+
+    // Open N+1 blocks (one for initial entry + one per yield point).
+    // All are void blocks since we just branch for control flow.
+    for (uint i = 0; i <= n; i++) {
+        asm_wasm_op_block(as, WASM_BLOCKTYPE_VOID);
+    }
+
+    // Load state index and emit br_table
+    asm_wasm_op_local_get(as, reg);
+    asm_wasm_emit_byte(as, WASM_OP_BR_TABLE);
+    asm_wasm_emit_uleb128(as, n);  // number of targets (not counting default)
+
+    // br_table targets: state 0 → depth N (outermost = initial entry),
+    // state 1 → depth N-1, ..., state N → depth 0 (innermost).
+    for (uint s = 0; s <= n; s++) {
+        uint depth = n - s;
+        asm_wasm_emit_uleb128(as, depth);
+    }
+
+    // Close blocks from innermost to outermost, emitting jumps to
+    // the corresponding yield labels.
+    // Block $L(N) (innermost) → yield_labels[N-1] (last yield re-entry)
+    // Block $L(N-1) → yield_labels[N-2]
+    // ...
+    // Block $L(1) → yield_labels[0] (first yield re-entry)
+    // Block $L(0) → fall through (initial entry, no jump needed)
+    for (uint i = n; i >= 1; i--) {
+        asm_wasm_op_end(as);  // close block $L(i)
+        // Jump to the yield re-entry label.
+        // Use our marker-based jump which the JS rewriter handles.
+        emit_jump_common(as, as->yield_labels[i - 1], false);
+    }
+    asm_wasm_op_end(as);  // close block $L(0) — initial entry falls through
 }
 
 // ---- Assembler lifecycle ----
@@ -499,6 +590,7 @@ void asm_wasm_start_pass(asm_wasm_t *as, uint pass) {
     // or imported from the host).  The JS module builder assigns this.
     as->nlr_tag_index = 0;
     #endif
+    as->num_yield_labels = 0;
     if (pass == MP_ASM_PASS_COMPUTE) {
         if (as->label_is_loop != NULL) {
             memset(as->label_is_loop, 0, as->base.max_num_labels);

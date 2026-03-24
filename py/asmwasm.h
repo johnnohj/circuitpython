@@ -263,6 +263,19 @@ typedef struct _asm_wasm_t {
     uint16_t nlr_tag_index;
     uint16_t try_depth;
     #endif
+
+    // Generator state machine support.
+    // On ARM/x86, generators save a native PC and use indirect jumps to
+    // re-enter.  WASM doesn't support computed gotos, so we use br_table:
+    //   - ASM_MOV_REG_PCREL stores a label INDEX (not address)
+    //   - ASM_JUMP_REG emits br_table dispatching on the index
+    //   - yield_labels[] maps index → label for the br_table entries
+    //
+    // Index 0 = first entry (start of generator body).
+    // Index N = re-entry point after the Nth yield.
+    #define ASM_WASM_MAX_YIELD_LABELS 64
+    uint16_t num_yield_labels;
+    uint16_t yield_labels[ASM_WASM_MAX_YIELD_LABELS];
 } asm_wasm_t;
 
 // ---- Core assembler functions ----
@@ -344,7 +357,19 @@ void asm_wasm_mov_reg_imm(asm_wasm_t *as, uint reg_dest, int32_t imm);
 void asm_wasm_mov_reg_local_addr(asm_wasm_t *as, uint reg_dest, uint local_num);
 
 // Move PC-relative (label address)
+// On ARM/x86 this loads the native address of a label.
+// On WASM this stores a label INDEX (for br_table dispatch in generators).
 void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
+
+// Generator dispatch: emit br_table on a state index stored in a register.
+// On ARM/x86 this is an indirect jump (JMP reg). On WASM, computed gotos
+// don't exist, so we emit a br_table that maps state index → label.
+// Called from ASM_JUMP_REG for generator re-entry.
+void asm_wasm_jump_reg(asm_wasm_t *as, uint reg);
+
+// Register a yield re-entry label. Called during code generation so the
+// br_table knows all possible targets. Returns the state index assigned.
+uint asm_wasm_register_yield_label(asm_wasm_t *as, uint label);
 
 // ---- GENERIC ASM API ----
 // These macros are used by emitnative.c to generate architecture-independent
@@ -387,11 +412,11 @@ void asm_wasm_mov_reg_pcrel(asm_wasm_t *as, uint reg_dest, uint label);
     asm_wasm_jump_if_reg_nonzero(as, reg, label)
 #define ASM_JUMP_IF_REG_EQ(as, reg1, reg2, label) \
     asm_wasm_jump_if_reg_eq(as, reg1, reg2, label)
+// Generator re-entry dispatch.  On ARM/x86, JUMP_REG does an indirect
+// jump to a native code address saved by MOV_REG_PCREL.  On WASM, we
+// saved a state INDEX (not an address), and dispatch via br_table.
 #define ASM_JUMP_REG(as, reg) \
-    do { \
-        asm_wasm_op_local_get(as, reg); \
-        asm_wasm_op_return(as); \
-    } while (0)
+    asm_wasm_jump_reg(as, reg)
 #if MICROPY_WASM_EXCEPTION_HANDLING
 // With native WASM exception handling, nlr_push becomes try/catch and
 // nlr_pop becomes end.  No setjmp/longjmp, no stack unwinding.
