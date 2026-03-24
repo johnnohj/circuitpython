@@ -463,8 +463,17 @@ void asm_wasm_nlr_pop(asm_wasm_t *as) {
 // The JS host calls the function again after doing event-loop work.
 //
 // This is the native-code equivalent of MICROPY_VM_HOOK_LOOP in vm.c.
-// For the bytecode interpreter, the hook runs RUN_BACKGROUND_TASKS.
-// For native WASM code, we return to JS and let JS run background tasks.
+// For the bytecode interpreter, the hook runs RUN_BACKGROUND_TASKS which
+// services hardware (USB, display refresh), runs scheduled callbacks
+// (asyncio), and calls port_background_task().
+//
+// For native WASM code, we return to JS instead.  The browser's event
+// loop IS the background task runner — DOM updates, Canvas painting,
+// keyboard events, network, timers all run natively when JS has control.
+// JS calls background_callback_run_all() as an export between steps to
+// service any Python-level scheduled callbacks (asyncio, mp_sched_schedule).
+//
+// Return to JS = RUN_BACKGROUND_TASKS.  The browser IS the supervisor.
 
 #if MICROPY_WASM_COOPERATIVE_YIELD
 
