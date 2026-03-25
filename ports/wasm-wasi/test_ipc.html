@@ -40,13 +40,27 @@ h3 { color: #7ec8e3; margin: 5px 0; }
 <button onclick="runReactor('import board; print(dir(board))')">dir(board)</button>
 <button id="btn-d13">D13 HIGH</button>
 <button id="btn-d13-low">D13 LOW</button>
+<button id="btn-run-code">Run code.py</button>
+<button id="btn-save-code">Save code.py</button>
+</div>
+<div style="margin: 8px 0;">
+<textarea id="code-editor" rows="6" cols="60"
+    style="background: #0a0a1a; color: #e0e0e0; border: 1px solid #333;
+           font-family: monospace; font-size: 12px; padding: 6px; width: 100%;
+           box-sizing: border-box; resize: vertical;"
+># code.py — runs on boot
+import board
+import digitalio
+
+print("Hello from code.py!")
+</textarea>
 </div>
 <div id="stdout"></div>
 </div>
 
 <script type="module">
 import { CircuitPythonHost } from './js/main-ipc.js';
-import { WasiMemfs } from './js/wasi-memfs.js';
+import { WasiMemfs, IdbBackend } from './js/wasi-memfs.js';
 import { WeBlinka, WorkerTarget } from './js/weblinka.js';
 
 const canvas = document.getElementById('display');
@@ -177,8 +191,12 @@ async function initReactor() {
         blinka = new WeBlinka();
         blinka.addTarget(new WorkerTarget(host.worker));
 
+        // IndexedDB persistence for /circuitpy/ files
+        const idb = new IdbBackend();
+
         reactorWasi = new WasiMemfs({
             args: ['circuitpython-reactor'],
+            idb,
             onStdout: (text) => log(text),
             onStderr: (text) => log('[stderr] ' + text),
             onHardwareCommand: (data) => {
@@ -187,10 +205,18 @@ async function initReactor() {
             },
         });
 
-        // Seed /hw/ directories and command pipe
-        // for (const dir of ['hw', 'hw/gpio', 'hw/analog', 'hw/display', 'hw/repl', 'lib']) {
-        //     reactorWasi.dirs.add('/' + dir);
-        // }
+        // Load persisted CIRCUITPY files from IndexedDB
+        const restored = await idb.load(reactorWasi);
+        if (restored > 0) {
+            log(`[circuitpy] restored ${restored} files from IndexedDB\n`);
+        }
+
+        // Seed default code.py if none persisted
+        if (!reactorWasi.readFile('/circuitpy/code.py')) {
+            reactorWasi.writeFile('/circuitpy/code.py',
+                '# code.py — runs on boot\nimport board\nimport digitalio\n\nprint("Hello from code.py!")\n');
+        }
+
         // Pre-create /hw/cmd and /hw/rsp so open() doesn't need O_CREAT
         reactorWasi.writeFile('/hw/cmd', new Uint8Array(64));
         reactorWasi.writeFile('/hw/rsp', new Uint8Array(64));
@@ -221,6 +247,13 @@ async function initReactor() {
         statusEl.textContent += ' | Reactor ready';
         log('>>> Reactor initialized\n');
 
+        // Populate code editor from persisted code.py
+        const codeData = reactorWasi.readFile('/circuitpy/code.py');
+        if (codeData) {
+            document.getElementById('code-editor').value =
+                new TextDecoder().decode(codeData);
+        }
+
     } catch (e) {
         statusEl.textContent += ' | Reactor error: ' + e.message;
         console.error('Reactor init failed:', e);
@@ -244,6 +277,28 @@ document.getElementById('btn-d13-low').addEventListener('click', () => {
         'pin.value = False\n' +
         'print("D13 LOW")'
     );
+});
+
+// Save code.py to memfs + IndexedDB
+document.getElementById('btn-save-code').addEventListener('click', () => {
+    const code = document.getElementById('code-editor').value;
+    reactorWasi.writeFile('/circuitpy/code.py', code);
+    // Trigger IDB persist by simulating fd_close on a /circuitpy/ file
+    if (reactorWasi.idb) {
+        reactorWasi.idb.save('/circuitpy/code.py', new TextEncoder().encode(code));
+    }
+    log('[circuitpy] code.py saved\n');
+});
+
+// Run code.py on the reactor
+document.getElementById('btn-run-code').addEventListener('click', () => {
+    const codeData = reactorWasi.readFile('/circuitpy/code.py');
+    if (!codeData) {
+        log('[error] No code.py found\n');
+        return;
+    }
+    const code = new TextDecoder().decode(codeData);
+    runReactor(code);
 });
 
 // Run a Python expression on the reactor

@@ -49,6 +49,9 @@ export class WasiMemfs {
         this.onHardwareWrite = options.onHardwareWrite || null;
         this.onHardwareCommand = options.onHardwareCommand || null;
 
+        // IndexedDB persistence backend (optional)
+        this.idb = options.idb || null;
+
         this._decoder = new TextDecoder();
     }
 
@@ -199,6 +202,12 @@ export class WasiMemfs {
 
                 fd_close(fd) {
                     if (fd <= 3) return ERRNO.SUCCESS;
+                    const entry = self.fds.get(fd);
+                    // Persist to IndexedDB if applicable
+                    if (entry && entry.type === 'file' && self.idb && self.idb.shouldPersist(entry.path)) {
+                        const data = self.files.get(entry.path);
+                        if (data) self.idb.save(entry.path, data);
+                    }
                     self.fds.delete(fd);
                     return ERRNO.SUCCESS;
                 },
@@ -382,7 +391,19 @@ export class WasiMemfs {
                 poll_oneoff() { return ERRNO.SUCCESS; },
                 path_remove_directory() { return ERRNO.NOSYS; },
                 path_rename() { return ERRNO.NOSYS; },
-                path_unlink_file() { return ERRNO.NOSYS; },
+                path_unlink_file(dirfd, path_ptr, path_len) {
+                    const path = self._readString(path_ptr, path_len);
+                    const dirEntry = self.fds.get(dirfd);
+                    if (!dirEntry) return ERRNO.BADF;
+                    const fullPath = dirEntry.path === '/'
+                        ? '/' + path : dirEntry.path + '/' + path;
+                    if (!self.files.has(fullPath)) return ERRNO.NOENT;
+                    self.files.delete(fullPath);
+                    if (self.idb && self.idb.shouldPersist(fullPath)) {
+                        self.idb.remove(fullPath);
+                    }
+                    return ERRNO.SUCCESS;
+                },
                 fd_readdir() { return ERRNO.NOSYS; },
             }
         };
@@ -393,5 +414,113 @@ export class WasiMemfsExit extends Error {
     constructor(code) {
         super(`WASI exit: ${code}`);
         this.code = code;
+    }
+}
+
+/**
+ * IdbBackend — IndexedDB persistence for WasiMemfs.
+ *
+ * Provides a persistent CIRCUITPY drive backed by IndexedDB.
+ * Files under the persist prefix (default "/circuitpy/") are
+ * saved to IndexedDB on fd_close and restored on load().
+ *
+ * No CORS headers required. Works everywhere IndexedDB works.
+ *
+ * Usage:
+ *   const idb = new IdbBackend({ prefix: '/circuitpy/' });
+ *   await idb.load(wasiMemfs);   // restore files from IDB
+ *   // ... later, on fd_close:
+ *   idb.save(path, data);        // persist to IDB
+ */
+export class IdbBackend {
+    constructor(options = {}) {
+        this.dbName = options.dbName || 'circuitpython-fs';
+        this.storeName = options.storeName || 'files';
+        this.prefix = options.prefix || '/circuitpy/';
+        this._db = null;
+    }
+
+    /** Open (or create) the IndexedDB database. */
+    async open() {
+        if (this._db) return this._db;
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.dbName, 1);
+            req.onupgradeneeded = () => {
+                req.result.createObjectStore(this.storeName);
+            };
+            req.onsuccess = () => {
+                this._db = req.result;
+                resolve(this._db);
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /** Load all persisted files into a WasiMemfs instance. */
+    async load(memfs) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.storeName, 'readonly');
+            const store = tx.objectStore(this.storeName);
+            const req = store.openCursor();
+            let count = 0;
+
+            req.onsuccess = () => {
+                const cursor = req.result;
+                if (cursor) {
+                    const path = cursor.key;
+                    const data = cursor.value;
+                    memfs.writeFile(path, new Uint8Array(data));
+                    count++;
+                    cursor.continue();
+                } else {
+                    resolve(count);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /** Check if a path should be persisted. */
+    shouldPersist(path) {
+        return path.startsWith(this.prefix);
+    }
+
+    /** Save a single file to IndexedDB. */
+    save(path, data) {
+        if (!this._db) return;
+        const tx = this._db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        // Store as ArrayBuffer (structured-cloneable)
+        store.put(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), path);
+    }
+
+    /** Delete a file from IndexedDB. */
+    remove(path) {
+        if (!this._db) return;
+        const tx = this._db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).delete(path);
+    }
+
+    /** List all persisted file paths. */
+    async list() {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.storeName, 'readonly');
+            const req = tx.objectStore(this.storeName).getAllKeys();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /** Clear all persisted files. */
+    async clear() {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.storeName, 'readwrite');
+            const req = tx.objectStore(this.storeName).clear();
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
     }
 }
