@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 /* Set up framebuffer, display, TileGrid, draw Blinka + banner + prompt.
@@ -27,6 +28,10 @@ void worker_terminal_refresh(void);
 
 /* Write framebuffer to /hw/display/fb. */
 void worker_terminal_flush(void);
+
+/* Tick the cursor blink timer.  Call from the step loop with
+ * the current time in ms.  Sets worker_terminal_dirty when toggled. */
+void worker_terminal_cursor_tick(uint32_t now_ms);
 
 /* True if content changed since last refresh. */
 extern bool worker_terminal_dirty;

@@ -60,6 +60,11 @@ static uint16_t _top_y = 0;
 static uint16_t _banner_indent = 0;
 static bool _banner_line_active = false;
 
+/* Cursor blink state. */
+static bool _cursor_visible = true;
+static uint32_t _cursor_last_toggle_ms = 0;
+#define CURSOR_BLINK_MS 500
+
 /* ── Helpers ────────────────────────────────────────────────────── */
 
 static inline uint16_t phys_y(uint16_t logical) {
@@ -148,6 +153,40 @@ void worker_terminal_init(void) {
 
 }
 
+/* ── Cursor rendering ───────────────────────────────────────────── */
+
+/* XOR a 6×12 block at the cursor position in the RGB565 framebuffer.
+ * Calling twice restores the original pixels (XOR is self-inverse). */
+static void cursor_xor(void) {
+    uint8_t *fb = wasm_display_fb_addr();
+    int fb_w = wasm_display_fb_width();
+    int fb_h = wasm_display_fb_height();
+
+    /* Pixel origin of the cursor cell. */
+    int px = _tg->x + _cur_x * GLYPH_W;
+    int py = _tg->y + phys_y(_cur_y) * GLYPH_H;
+
+    for (int row = 0; row < GLYPH_H; row++) {
+        int y = py + row;
+        if (y < 0 || y >= fb_h) continue;
+        for (int col = 0; col < GLYPH_W; col++) {
+            int x = px + col;
+            if (x < 0 || x >= fb_w) continue;
+            int off = (y * fb_w + x) * 2;
+            fb[off]     ^= 0xFF;
+            fb[off + 1] ^= 0xFF;
+        }
+    }
+}
+
+void worker_terminal_cursor_tick(uint32_t now_ms) {
+    if (now_ms - _cursor_last_toggle_ms >= CURSOR_BLINK_MS) {
+        _cursor_last_toggle_ms = now_ms;
+        _cursor_visible = !_cursor_visible;
+        worker_terminal_dirty = true;
+    }
+}
+
 void worker_terminal_write(const char *str, size_t len) {
     for (size_t i = 0; i < len; i++) {
         char c = str[i];
@@ -202,6 +241,10 @@ void worker_terminal_write(const char *str, size_t len) {
 
     _tg->full_change = true;
     worker_terminal_dirty = true;
+
+    /* Reset cursor blink so it's visible right after typing. */
+    _cursor_visible = true;
+    _cursor_last_toggle_ms = 0;
 }
 
 void worker_terminal_refresh(void) {
@@ -210,6 +253,11 @@ void worker_terminal_refresh(void) {
     }
     _display->core.full_refresh = true;
     common_hal_framebufferio_framebufferdisplay_refresh(_display, 0, 0);
+
+    /* Draw cursor on top of the composited framebuffer. */
+    if (_cursor_visible) {
+        cursor_xor();
+    }
 }
 
 void worker_terminal_flush(void) {

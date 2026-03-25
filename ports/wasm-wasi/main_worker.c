@@ -498,8 +498,9 @@ int worker_step(void) {
         }
     }
 
-    /* 2. Refresh display if content changed */
+    /* 2. Tick cursor blink + refresh display if content changed */
     #if CIRCUITPY_DISPLAYIO
+    worker_terminal_cursor_tick((uint32_t)(mp_hal_ticks_ms() & 0xFFFFFFFF));
     if (worker_terminal_dirty) {
         worker_terminal_refresh();
         worker_terminal_dirty = false;
