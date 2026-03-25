@@ -33,6 +33,7 @@ export class CircuitPythonHost {
         this.onStdout = options.onStdout || null;
         this.onExit = options.onExit || null;
         this.onError = options.onError || null;
+        this.onHwDiff = options.onHwDiff || null;
 
         // Bind keyboard handler
         this._onKeyDown = this._handleKeyDown.bind(this);
@@ -92,6 +93,10 @@ export class CircuitPythonHost {
 
             case 'exit':
                 if (this.onExit) this.onExit(msg.code);
+                break;
+
+            case 'hw_diff':
+                if (this.onHwDiff) this.onHwDiff(msg.data, msg.count);
                 break;
 
             case 'error':

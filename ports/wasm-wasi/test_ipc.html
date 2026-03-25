@@ -28,12 +28,18 @@ h3 { color: #7ec8e3; margin: 5px 0; }
 </div>
 
 <div class="section">
+<h3>Board Hardware</h3>
+<div id="board-pins" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;"></div>
+</div>
+
+<div class="section">
 <h3>Reactor Console</h3>
 <div>
 <button onclick="runReactor('print(2+2)')">print(2+2)</button>
 <button onclick="runReactor('import digitalio')">import digitalio</button>
 <button onclick="runReactor('import board; print(dir(board))')">dir(board)</button>
 <button id="btn-d13">D13 HIGH</button>
+<button id="btn-d13-low">D13 LOW</button>
 </div>
 <div id="stdout"></div>
 </div>
@@ -51,6 +57,83 @@ let host = null;
 let reactor = null;  // reactor WASM instance
 let reactorWasi = null;
 let blinka = null;   // weBlinka router
+
+const boardPinsEl = document.getElementById('board-pins');
+const pinElements = {};
+
+// Build pin indicator elements
+const PIN_NAMES = [
+    'D0','D1','D2','D3','D4','D5','D6','D7',
+    'D8/SDA','D9/SCL','D10/MOSI','D11/MISO','D12/SCK','D13/LED',
+];
+for (let i = 0; i < PIN_NAMES.length; i++) {
+    const el = document.createElement('div');
+    el.style.cssText = `
+        display: flex; align-items: center; gap: 4px;
+        padding: 3px 8px; border-radius: 4px;
+        background: #111; border: 1px solid #333; min-width: 70px;
+        font-size: 11px;
+    `;
+    const led = document.createElement('div');
+    led.style.cssText = `
+        width: 10px; height: 10px; border-radius: 50%;
+        background: #333; border: 1px solid #444;
+        transition: background 0.15s;
+    `;
+    const lbl = document.createElement('span');
+    lbl.textContent = PIN_NAMES[i];
+    lbl.style.color = '#888';
+    el.appendChild(led);
+    el.appendChild(lbl);
+    // Click to toggle pin via reactor Python
+    el.addEventListener('click', () => {
+        const pinNum = i;
+        const pinName = PIN_NAMES[pinNum].split('/')[0];
+        runReactor(
+            `import digitalio, board\n` +
+            `_p = digitalio.DigitalInOut(board.${pinName})\n` +
+            `_p.direction = digitalio.Direction.OUTPUT\n` +
+            `_p.value = not _p.value\n` +
+            `print("${PIN_NAMES[pinNum]}:", _p.value)`
+        );
+    });
+    el.style.cursor = 'pointer';
+
+    boardPinsEl.appendChild(el);
+    pinElements[i] = { el, led, lbl };
+}
+
+function updateBoardViz(diffBuffer, count) {
+    const data = new Uint8Array(diffBuffer);
+    for (let i = 0; i < count; i++) {
+        const offset = i * 64;
+        const opcode = data[offset + 1];
+        const pin = data[offset + 2];
+
+        if (pin >= PIN_NAMES.length) continue;
+        const pe = pinElements[pin];
+        if (!pe) continue;
+
+        if (opcode === 0x20) { // GPIO_INIT
+            const direction = data[offset + 3]; // 0=IN, 1=OUT
+            const value = data[offset + 5];
+            if (direction === 1) {
+                // Output pin
+                if (pin === 13) {
+                    pe.led.style.background = value ? '#00ff41' : '#1a3a1a';
+                } else {
+                    pe.led.style.background = value ? '#ff6b35' : '#3a2a1a';
+                }
+                pe.el.style.borderColor = value ? '#555' : '#333';
+                pe.lbl.style.color = '#ccc';
+            } else {
+                pe.led.style.background = value ? '#4a9eff' : '#333';
+                pe.el.style.borderColor = '#333';
+                pe.lbl.style.color = '#888';
+            }
+        }
+    }
+}
 
 function log(text) {
     stdoutEl.textContent += text;
@@ -71,6 +154,9 @@ host = new CircuitPythonHost(canvas, {
     onStdout: (text) => {
         // Worker stdout (REPL output goes to display, but
         // fprintf(stderr,...) debug output comes here)
+    },
+    onHwDiff: (data, count) => {
+        updateBoardViz(data, count);
     },
     onError: (msg) => {
         statusEl.textContent = 'Worker error: ' + msg;
@@ -102,25 +188,25 @@ async function initReactor() {
         });
 
         // Seed /hw/ directories and command pipe
-        for (const dir of ['hw', 'hw/gpio', 'hw/analog', 'hw/display', 'hw/repl', 'lib']) {
-            reactorWasi.dirs.add('/' + dir);
-        }
+        // for (const dir of ['hw', 'hw/gpio', 'hw/analog', 'hw/display', 'hw/repl', 'lib']) {
+        //     reactorWasi.dirs.add('/' + dir);
+        // }
         // Pre-create /hw/cmd and /hw/rsp so open() doesn't need O_CREAT
         reactorWasi.writeFile('/hw/cmd', new Uint8Array(64));
         reactorWasi.writeFile('/hw/rsp', new Uint8Array(64));
 
         // Seed Python shims into memfs so `import digitalio` works
-        const shims = ['_hw', 'digitalio', 'analogio', 'board', 'busio',
-                       'microcontroller', 'neopixel_write', 'pwmio'];
-        for (const name of shims) {
-            try {
-                const resp = await fetch(`modules/${name}.py`);
-                if (resp.ok) {
-                    const text = await resp.text();
-                    reactorWasi.writeFile(`/lib/${name}.py`, text);
-                }
-            } catch (e) { /* shim not available, skip */ }
-        }
+        // const shims = ['_hw', 'digitalio', 'analogio', 'board', 'busio',
+        //                'microcontroller', 'neopixel_write', 'pwmio'];
+        // for (const name of shims) {
+        //     try {
+        //         const resp = await fetch(`modules/${name}.py`);
+        //         if (resp.ok) {
+        //             const text = await resp.text();
+        //             reactorWasi.writeFile(`/lib/${name}.py`, text);
+        //         }
+        //     } catch (e) { /* shim not available, skip */ }
+        // }
 
         // Compile reactor WASM
         const response = await fetch('build-reactor/circuitpython.wasm');
@@ -148,6 +234,15 @@ document.getElementById('btn-d13').addEventListener('click', () => {
         'pin.direction = digitalio.Direction.OUTPUT\n' +
         'pin.value = True\n' +
         'print("D13 HIGH")'
+    );
+});
+
+document.getElementById('btn-d13-low').addEventListener('click', () => {
+    runReactor(
+        'pin = digitalio.DigitalInOut(board.D13)\n' +
+        'pin.direction = digitalio.Direction.OUTPUT\n' +
+        'pin.value = False\n' +
+        'print("D13 LOW")'
     );
 });
 

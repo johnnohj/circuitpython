@@ -28,6 +28,9 @@ include ../../py/mkenv.mk
 -include $(VARIANT_DIR)/mpconfigvariant.mk
 include mpconfigport.mk
 
+# Use the variant-specified frozen manifest.
+FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py
+
 # CircuitPython module configuration (194 CIRCUITPY_* → CFLAGS)
 # This is what makes us a CircuitPython port, not a MicroPython port.
 # mpconfigboard.h provides board-level overrides; circuitpy_mpconfig.mk
@@ -199,6 +202,7 @@ else ifeq ($(VARIANT),worker)
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main_worker.c \
+	worker_u2if.c \
 	gccollect.c \
 	supervisor/port.c \
 

@@ -205,6 +205,18 @@ function stepLoop() {
         sendFrame(w, h);
     }
 
+    // Check for hardware state changes — emit U2IF diff packets
+    const diffCount = wasm.exports.worker_u2if_build_diff();
+    if (diffCount > 0) {
+        const diffPtr = wasm.exports.worker_u2if_diff_ptr();
+        const diffData = new Uint8Array(diffCount * 64);
+        diffData.set(new Uint8Array(memory.buffer, diffPtr, diffCount * 64));
+        self.postMessage(
+            { type: 'hw_diff', data: diffData.buffer, count: diffCount },
+            [diffData.buffer]
+        );
+    }
+
     if (status & 0x02) { // WORKER_STEP_EXIT
         running = false;
         self.postMessage({ type: 'exit', code: 0 });
@@ -234,6 +246,28 @@ self.onmessage = (event) => {
                 for (const c of msg.chars) {
                     wasm.exports.worker_push_key(c);
                 }
+            }
+            break;
+
+        case 'u2if':
+            if (wasm) {
+                // Write the U2IF packet into WASM linear memory
+                const packetPtr = wasm.exports.worker_u2if_packet_ptr();
+                const packet = new Uint8Array(memory.buffer, packetPtr, 64);
+                const incoming = new Uint8Array(msg.data);
+                packet.set(incoming);
+
+                // Dispatch
+                wasm.exports.worker_u2if_exec();
+
+                // Read response and send back
+                const respPtr = wasm.exports.worker_u2if_response_ptr();
+                const resp = new Uint8Array(64);
+                resp.set(new Uint8Array(memory.buffer, respPtr, 64));
+                self.postMessage(
+                    { type: 'u2if_response', data: resp.buffer },
+                    [resp.buffer]
+                );
             }
             break;
 

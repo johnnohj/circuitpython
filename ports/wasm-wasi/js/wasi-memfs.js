@@ -47,6 +47,7 @@ export class WasiMemfs {
         this.onStdout = options.onStdout || null;
         this.onStderr = options.onStderr || null;
         this.onHardwareWrite = options.onHardwareWrite || null;
+        this.onHardwareCommand = options.onHardwareCommand || null;
 
         this._decoder = new TextDecoder();
     }
@@ -256,8 +257,6 @@ export class WasiMemfs {
                     const fullPath = dirEntry.path === '/'
                         ? '/' + path
                         : dirEntry.path + '/' + path;
-                    console.log('[memfs] open:', fullPath,
-                        'exists:', self.files.has(fullPath) || self.dirs.has(fullPath));
 
                     // Check if it's a directory
                     if (self.dirs.has(fullPath)) {
@@ -300,9 +299,6 @@ export class WasiMemfs {
                     const fullPath = dirEntry.path === '/'
                         ? '/' + path
                         : dirEntry.path + '/' + path;
-                    console.log('[memfs] stat:', fullPath,
-                        self.files.has(fullPath) ? 'FILE' :
-                        self.dirs.has(fullPath) ? 'DIR' : 'MISSING');
 
                     // WASI filestat layout (64 bytes):
                     //   0: u64 dev, 8: u64 ino, 16: u8 filetype,
