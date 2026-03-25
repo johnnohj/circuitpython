@@ -147,8 +147,14 @@ export class WasiMemfs {
                     self.files.set(entry.path, buf);
                     entry.offset = needed;
 
-                    // Intercept /hw/* writes → forward to worker
-                    if (entry.path.startsWith('/hw/') && self.onHardwareWrite) {
+                    // Intercept /hw/cmd writes → route through weBlinka
+                    if (entry.path === '/hw/cmd' && self.onHardwareCommand) {
+                        const response = self.onHardwareCommand(buf);
+                        if (response) {
+                            // Write response to /hw/rsp for query() to read
+                            self.files.set('/hw/rsp', new Uint8Array(response));
+                        }
+                    } else if (entry.path.startsWith('/hw/') && self.onHardwareWrite) {
                         self.onHardwareWrite(entry.path, buf);
                     }
 

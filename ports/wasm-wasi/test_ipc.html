@@ -41,6 +41,7 @@ h3 { color: #7ec8e3; margin: 5px 0; }
 <script type="module">
 import { CircuitPythonHost } from './js/main-ipc.js';
 import { WasiMemfs } from './js/wasi-memfs.js';
+import { WeBlinka, WorkerTarget } from './js/weblinka.js';
 
 const canvas = document.getElementById('display');
 const statusEl = document.getElementById('status');
@@ -49,6 +50,7 @@ const stdoutEl = document.getElementById('stdout');
 let host = null;
 let reactor = null;  // reactor WASM instance
 let reactorWasi = null;
+let blinka = null;   // weBlinka router
 
 function log(text) {
     stdoutEl.textContent += text;
@@ -85,28 +87,30 @@ statusEl.textContent = 'Starting worker...';
 
 async function initReactor() {
     try {
+        // Set up weBlinka router
+        blinka = new WeBlinka();
+        blinka.addTarget(new WorkerTarget(host.worker));
+
         reactorWasi = new WasiMemfs({
             args: ['circuitpython-reactor'],
             onStdout: (text) => log(text),
             onStderr: (text) => log('[stderr] ' + text),
-            onHardwareWrite: (path, data) => {
-                // Forward /hw/* writes to the worker
-                const copy = new Uint8Array(data);
-                host.worker.postMessage(
-                    { type: 'hw', path, data: copy.buffer },
-                    [copy.buffer]
-                );
-                // log(`[hw] ${path} (${data.length} bytes)\n`);
+            onHardwareCommand: (data) => {
+                // Route U2IF commands through weBlinka
+                return blinka.send(data);
             },
         });
 
-        // Seed /hw/ directories
+        // Seed /hw/ directories and command pipe
         for (const dir of ['hw', 'hw/gpio', 'hw/analog', 'hw/display', 'hw/repl', 'lib']) {
             reactorWasi.dirs.add('/' + dir);
         }
+        // Pre-create /hw/cmd and /hw/rsp so open() doesn't need O_CREAT
+        reactorWasi.writeFile('/hw/cmd', new Uint8Array(64));
+        reactorWasi.writeFile('/hw/rsp', new Uint8Array(64));
 
         // Seed Python shims into memfs so `import digitalio` works
-        const shims = ['digitalio', 'analogio', 'board', 'busio',
+        const shims = ['_hw', 'digitalio', 'analogio', 'board', 'busio',
                        'microcontroller', 'neopixel_write', 'pwmio'];
         for (const name of shims) {
             try {

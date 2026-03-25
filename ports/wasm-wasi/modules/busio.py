@@ -1,41 +1,48 @@
-# busio.py -- CircuitPython busio shim for WASI reactor
-#
-# I2C: reads/writes device register files at /hw/i2c/dev/{addr}
-# SPI: transfers through /hw/spi/xfer
-# UART: TX appends to /hw/uart/{port}/tx, RX reads /hw/uart/{port}/rx
-#
-# These match the C common-hal wire formats exactly.
+# busio.py — CircuitPython busio shim (U2IF protocol)
 
 import struct
-import os
+import _hw
 
+# I2C opcodes
+_I2C_INIT   = 0x80
+_I2C_DEINIT = 0x81
+_I2C_WRITE  = 0x82
+_I2C_READ   = 0x83
 
-def _ensure(*dirs):
-    for d in dirs:
-        try:
-            os.mkdir(d)
-        except OSError:
-            pass
+# SPI opcodes
+_SPI_INIT   = 0x60
+_SPI_DEINIT = 0x61
+_SPI_WRITE  = 0x62
+_SPI_READ   = 0x63
+
+# UART opcodes
+_UART_INIT   = 0xB0
+_UART_DEINIT = 0xB1
+_UART_WRITE  = 0xB2
+_UART_READ   = 0xB3
+_UART_ANY    = 0xB4
 
 
 # ── I2C ──────────────────────────────────────────────────────────────
 
 class I2C:
-    """Virtual I2C backed by OPFS register files.
-
-    Each device address maps to /hw/i2c/dev/{addr}.
-    Write [reg, data...] seeks to reg offset and writes data.
-    Read returns bytes from the current position.
-    """
-
     def __init__(self, scl, sda, frequency=100000):
         self._scl = scl
         self._sda = sda
         self._frequency = frequency
         self._locked = False
-        _ensure("/hw", "/hw/i2c", "/hw/i2c/dev")
+        # Init: [pullup=0][baudrate:u32le]
+        buf = bytearray(_hw.REPORT_SIZE)
+        buf[0] = 0x00
+        buf[1] = _I2C_INIT
+        buf[2] = 0x00  # no pullup
+        struct.pack_into("<I", buf, 3, frequency)
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(buf)
+        f.close()
 
     def deinit(self):
+        _hw.send(_I2C_DEINIT)
         self._locked = False
 
     def __enter__(self):
@@ -54,21 +61,9 @@ class I2C:
         self._locked = False
 
     def scan(self):
-        """Return list of addresses that have device files."""
-        addrs = []
-        try:
-            for name in os.listdir("/hw/i2c/dev"):
-                try:
-                    addrs.append(int(name))
-                except ValueError:
-                    pass
-        except OSError:
-            pass
-        addrs.sort()
-        return addrs
-
-    def _dev_path(self, addr):
-        return "/hw/i2c/dev/" + str(addr)
+        # No direct U2IF scan command — would need to probe each address
+        # For simulation, return empty list
+        return []
 
     def writeto(self, address, buffer, *, start=0, end=None):
         if end is None:
@@ -76,84 +71,45 @@ class I2C:
         data = buffer[start:end]
         if len(data) == 0:
             return
-        path = self._dev_path(address)
-        reg = data[0]
-        try:
-            f = open(path, "r+b")
-        except OSError:
-            # Create the device file
-            f = open(path, "wb")
-            f.write(b'\xff' * 256)
-            f.close()
-            f = open(path, "r+b")
-        f.seek(reg)
-        if len(data) > 1:
-            f.write(data[1:])
+        # [0x00][I2C_WRITE][addr][stop=1][size:u32le][data...]
+        buf = bytearray(_hw.REPORT_SIZE)
+        buf[0] = 0x00
+        buf[1] = _I2C_WRITE
+        buf[2] = address & 0x7F
+        buf[3] = 0x01  # stop
+        struct.pack_into("<I", buf, 4, len(data))
+        space = _hw.REPORT_SIZE - 8
+        copy_len = min(len(data), space)
+        buf[8:8 + copy_len] = data[:copy_len]
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(buf)
         f.close()
 
     def readfrom_into(self, address, buffer, *, start=0, end=None):
         if end is None:
             end = len(buffer)
         length = end - start
-        path = self._dev_path(address)
-        try:
-            f = open(path, "rb")
-            data = f.read(256)
-            f.close()
-            # Read from offset 0 by default (register pointer set by prior write)
+        # [0x00][I2C_READ][addr][stop=1][size:u32le]
+        rsp = _hw.query(_I2C_READ, address & 0x7F, 0x01,
+                        length & 0xFF, (length >> 8) & 0xFF,
+                        (length >> 16) & 0xFF, (length >> 24) & 0xFF)
+        if rsp:
             for i in range(length):
-                if i < len(data):
-                    buffer[start + i] = data[i]
+                if 2 + i < len(rsp):
+                    buffer[start + i] = rsp[2 + i]
                 else:
                     buffer[start + i] = 0xFF
-        except OSError:
-            for i in range(length):
-                buffer[start + i] = 0xFF
 
     def writeto_then_readfrom(self, address, out_buffer, in_buffer,
                                *, out_start=0, out_end=None,
                                in_start=0, in_end=None):
-        if out_end is None:
-            out_end = len(out_buffer)
-        if in_end is None:
-            in_end = len(in_buffer)
-
-        out_data = out_buffer[out_start:out_end]
-        in_len = in_end - in_start
-        path = self._dev_path(address)
-
-        try:
-            f = open(path, "r+b")
-        except OSError:
-            f = open(path, "wb")
-            f.write(b'\xff' * 256)
-            f.close()
-            f = open(path, "r+b")
-
-        # Write phase: first byte is register address
-        if len(out_data) > 0:
-            reg = out_data[0]
-            f.seek(reg)
-            if len(out_data) > 1:
-                f.write(out_data[1:])
-            # Re-seek to register for read phase
-            f.seek(reg)
-
-        # Read phase
-        data = f.read(in_len)
-        f.close()
-        for i in range(in_len):
-            if i < len(data):
-                in_buffer[in_start + i] = data[i]
-            else:
-                in_buffer[in_start + i] = 0xFF
+        self.writeto(address, out_buffer, start=out_start, end=out_end)
+        self.readfrom_into(address, in_buffer, start=in_start, end=in_end)
 
 
 # ── SPI ──────────────────────────────────────────────────────────────
 
 class SPI:
-    """Virtual SPI backed by /hw/spi/xfer transfer file."""
-
     def __init__(self, clock, MOSI=None, MISO=None, half_duplex=False):
         self._clock = clock
         self._mosi = MOSI
@@ -163,9 +119,17 @@ class SPI:
         self._polarity = 0
         self._phase = 0
         self._bits = 8
-        _ensure("/hw", "/hw/spi")
+        # Init: [baudrate:u32le]
+        buf = bytearray(_hw.REPORT_SIZE)
+        buf[0] = 0x00
+        buf[1] = _SPI_INIT
+        struct.pack_into("<I", buf, 2, self._baudrate)
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(buf)
+        f.close()
 
     def deinit(self):
+        _hw.send(_SPI_DEINIT)
         self._locked = False
 
     def __enter__(self):
@@ -196,37 +160,34 @@ class SPI:
     def write(self, buf, *, start=0, end=None):
         if end is None:
             end = len(buf)
-        try:
-            f = open("/hw/spi/xfer", "wb")
-            f.write(buf[start:end])
-            f.close()
-        except OSError:
-            pass
+        data = buf[start:end]
+        # [0x00][SPI_WRITE][chunk_len][data...]
+        packet = bytearray(_hw.REPORT_SIZE)
+        packet[0] = 0x00
+        packet[1] = _SPI_WRITE
+        packet[2] = min(len(data), 61)  # max 61 bytes per report
+        copy_len = min(len(data), 61)
+        packet[3:3 + copy_len] = data[:copy_len]
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(packet)
+        f.close()
 
     def readinto(self, buf, *, start=0, end=None, write_value=0):
         if end is None:
             end = len(buf)
         length = end - start
-        try:
-            f = open("/hw/spi/xfer", "rb")
-            data = f.read(length)
-            f.close()
+        # [0x00][SPI_READ][write_byte][num_bytes]
+        rsp = _hw.query(_SPI_READ, write_value, length)
+        if rsp:
             for i in range(length):
-                if i < len(data):
-                    buf[start + i] = data[i]
+                if 2 + i < len(rsp):
+                    buf[start + i] = rsp[2 + i]
                 else:
                     buf[start + i] = write_value
-        except OSError:
-            for i in range(length):
-                buf[start + i] = write_value
 
     def write_readinto(self, out_buf, in_buf, *,
                         out_start=0, out_end=None,
                         in_start=0, in_end=None):
-        if out_end is None:
-            out_end = len(out_buf)
-        if in_end is None:
-            in_end = len(in_buf)
         self.write(out_buf, start=out_start, end=out_end)
         self.readinto(in_buf, start=in_start, end=in_end)
 
@@ -234,8 +195,6 @@ class SPI:
 # ── UART ─────────────────────────────────────────────────────────────
 
 class UART:
-    """Virtual UART backed by /hw/uart/{port}/rx and tx files."""
-
     _next_port = 0
 
     def __init__(self, tx=None, rx=None, *, baudrate=9600, bits=8,
@@ -247,18 +206,18 @@ class UART:
         self._timeout = timeout
         self._port = UART._next_port
         UART._next_port += 1
-        _ensure("/hw", "/hw/uart", "/hw/uart/" + str(self._port))
-        # Create empty endpoint files
-        for ep in ("rx", "tx"):
-            path = "/hw/uart/{}/{}".format(self._port, ep)
-            try:
-                f = open(path, "wb")
-                f.close()
-            except OSError:
-                pass
+        # Use port-specific opcode offset (port 0 = 0xB0, port 1 = 0xBA)
+        self._base = _UART_INIT + (self._port * 0x0A)
+        buf = bytearray(_hw.REPORT_SIZE)
+        buf[0] = 0x00
+        buf[1] = self._base  # UART_INIT
+        struct.pack_into("<I", buf, 2, baudrate)
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(buf)
+        f.close()
 
     def deinit(self):
-        pass
+        _hw.send(self._base + 1)  # UART_DEINIT
 
     def __enter__(self):
         return self
@@ -267,62 +226,43 @@ class UART:
         self.deinit()
 
     def read(self, nbytes=None):
-        path = "/hw/uart/{}/rx".format(self._port)
-        try:
-            f = open(path, "rb")
-            data = f.read(nbytes) if nbytes else f.read()
-            f.close()
-            if data:
-                # Consume: truncate the file
-                f = open(path, "wb")
-                f.close()
-                return data
-        except OSError:
-            pass
+        if nbytes is None:
+            nbytes = 64
+        rsp = _hw.query(self._base + 3, nbytes)  # UART_READ
+        if rsp and rsp[1] == 0x01:
+            data = bytes(rsp[2:2 + nbytes])
+            return data if any(b != 0 for b in data) else None
         return None
 
     def readline(self):
-        path = "/hw/uart/{}/rx".format(self._port)
-        try:
-            f = open(path, "rb")
-            data = f.read()
-            f.close()
-            if data:
-                nl = data.find(b'\n')
-                if nl >= 0:
-                    line = data[:nl + 1]
-                    # Write back remainder
-                    remainder = data[nl + 1:]
-                    f = open(path, "wb")
-                    f.write(remainder)
-                    f.close()
-                    return line
-                # No newline — return all and consume
-                f = open(path, "wb")
-                f.close()
-                return data
-        except OSError:
-            pass
+        # Read up to 64 bytes and look for newline
+        data = self.read(64)
+        if data:
+            nl = data.find(b'\n')
+            if nl >= 0:
+                return data[:nl + 1]
+            return data
         return None
 
     def write(self, buf):
-        path = "/hw/uart/{}/tx".format(self._port)
-        try:
-            f = open(path, "ab")
-            f.write(buf)
-            f.close()
-            return len(buf)
-        except OSError:
-            return 0
+        # [0x00][UART_WRITE][chunk_len][data...]
+        packet = bytearray(_hw.REPORT_SIZE)
+        packet[0] = 0x00
+        packet[1] = self._base + 2  # UART_WRITE
+        copy_len = min(len(buf), 61)
+        packet[2] = copy_len
+        packet[3:3 + copy_len] = buf[:copy_len]
+        f = open(_hw._CMD_PATH, "wb")
+        f.write(packet)
+        f.close()
+        return len(buf)
 
     @property
     def in_waiting(self):
-        path = "/hw/uart/{}/rx".format(self._port)
-        try:
-            st = os.stat(path)
-            return st[6]  # st_size
-        except OSError:
-            return 0
+        rsp = _hw.query(self._base + 4)  # UART_ANY
+        if rsp and rsp[1] == 0x01:
+            return rsp[2]
+        return 0
 
     @property
     def baudrate(self):
@@ -341,9 +281,4 @@ class UART:
         self._timeout = val
 
     def reset_input_buffer(self):
-        path = "/hw/uart/{}/rx".format(self._port)
-        try:
-            f = open(path, "wb")
-            f.close()
-        except OSError:
-            pass
+        pass

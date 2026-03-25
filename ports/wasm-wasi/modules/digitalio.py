@@ -1,68 +1,24 @@
-# digitalio.py -- CircuitPython digitalio shim for WASI reactor
+# digitalio.py — CircuitPython digitalio shim (U2IF protocol)
 #
-# Reads/writes GPIO state via /hw/gpio/state (binary file).
-# Wire format per pin: [value:u8][direction:u8][pull:u8][open_drain:u8][enabled:u8][never_reset:u8]
-# 64 pins × 6 bytes = 384 bytes total.
-#
-# The worker's C common-hal reads this file via hw_opfs_gpio_read().
+# Emits U2IF-compatible commands via _hw.send() instead of
+# maintaining a state blob. Each operation is a single 64-byte
+# command packet routed through weBlinka.
 
-import struct
-import os
+import _hw
 
-_GPIO_PATH = "/hw/gpio/state"
-_PIN_SIZE = 6   # bytes per pin entry
-_NUM_PINS = 64
+# U2IF GPIO opcodes
+_GPIO_INIT      = 0x20
+_GPIO_SET_VALUE = 0x21
+_GPIO_GET_VALUE = 0x22
 
-# Ensure directories exist
-try:
-    os.mkdir("/hw")
-except OSError:
-    pass
-try:
-    os.mkdir("/hw/gpio")
-except OSError:
-    pass
+# GPIO modes
+_MODE_IN  = 0x00
+_MODE_OUT = 0x01
 
-
-def _read_pin(pin_num):
-    """Read one pin's state from the GPIO state file."""
-    try:
-        f = open(_GPIO_PATH, "rb")
-        f.seek(pin_num * _PIN_SIZE)
-        data = f.read(_PIN_SIZE)
-        f.close()
-        if len(data) == _PIN_SIZE:
-            return struct.unpack("6B", data)
-    except OSError:
-        pass
-    return (0, 0, 0, 0, 0, 0)
-
-
-def _write_pin(pin_num, value, direction, pull, open_drain, enabled, never_reset=0):
-    """Write one pin's state to the GPIO state file."""
-    entry = struct.pack("6B", value, direction, pull, open_drain, enabled, never_reset)
-    try:
-        # Ensure file exists and is large enough
-        try:
-            st = os.stat(_GPIO_PATH)
-            need = (pin_num + 1) * _PIN_SIZE
-            if st[6] < need:
-                # Extend file
-                f = open(_GPIO_PATH, "ab")
-                f.write(b'\x00' * (need - st[6]))
-                f.close()
-        except OSError:
-            # Create with zeros up to this pin
-            f = open(_GPIO_PATH, "wb")
-            f.write(b'\x00' * ((pin_num + 1) * _PIN_SIZE))
-            f.close()
-
-        f = open(_GPIO_PATH, "r+b")
-        f.seek(pin_num * _PIN_SIZE)
-        f.write(entry)
-        f.close()
-    except OSError:
-        pass
+# GPIO pulls
+_PULL_NONE = 0x00
+_PULL_UP   = 0x01
+_PULL_DOWN = 0x02
 
 
 class Direction:
@@ -84,16 +40,19 @@ class DriveMode:
 class DigitalInOut:
     def __init__(self, pin):
         if isinstance(pin, str):
-            # Board pin name — look up number from board module
             import board
             pin = getattr(board, pin)
         self._pin = pin
         self._pin_num = pin if isinstance(pin, int) else pin.number if hasattr(pin, 'number') else int(pin)
-        _write_pin(self._pin_num, 0, Direction.INPUT, 0, 0, 1)
+        self._direction = Direction.INPUT
+        self._pull = _PULL_NONE
+        self._value = 0
+        # Init as input, no pull
+        _hw.send(_GPIO_INIT, self._pin_num, _MODE_IN, _PULL_NONE)
 
     def deinit(self):
         if self._pin is not None:
-            _write_pin(self._pin_num, 0, 0, 0, 0, 0)
+            _hw.send(_GPIO_INIT, self._pin_num, _MODE_IN, _PULL_NONE)
             self._pin = None
 
     def __enter__(self):
@@ -113,43 +72,43 @@ class DigitalInOut:
 
     @property
     def direction(self):
-        state = _read_pin(self._pin_num)
-        return state[1]
+        return self._direction
 
     @direction.setter
     def direction(self, val):
-        state = _read_pin(self._pin_num)
-        _write_pin(self._pin_num, state[0], val, state[2], state[3], state[4])
+        self._direction = val
+        mode = _MODE_OUT if val == Direction.OUTPUT else _MODE_IN
+        pull = self._pull if val == Direction.INPUT else _PULL_NONE
+        _hw.send(_GPIO_INIT, self._pin_num, mode, pull)
 
     @property
     def value(self):
-        state = _read_pin(self._pin_num)
-        return bool(state[0])
+        rsp = _hw.query(_GPIO_GET_VALUE, self._pin_num)
+        if rsp:
+            return bool(rsp[2])
+        return bool(self._value)
 
     @value.setter
     def value(self, val):
-        state = _read_pin(self._pin_num)
-        _write_pin(self._pin_num, 1 if val else 0, state[1], state[2], state[3], state[4])
+        self._value = 1 if val else 0
+        _hw.send(_GPIO_SET_VALUE, self._pin_num, self._value)
 
     @property
     def pull(self):
-        state = _read_pin(self._pin_num)
-        p = state[2]
-        if p == 0:
+        p = self._pull
+        if p == _PULL_NONE:
             return None
         return p
 
     @pull.setter
     def pull(self, val):
-        state = _read_pin(self._pin_num)
-        _write_pin(self._pin_num, state[0], state[1], val if val is not None else 0, state[3], state[4])
+        self._pull = val if val is not None else _PULL_NONE
+        _hw.send(_GPIO_INIT, self._pin_num, _MODE_IN, self._pull)
 
     @property
     def drive_mode(self):
-        state = _read_pin(self._pin_num)
-        return state[3]
+        return self._drive_mode if hasattr(self, '_drive_mode') else DriveMode.PUSH_PULL
 
     @drive_mode.setter
     def drive_mode(self, val):
-        state = _read_pin(self._pin_num)
-        _write_pin(self._pin_num, state[0], state[1], state[2], val, state[4])
+        self._drive_mode = val
