@@ -5,14 +5,14 @@
 # No Emscripten, no JavaScript. All I/O through WASI fd_read/fd_write.
 #
 # Variants:
-#   standard — simple REPL on stdin/stdout (plain MicroPython)
-#   opfs     — CIRCUITPY=1, supervisor infrastructure, OPFS-backed state
-#   reactor  — externally-driven stepping, JS host is supervisor
-#   worker   — hardware peripheral controller, owns display pipeline
+#   standard — simple REPL on stdin/stdout (test suite + CLI)
+#   reactor  — main-thread VM, externally-driven stepping, JS host is supervisor
+#   worker   — hardware peripheral controller, owns display pipeline + common-hal
 #
 # Usage:
 #   make                          # build standard variant
-#   make VARIANT=opfs             # build OPFS executor variant
+#   make VARIANT=reactor          # build main-thread reactor
+#   make VARIANT=worker           # build worker with display + hardware
 ################################################################################
 
 VARIANT ?= standard
@@ -180,16 +180,7 @@ CFLAGS += -DFFCONF_H=\"ffconf.h\"
 
 # ---- Variant-specific sources ----
 
-ifeq ($(VARIANT),opfs)
-
-SRC_C = \
-	$(SRC_C_COMMON) \
-	main_opfs.c \
-	opfs_state.c \
-	dev_repl.c \
-	supervisor/port.c \
-
-else ifeq ($(VARIANT),reactor)
+ifeq ($(VARIANT),reactor)
 
 SRC_C = \
 	$(SRC_C_COMMON) \
@@ -297,7 +288,7 @@ SRC_COMMON_HAL = \
 # The reactor uses frozen Python shims instead.
 ifeq ($(VARIANT),worker)
 SRC_COMMON_HAL += \
-	hw_opfs.c \
+	hw_state.c \
 	common-hal/microcontroller/__init__.c \
 	common-hal/microcontroller/Pin.c \
 	common-hal/microcontroller/Processor.c \

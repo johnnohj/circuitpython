@@ -26,7 +26,6 @@
 #endif
 
 #if MICROPY_WORKER
-#include "hw_opfs.h"
 #endif
 
 // mp_hal_set_interrupt_char and mp_hal_is_interrupted are provided
@@ -129,11 +128,7 @@ int mp_hal_stdin_rx_chr(void) {
         }
         #endif
 
-        // Also sync hardware state
-        #if MICROPY_WORKER
-        hw_opfs_read_all();
-        hw_opfs_flush_all();
-        #endif
+        // Hardware state sync handled by worker_u2if.c via postMessage
 
         nanosleep(&ts, NULL);
     }

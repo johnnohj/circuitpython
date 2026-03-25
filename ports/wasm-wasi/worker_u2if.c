@@ -17,7 +17,7 @@
 #include "common-hal/digitalio/DigitalInOut.h"
 #include "common-hal/pwmio/PWMOut.h"
 #include "common-hal/analogio/AnalogIn.h"
-#include "hw_opfs.h"
+#include "hw_state.h"
 
 /* U2IF opcodes (matches weblinka.js CMD constants) */
 #define U2IF_GPIO_INIT          0x20
@@ -60,7 +60,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         gpio_state[pin].pull      = pull;
         gpio_state[pin].value     = false;
         gpio_state[pin].open_drain = false;
-        hw_opfs_gpio_dirty = true;
+        hw_gpio_dirty = true;
         break;
     }
 
@@ -69,7 +69,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         uint8_t val = packet[3];
         if (pin >= 64) { response[1] = U2IF_STATUS_NOK; break; }
         gpio_state[pin].value = val ? true : false;
-        hw_opfs_gpio_dirty = true;
+        hw_gpio_dirty = true;
         break;
     }
 
@@ -86,7 +86,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         uint8_t pin = packet[2];
         if (pin >= 64) { response[1] = U2IF_STATUS_NOK; break; }
         pwm_state[pin].enabled = true;
-        hw_opfs_pwm_dirty = true;
+        hw_pwm_dirty = true;
         break;
     }
 
@@ -96,7 +96,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         pwm_state[pin].enabled = false;
         pwm_state[pin].duty_cycle = 0;
         pwm_state[pin].frequency = 0;
-        hw_opfs_pwm_dirty = true;
+        hw_pwm_dirty = true;
         break;
     }
 
@@ -106,7 +106,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         uint32_t freq;
         memcpy(&freq, &packet[3], 4);
         pwm_state[pin].frequency = freq;
-        hw_opfs_pwm_dirty = true;
+        hw_pwm_dirty = true;
         break;
     }
 
@@ -124,7 +124,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         uint16_t duty;
         memcpy(&duty, &packet[3], 2);
         pwm_state[pin].duty_cycle = duty;
-        hw_opfs_pwm_dirty = true;
+        hw_pwm_dirty = true;
         break;
     }
 
@@ -144,7 +144,7 @@ int worker_u2if_dispatch(uint8_t *packet, uint8_t *response) {
         analog_state[pin].enabled = 1;
         analog_state[pin].is_output = 0;
         analog_state[pin].value = 32768;  /* midpoint default */
-        hw_opfs_analog_dirty = true;
+        hw_analog_dirty = true;
         break;
     }
 
@@ -259,7 +259,7 @@ int worker_u2if_build_diff(void) {
     }
 
     /* GPIO diffs */
-    if (hw_opfs_gpio_dirty) {
+    if (hw_gpio_dirty) {
         for (int i = 0; i < 64; i++) {
             if (memcmp(&gpio_state[i], &_prev_gpio[i], sizeof(gpio_pin_state_t)) != 0) {
                 /* Emit GPIO_INIT with full state */
@@ -273,11 +273,11 @@ int worker_u2if_build_diff(void) {
                 _prev_gpio[i] = gpio_state[i];
             }
         }
-        hw_opfs_gpio_dirty = false;
+        hw_gpio_dirty = false;
     }
 
     /* PWM diffs */
-    if (hw_opfs_pwm_dirty) {
+    if (hw_pwm_dirty) {
         for (int i = 0; i < 64; i++) {
             if (memcmp(&pwm_state[i], &_prev_pwm[i], sizeof(pwm_state_t)) != 0) {
                 /* Emit PWM state: duty in [3:5], freq in [5:9] */
@@ -292,11 +292,11 @@ int worker_u2if_build_diff(void) {
                 _prev_pwm[i] = pwm_state[i];
             }
         }
-        hw_opfs_pwm_dirty = false;
+        hw_pwm_dirty = false;
     }
 
     /* Analog diffs */
-    if (hw_opfs_analog_dirty) {
+    if (hw_analog_dirty) {
         for (int i = 0; i < 64; i++) {
             if (memcmp(&analog_state[i], &_prev_analog[i], sizeof(analog_pin_state_t)) != 0) {
                 _emit_diff_packet(U2IF_ADC_GET_VALUE, i,
@@ -308,7 +308,7 @@ int worker_u2if_build_diff(void) {
                 _prev_analog[i] = analog_state[i];
             }
         }
-        hw_opfs_analog_dirty = false;
+        hw_analog_dirty = false;
     }
 
     return _diff_count;

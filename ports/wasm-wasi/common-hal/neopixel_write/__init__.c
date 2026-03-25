@@ -7,7 +7,7 @@
 
 #include "shared-bindings/neopixel_write/__init__.h"
 #include "shared-bindings/digitalio/DigitalInOut.h"
-#include "hw_opfs.h"
+#include "hw_state.h"
 #include "py/runtime.h"
 #include <string.h>
 
@@ -42,5 +42,5 @@ void common_hal_neopixel_write(const digitalio_digitalinout_obj_t *digitalinout,
     memcpy(neopixel_state[n].pixels, pixels, numBytes);
     neopixel_state[n].num_bytes = numBytes;
     neopixel_state[n].enabled = true;
-    hw_opfs_neopixel_dirty = true;
+    hw_neopixel_dirty = true;
 }

@@ -67,7 +67,6 @@
 #include "shared-module/displayio/__init__.h"
 #endif
 
-#include "hw_opfs.h"
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
@@ -242,9 +241,7 @@ static int c_poll_loop(void) {
         }
         #endif
 
-        /* 3. Sync hardware state */
-        hw_opfs_read_all();
-        hw_opfs_flush_all();
+        /* 3. Sync hardware state (U2IF dispatch handles this now) */
 
         /* 4. Check signals */
         uint8_t sig = read_signal();
@@ -360,11 +357,7 @@ int main(int argc, char **argv) {
     mkdir(HW_ROOT "/display", 0777);
     mkdir(HW_ROOT "/repl", 0777);
 
-    /* 4. Initialize OPFS hardware state endpoints.
-     *    Seeds /hw/gpio/state, /hw/analog/state, /hw/pwm/state with
-     *    initial values so the reactor and JS can see them.
-     */
-    hw_opfs_init();
+    /* 4. Hardware state is managed by worker_u2if.c via postMessage IPC. */
 
     /* 5. Initialize display + terminal.
      *    Creates WasmFramebuffer + FramebufferDisplay + our TileGrid.

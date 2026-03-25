@@ -9,7 +9,7 @@
 #include "common-hal/digitalio/DigitalInOut.h"
 #include "shared-bindings/digitalio/DigitalInOut.h"
 #include "shared-bindings/microcontroller/Pin.h"
-#include "hw_opfs.h"
+#include "hw_state.h"
 #include "py/runtime.h"
 
 #include <string.h>
@@ -40,7 +40,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
     gpio_state[n].pull = 0;
     gpio_state[n].value = false;
     gpio_state[n].open_drain = false;
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     return DIGITALINOUT_OK;
 }
 
@@ -49,7 +49,7 @@ void common_hal_digitalio_digitalinout_deinit(digitalio_digitalinout_obj_t *self
         return;
     }
     gpio_state[self->pin->number].enabled = false;
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     reset_pin_number(self->pin->number);
     self->pin = NULL;
 }
@@ -69,7 +69,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
     uint8_t n = self->pin->number;
     gpio_state[n].direction = 0;
     gpio_state[n].pull = (uint8_t)pull;
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     return DIGITALINOUT_OK;
 }
 
@@ -80,7 +80,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
     gpio_state[n].direction = 1;
     gpio_state[n].value = value;
     gpio_state[n].open_drain = (drive_mode == DRIVE_MODE_OPEN_DRAIN);
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     return DIGITALINOUT_OK;
 }
 
@@ -91,7 +91,7 @@ bool common_hal_digitalio_digitalinout_get_value(digitalio_digitalinout_obj_t *s
 void common_hal_digitalio_digitalinout_set_value(digitalio_digitalinout_obj_t *self,
     bool value) {
     gpio_state[self->pin->number].value = value;
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
 }
 
 digitalio_pull_t common_hal_digitalio_digitalinout_get_pull(
@@ -102,7 +102,7 @@ digitalio_pull_t common_hal_digitalio_digitalinout_get_pull(
 digitalinout_result_t common_hal_digitalio_digitalinout_set_pull(
     digitalio_digitalinout_obj_t *self, digitalio_pull_t pull) {
     gpio_state[self->pin->number].pull = (uint8_t)pull;
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     return DIGITALINOUT_OK;
 }
 
@@ -115,7 +115,7 @@ digitalio_drive_mode_t common_hal_digitalio_digitalinout_get_drive_mode(
 digitalinout_result_t common_hal_digitalio_digitalinout_set_drive_mode(
     digitalio_digitalinout_obj_t *self, digitalio_drive_mode_t drive_mode) {
     gpio_state[self->pin->number].open_drain = (drive_mode == DRIVE_MODE_OPEN_DRAIN);
-    hw_opfs_gpio_dirty = true;
+    hw_gpio_dirty = true;
     return DIGITALINOUT_OK;
 }
 
