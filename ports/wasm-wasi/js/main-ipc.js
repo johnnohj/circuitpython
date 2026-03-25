@@ -41,7 +41,10 @@ export class CircuitPythonHost {
     start() {
         this.worker = new Worker(this.workerUrl);
         this.worker.onmessage = (e) => this._handleMessage(e.data);
-        this.worker.postMessage({ type: 'init', wasmUrl: this.wasmUrl });
+        // Resolve wasmUrl to absolute — Worker's fetch() resolves relative
+        // to the Worker script's URL, not the page's URL.
+        const absoluteWasmUrl = new URL(this.wasmUrl, location.href).href;
+        this.worker.postMessage({ type: 'init', wasmUrl: absoluteWasmUrl });
 
         // Focus canvas and attach keyboard
         this.canvas.tabIndex = 0;

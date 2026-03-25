@@ -116,23 +116,36 @@ function createWasiStubs() {
                 self.postMessage({ type: 'exit', code });
             },
 
-            // Misc stubs
-            random_get(buf_ptr, buf_len) {
-                const buf = new Uint8Array(memory.buffer, buf_ptr, buf_len);
-                crypto.getRandomValues(buf);
-                return 0;
-            },
-            sched_yield() { return 0; },
-            poll_oneoff() { return 0; },
+            // Filesystem stubs (reactor mode — no real filesystem)
+            fd_sync() { return 0; },
+            fd_readdir() { return 44; },
             path_open() { return 44; }, // ENOSYS
             path_filestat_get() { return 44; },
             path_create_directory() { return 44; },
             path_remove_directory() { return 44; },
             path_rename() { return 44; },
             path_unlink_file() { return 44; },
-            fd_readdir() { return 44; },
+
+            // Misc
+            random_get(buf_ptr, buf_len) {
+                const buf = new Uint8Array(memory.buffer, buf_ptr, buf_len);
+                crypto.getRandomValues(buf);
+                return 0;
+            },
+            poll_oneoff() { return 0; },
         }
     };
+}
+
+function sendFrame(w, h) {
+    const fbPtr = wasm.exports.worker_get_fb_ptr();
+    const fbSize = w * h * 2;
+    const fb = new Uint8Array(fbSize);
+    fb.set(new Uint8Array(memory.buffer, fbPtr, fbSize));
+    self.postMessage(
+        { type: 'frame', fb: fb.buffer, width: w, height: h },
+        [fb.buffer]
+    );
 }
 
 async function init(wasmUrl) {
@@ -140,12 +153,18 @@ async function init(wasmUrl) {
         const imports = createWasiStubs();
 
         // Compile and instantiate
+        console.log('[worker-ipc] fetching WASM from:', wasmUrl);
         let wasmModule;
         try {
             wasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
-        } catch {
+        } catch (e) {
+            console.warn('[worker-ipc] compileStreaming failed:', e.message, '— trying arrayBuffer fallback');
             const response = await fetch(wasmUrl);
+            if (!response.ok) {
+                throw new Error(`Fetch failed: ${response.status} ${response.statusText} for ${wasmUrl}`);
+            }
             const bytes = await response.arrayBuffer();
+            console.log('[worker-ipc] fetched', bytes.byteLength, 'bytes');
             wasmModule = await WebAssembly.compile(bytes);
         }
 
@@ -161,6 +180,9 @@ async function init(wasmUrl) {
         const height = wasm.exports.worker_get_fb_height();
 
         self.postMessage({ type: 'ready', width, height });
+
+        // Send initial frame (REPL prompt rendered during worker_init)
+        sendFrame(width, height);
 
         // Start the step loop
         running = true;
@@ -178,20 +200,9 @@ function stepLoop() {
 
     // If display was updated, transfer the framebuffer
     if (status & 0x01) { // WORKER_STEP_DISPLAY
-        const fbPtr = wasm.exports.worker_get_fb_ptr();
         const w = wasm.exports.worker_get_fb_width();
         const h = wasm.exports.worker_get_fb_height();
-        const fbSize = w * h * 2;
-
-        // Copy framebuffer from WASM memory (we can't transfer the
-        // backing ArrayBuffer — it's the entire WASM linear memory).
-        // This is the one copy in the hot path.
-        const fb = new Uint8Array(fbSize);
-        fb.set(new Uint8Array(memory.buffer, fbPtr, fbSize));
-        self.postMessage(
-            { type: 'frame', fb: fb.buffer, width: w, height: h },
-            [fb.buffer]  // transfer ownership — zero-copy to main
-        );
+        sendFrame(w, h);
     }
 
     if (status & 0x02) { // WORKER_STEP_EXIT

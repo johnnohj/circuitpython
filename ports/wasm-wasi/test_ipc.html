@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CircuitPython — postMessage IPC Test</title>
+<style>
+body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; margin: 20px; }
+canvas { image-rendering: pixelated; border: 2px solid #0f3460;
+         display: block; margin: 10px 0; background: #000; }
+#status { color: #7ec8e3; margin: 5px 0; }
+#stdout { background: #0a0a1a; border: 1px solid #333; padding: 8px;
+          max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+          font-size: 12px; margin: 10px 0; }
+button { background: #0f3460; color: #e0e0e0; border: none; padding: 8px 16px;
+         cursor: pointer; margin: 4px; font-family: monospace; }
+button:hover { background: #16498a; }
+.section { margin: 10px 0; }
+h3 { color: #7ec8e3; margin: 5px 0; }
+</style>
+</head>
+<body>
+<h2>CircuitPython — postMessage IPC Test</h2>
+<div id="status">Loading...</div>
+
+<div class="section">
+<h3>Worker Display (click to type)</h3>
+<canvas id="display" tabindex="0"></canvas>
+</div>
+
+<div class="section">
+<h3>Reactor Console</h3>
+<div>
+<button onclick="runReactor('print(2+2)')">print(2+2)</button>
+<button onclick="runReactor('import digitalio')">import digitalio</button>
+<button onclick="runReactor('import board; print(dir(board))')">dir(board)</button>
+<button id="btn-d13">D13 HIGH</button>
+</div>
+<div id="stdout"></div>
+</div>
+
+<script type="module">
+import { CircuitPythonHost } from './js/main-ipc.js';
+import { WasiMemfs } from './js/wasi-memfs.js';
+
+const canvas = document.getElementById('display');
+const statusEl = document.getElementById('status');
+const stdoutEl = document.getElementById('stdout');
+
+let host = null;
+let reactor = null;  // reactor WASM instance
+let reactorWasi = null;
+
+function log(text) {
+    stdoutEl.textContent += text;
+    stdoutEl.scrollTop = stdoutEl.scrollHeight;
+}
+
+// ── Worker (display + REPL) ──────────────────────────────
+
+host = new CircuitPythonHost(canvas, {
+    wasmUrl: 'build-worker/circuitpython.wasm',
+    workerUrl: 'js/worker-ipc.js',
+    onReady: (w, h) => {
+        statusEl.textContent = `Worker ready: ${w}×${h} display`;
+        canvas.style.width = (w * 1.5) + 'px';
+        canvas.style.height = (h * 1.5) + 'px';
+        initReactor();
+    },
+    onStdout: (text) => {
+        // Worker stdout (REPL output goes to display, but
+        // fprintf(stderr,...) debug output comes here)
+    },
+    onError: (msg) => {
+        statusEl.textContent = 'Worker error: ' + msg;
+    },
+    onExit: (code) => {
+        statusEl.textContent = 'Worker exited: ' + code;
+    },
+});
+
+host.start();
+statusEl.textContent = 'Starting worker...';
+
+// ── Reactor (main thread, user code) ─────────────────────
+
+async function initReactor() {
+    try {
+        reactorWasi = new WasiMemfs({
+            args: ['circuitpython-reactor'],
+            onStdout: (text) => log(text),
+            onStderr: (text) => log('[stderr] ' + text),
+            onHardwareWrite: (path, data) => {
+                // Forward /hw/* writes to the worker
+                const copy = new Uint8Array(data);
+                host.worker.postMessage(
+                    { type: 'hw', path, data: copy.buffer },
+                    [copy.buffer]
+                );
+                // log(`[hw] ${path} (${data.length} bytes)\n`);
+            },
+        });
+
+        // Seed /hw/ directories
+        for (const dir of ['hw', 'hw/gpio', 'hw/analog', 'hw/display', 'hw/repl', 'lib']) {
+            reactorWasi.dirs.add('/' + dir);
+        }
+
+        // Seed Python shims into memfs so `import digitalio` works
+        const shims = ['digitalio', 'analogio', 'board', 'busio',
+                       'microcontroller', 'neopixel_write', 'pwmio'];
+        for (const name of shims) {
+            try {
+                const resp = await fetch(`modules/${name}.py`);
+                if (resp.ok) {
+                    const text = await resp.text();
+                    reactorWasi.writeFile(`/lib/${name}.py`, text);
+                }
+            } catch (e) { /* shim not available, skip */ }
+        }
+
+        // Compile reactor WASM
+        const response = await fetch('build-reactor/circuitpython.wasm');
+        const bytes = await response.arrayBuffer();
+        const module = await WebAssembly.compile(bytes);
+        const instance = await WebAssembly.instantiate(module, reactorWasi.getImports());
+        reactorWasi.setInstance(instance);
+        reactor = instance;
+
+        // Initialize the reactor VM
+        reactor.exports.mp_runtime_init();
+        statusEl.textContent += ' | Reactor ready';
+        log('>>> Reactor initialized\n');
+
+    } catch (e) {
+        statusEl.textContent += ' | Reactor error: ' + e.message;
+        console.error('Reactor init failed:', e);
+    }
+}
+
+// Button handlers that avoid quote escaping
+document.getElementById('btn-d13').addEventListener('click', () => {
+    runReactor(
+        'pin = digitalio.DigitalInOut(board.D13)\n' +
+        'pin.direction = digitalio.Direction.OUTPUT\n' +
+        'pin.value = True\n' +
+        'print("D13 HIGH")'
+    );
+});
+
+// Run a Python expression on the reactor
+window.runReactor = function(code) {
+    if (!reactor) {
+        log('[error] Reactor not initialized\n');
+        return;
+    }
+    try {
+        log(`>>> ${code}\n`);
+
+        // Write code to a file in memfs, then tell reactor to run it
+        reactorWasi.writeFile('/_eval.py', code + '\n');
+
+        // Write the file path string into WASM linear memory
+        const memory = reactor.exports.memory;
+        const u8 = new Uint8Array(memory.buffer);
+        const pathStr = '/_eval.py';
+        const pathEncoded = new TextEncoder().encode(pathStr);
+
+        // Use a scratch area at a high offset (after the heap)
+        const scratchPtr = 512 * 1024;
+        u8.set(pathEncoded, scratchPtr);
+        u8[scratchPtr + pathEncoded.length] = 0;  // null terminate
+
+        const ret = reactor.exports.mp_vm_start(scratchPtr);
+        if (ret !== 0) {
+            log('[error] compile failed\n');
+            return;
+        }
+
+        // Step until done
+        let steps = 0;
+        while (steps < 10000) {
+            const status = reactor.exports.mp_vm_step();
+            steps++;
+            if (status === 0) break;  // done
+            // status === 1 means yield (budget exhausted), continue
+        }
+        if (steps >= 10000) {
+            log('[warn] step limit reached\n');
+        }
+    } catch (e) {
+        log(`[error] ${e.message}\n`);
+        console.error('Reactor exec failed:', e);
+    }
+};
+</script>
+</body>
+</html>

@@ -138,6 +138,13 @@ void mp_runtime_init(void) {
         MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
     }
     #endif
+
+    // Add /lib to sys.path so `import digitalio` etc. find the Python shims.
+    // mp_init() only adds "" and ".frozen"; /lib must be added explicitly.
+    #if MICROPY_PY_SYS_PATH
+    mp_obj_list_append(mp_sys_path,
+                       MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
+    #endif
 }
 
 /*

@@ -196,6 +196,8 @@ export class WasiMemfs {
                     return ERRNO.SUCCESS;
                 },
 
+                fd_sync() { return ERRNO.SUCCESS; },
+
                 fd_seek(fd, offset_lo, offset_hi, whence, newoffset) {
                     const entry = self.fds.get(fd);
                     if (!entry) return ERRNO.BADF;
@@ -248,6 +250,8 @@ export class WasiMemfs {
                     const fullPath = dirEntry.path === '/'
                         ? '/' + path
                         : dirEntry.path + '/' + path;
+                    console.log('[memfs] open:', fullPath,
+                        'exists:', self.files.has(fullPath) || self.dirs.has(fullPath));
 
                     // Check if it's a directory
                     if (self.dirs.has(fullPath)) {
@@ -290,17 +294,28 @@ export class WasiMemfs {
                     const fullPath = dirEntry.path === '/'
                         ? '/' + path
                         : dirEntry.path + '/' + path;
+                    console.log('[memfs] stat:', fullPath,
+                        self.files.has(fullPath) ? 'FILE' :
+                        self.dirs.has(fullPath) ? 'DIR' : 'MISSING');
 
+                    // WASI filestat layout (64 bytes):
+                    //   0: u64 dev, 8: u64 ino, 16: u8 filetype,
+                    //   24: u64 nlink, 32: u64 size,
+                    //   40: u64 atim, 48: u64 mtim, 56: u64 ctim
                     const view = self._view();
+                    // Zero the whole struct
+                    for (let i = 0; i < 64; i++) view.setUint8(buf + i, 0);
+
                     if (self.dirs.has(fullPath)) {
-                        view.setBigUint64(buf + 16, 0n, true); // size
-                        view.setUint8(buf + 24, 3); // DIRECTORY
+                        view.setUint8(buf + 16, 3); // filetype = DIRECTORY
+                        view.setBigUint64(buf + 24, 1n, true); // nlink
                         return ERRNO.SUCCESS;
                     }
                     const data = self.files.get(fullPath);
                     if (!data) return ERRNO.NOENT;
-                    view.setBigUint64(buf + 16, BigInt(data.length), true);
-                    view.setUint8(buf + 24, 4); // REGULAR_FILE
+                    view.setUint8(buf + 16, 4); // filetype = REGULAR_FILE
+                    view.setBigUint64(buf + 24, 1n, true); // nlink
+                    view.setBigUint64(buf + 32, BigInt(data.length), true); // size
                     return ERRNO.SUCCESS;
                 },
 
