@@ -403,6 +403,162 @@ int main(int argc, char **argv) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Reactor-style exports for postMessage IPC                           */
+/* ------------------------------------------------------------------ */
+/*
+ * When running in a browser via postMessage (no OPFS), JS owns the
+ * event loop and calls these exports directly.  The WASM binary is
+ * the same — it supports both _start (WASI command, blocking loop)
+ * and these exports (JS-driven, non-blocking).
+ *
+ *   JS calls worker_init() once
+ *   JS loop:
+ *     worker_push_key(c) for each keyboard char
+ *     status = worker_step()
+ *     if display dirty:
+ *       read framebuffer from worker_get_fb_ptr()
+ *       postMessage(fb, [fb.buffer])  // transfer to main
+ *
+ * The step function does ONE iteration of the poll loop: process
+ * input, refresh display, sync hardware.  No sleep, no blocking.
+ * Returns a status bitmask.
+ */
+
+/* Return values from worker_step */
+#define WORKER_STEP_OK          0x00
+#define WORKER_STEP_DISPLAY     0x01  /* framebuffer was updated */
+#define WORKER_STEP_EXIT        0x02  /* REPL requested exit */
+
+static bool _reactor_initialized = false;
+
+__attribute__((export_name("worker_init")))
+int worker_init(void) {
+    if (_reactor_initialized) return 0;
+
+    /* Same init sequence as main(), but without the poll loop. */
+    mp_cstack_init_with_sp_here(16 * 1024);
+    gc_init(heap, heap + sizeof(heap));
+
+    #if MICROPY_ENABLE_PYSTACK
+    mp_pystack_init(pystack_buf, pystack_buf + WORKER_PYSTACK_SIZE / sizeof(mp_obj_t));
+    #endif
+
+    mp_init();
+
+    /* Mount VFS */
+    #if MICROPY_VFS_POSIX
+    {
+        mp_obj_t args[2] = {
+            MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_posix, make_new)(
+                &mp_type_vfs_posix, 0, 0, NULL),
+            MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
+        };
+        mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
+        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
+    }
+    #endif
+
+    #if MICROPY_PY_SYS_PATH
+    if (mp_sys_path != MP_OBJ_NULL) {
+        mp_obj_list_append(mp_sys_path,
+                           MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
+    }
+    #endif
+
+    /* Display + terminal */
+    #if CIRCUITPY_DISPLAYIO
+    worker_terminal_init();
+    #endif
+
+    /* Initialize event-driven REPL */
+    pyexec_event_repl_init();
+
+    /* Force initial display render */
+    #if CIRCUITPY_DISPLAYIO
+    worker_terminal_refresh();
+    worker_terminal_dirty = false;
+    #endif
+
+    _reactor_initialized = true;
+    fprintf(stderr, "[worker] reactor mode initialized\n");
+    return 0;
+}
+
+__attribute__((export_name("worker_step")))
+int worker_step(void) {
+    int status = WORKER_STEP_OK;
+
+    /* 1. Feed any available keyboard input to REPL */
+    while (_rx_available() > 0) {
+        int c = _rx_buf[_rx_tail++];
+        if (c == '\n') c = '\r';
+        int ret = pyexec_event_repl_process_char(c);
+        if (ret & PYEXEC_FORCED_EXIT) {
+            status |= WORKER_STEP_EXIT;
+        }
+    }
+
+    /* 2. Refresh display if content changed */
+    #if CIRCUITPY_DISPLAYIO
+    if (worker_terminal_dirty) {
+        worker_terminal_refresh();
+        worker_terminal_dirty = false;
+        _frame_count++;
+        status |= WORKER_STEP_DISPLAY;
+    }
+    #endif
+
+    return status;
+}
+
+__attribute__((export_name("worker_push_key")))
+void worker_push_key(int c) {
+    /* Push a character into the REPL input buffer.
+     * JS calls this for each keyboard event before calling worker_step().
+     * The buffer is a simple head/tail pair (not a ring buffer):
+     *   _rx_buf[0.._rx_head-1] = pending data
+     *   _rx_tail = next read position
+     *   _rx_available() = _rx_head - _rx_tail
+     */
+    extern int _rx_head;
+    if (_rx_head < 256) {
+        _rx_buf[_rx_head++] = (uint8_t)c;
+    }
+}
+
+__attribute__((export_name("worker_get_fb_ptr")))
+uintptr_t worker_get_fb_ptr(void) {
+    #if CIRCUITPY_DISPLAYIO
+    return (uintptr_t)wasm_display_fb_addr();
+    #else
+    return 0;
+    #endif
+}
+
+__attribute__((export_name("worker_get_fb_width")))
+int worker_get_fb_width(void) {
+    #if CIRCUITPY_DISPLAYIO
+    return wasm_display_fb_width();
+    #else
+    return 0;
+    #endif
+}
+
+__attribute__((export_name("worker_get_fb_height")))
+int worker_get_fb_height(void) {
+    #if CIRCUITPY_DISPLAYIO
+    return wasm_display_fb_height();
+    #else
+    return 0;
+    #endif
+}
+
+__attribute__((export_name("worker_get_frame_count")))
+uint32_t worker_get_frame_count(void) {
+    return _frame_count;
+}
+
+/* ------------------------------------------------------------------ */
 /* Required stubs                                                      */
 /* ------------------------------------------------------------------ */
 
