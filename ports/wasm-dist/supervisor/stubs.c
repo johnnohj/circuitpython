@@ -109,3 +109,28 @@ void stack_init(void) {}
 /* Status LED stubs — referenced by pyexec via supervisor/shared */
 void toggle_rx_led(void) {}
 void toggle_tx_led(void) {}
+
+/* ------------------------------------------------------------------ */
+/* OnDiskBitmap stubs                                                  */
+/* OnDiskBitmap reads BMP files via FatFS (pyb_file_obj_t wraps FIL). */
+/* We use VFS POSIX, not FatFS. TileGrid and displayio/__init__       */
+/* reference the type for runtime type checks — stub so they link.    */
+/* Future: adapt OnDiskBitmap for POSIX file objects or provide a      */
+/* frozen Python BMP loader.                                           */
+/* ------------------------------------------------------------------ */
+
+#if CIRCUITPY_DISPLAYIO
+#include "shared-module/displayio/OnDiskBitmap.h"
+
+const mp_obj_type_t displayio_ondiskbitmap_type = {
+    .base = { .type = &mp_type_type },
+    .name = MP_QSTR_OnDiskBitmap,
+};
+
+uint32_t common_hal_displayio_ondiskbitmap_get_pixel(displayio_ondiskbitmap_t *self,
+    int16_t x, int16_t y) {
+    (void)self; (void)x; (void)y;
+    return 0;
+}
+#endif
+

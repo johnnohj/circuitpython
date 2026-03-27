@@ -1,0 +1,96 @@
+# Browser variant — the board running in a browser.
+# Adds displayio, common-hal, and the supervisor terminal to standard.
+
+FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py
+
+# ── DisplayIO rendering pipeline ──
+# Supervisor terminal (REPL + Blinka logo) renders through this.
+CIRCUITPY_DISPLAYIO = 1
+
+SRC_DISPLAYIO = \
+	shared-bindings/displayio/__init__.c \
+	shared-bindings/displayio/Bitmap.c \
+	shared-bindings/displayio/ColorConverter.c \
+	shared-bindings/displayio/Colorspace.c \
+	shared-bindings/displayio/Group.c \
+	shared-bindings/displayio/Palette.c \
+	shared-bindings/displayio/TileGrid.c \
+	shared-bindings/displayio/area.c \
+	shared-bindings/util.c \
+	shared-module/displayio/__init__.c \
+	shared-module/displayio/Bitmap.c \
+	shared-module/displayio/ColorConverter.c \
+	shared-module/displayio/Group.c \
+	shared-module/displayio/Palette.c \
+	shared-module/displayio/TileGrid.c \
+	shared-module/displayio/area.c \
+	shared-module/displayio/bus_core.c \
+	shared-module/displayio/display_core.c \
+	shared-bindings/framebufferio/__init__.c \
+	shared-bindings/framebufferio/FramebufferDisplay.c \
+	shared-module/framebufferio/__init__.c \
+	shared-module/framebufferio/FramebufferDisplay.c \
+	shared-bindings/terminalio/__init__.c \
+	shared-bindings/terminalio/Terminal.c \
+	shared-module/terminalio/__init__.c \
+	shared-module/terminalio/Terminal.c \
+	shared-bindings/fontio/__init__.c \
+	shared-bindings/fontio/BuiltinFont.c \
+	shared-bindings/fontio/Glyph.c \
+	shared-module/fontio/__init__.c \
+	shared-module/fontio/BuiltinFont.c
+
+# Display resources: built-in font bitmap + Blinka sprite
+TRANSLATION ?= en_US
+CIRCUITPY_DISPLAY_FONT ?= "../../tools/fonts/ter-u12n.bdf"
+CIRCUITPY_FONT_EXTRA_CHARACTERS ?= ""
+
+AUTOGEN_DISPLAY = $(BUILD)/autogen_display_resources-$(TRANSLATION).c
+SRC_DISPLAYIO += $(AUTOGEN_DISPLAY)
+
+$(AUTOGEN_DISPLAY): ../../tools/gen_display_resources.py $(TOP)/locale/$(TRANSLATION).po Makefile | $(HEADER_BUILD)
+	$(STEPECHO) "GEN $@"
+	$(Q)install -d $(BUILD)/genhdr
+	$(Q)$(PYTHON) ../../tools/gen_display_resources.py \
+		--font $(CIRCUITPY_DISPLAY_FONT) \
+		--sample_file $(TOP)/locale/$(TRANSLATION).po \
+		--extra_characters $(CIRCUITPY_FONT_EXTRA_CHARACTERS) \
+		--output_c_file $@
+
+SRC_C += $(SRC_DISPLAYIO)
+
+# ── Port-specific display files ──
+SRC_C += \
+	wasm_framebuffer.c \
+	board_display.c \
+	hw_state.c \
+	supervisor/display.c
+
+# ── Common-HAL sources ──
+SRC_C += \
+	common-hal/digitalio/DigitalInOut.c \
+	common-hal/analogio/AnalogIn.c \
+	common-hal/analogio/AnalogOut.c \
+	common-hal/pwmio/PWMOut.c \
+	common-hal/neopixel_write/__init__.c \
+	common-hal/microcontroller/__init__.c \
+	common-hal/microcontroller/Pin.c \
+	common-hal/microcontroller/Processor.c \
+	common-hal/board/__init__.c \
+	common-hal/os/__init__.c \
+	common-hal/displayio/__init__.c
+
+# ── CIRCUITPY flags ──
+CFLAGS += \
+	-DCIRCUITPY_DISPLAYIO=1 \
+	-DCIRCUITPY_FRAMEBUFFERIO=1 \
+	-DCIRCUITPY_TERMINALIO=1 \
+	-DCIRCUITPY_FONTIO=1 \
+	-DCIRCUITPY_REPL_LOGO=1 \
+	-DCIRCUITPY_DIGITALIO=1 \
+	-DCIRCUITPY_ANALOGIO=1 \
+	-DCIRCUITPY_PWMIO=1 \
+	-DCIRCUITPY_NEOPIXEL_WRITE=1 \
+	-DCIRCUITPY_MICROCONTROLLER=1 \
+	-DCIRCUITPY_BOARD=1 \
+	-DCIRCUITPY_STATUS_BAR=1
