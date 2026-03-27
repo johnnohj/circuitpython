@@ -39,6 +39,13 @@ void board_display_init(void) {
 
     // 4. Set as primary display (board.DISPLAY)
     common_hal_displayio_set_primary_display(MP_OBJ_FROM_PTR(display));
+
+    // 5. Reset scroll area top_left_y to 0 so text starts at the top.
+    //    The Terminal constructor sets top_left_y=1 for the ring buffer,
+    //    but on an empty terminal that puts the first line at the bottom.
+    extern displayio_tilegrid_t supervisor_terminal_scroll_area_text_grid;
+    common_hal_displayio_tilegrid_set_top_left(
+        &supervisor_terminal_scroll_area_text_grid, 0, 0);
 }
 
 void board_display_refresh(void) {
