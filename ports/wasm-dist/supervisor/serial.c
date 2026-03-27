@@ -89,13 +89,11 @@ uint32_t serial_write_substring(const char *text, uint32_t length) {
         return length_sent;
     }
 
-    /* Console path: write to /hal/serial/tx fd.
-     * TODO: open /hal/serial/tx at init, write to that fd here.
-     * For now, in browser mode this is where xterm.js output will go.
-     */
-
-    /* CLI path: write to WASI stdout for wasmtime/node. */
-    if (wasm_cli_mode) {
+    /* Console path: write to WASI stdout.
+     * In CLI mode, this goes to the real terminal.
+     * In browser mode, wasi-memfs.js intercepts fd_write on fd 1
+     * and calls onStdout — which feeds the serial monitor div. */
+    {
         ssize_t ret = write(STDOUT_FILENO, text, length);
         (void)ret;
     }

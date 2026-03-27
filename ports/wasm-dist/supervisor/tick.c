@@ -21,6 +21,10 @@
 
 #include "mpthreadport.h"
 
+#if CIRCUITPY_DISPLAYIO
+#include "shared-module/displayio/__init__.h"
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Tick state                                                          */
 /* ------------------------------------------------------------------ */
@@ -40,7 +44,10 @@ static void supervisor_background_tick(void *unused) {
 
     assert_heap_ok();
 
-    /* TODO: displayio_background() when display is wired */
+    #if CIRCUITPY_DISPLAYIO
+    displayio_background();
+    #endif
+
     /* TODO: filesystem_background() when filesystem is wired */
 
     port_background_tick();

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CircuitPython WASM</title>
+<style>
+body { margin: 0; background: #1a1a2e; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: monospace; color: #e0e0e0; }
+canvas { border: 1px solid #444; image-rendering: pixelated; }
+#status { margin: 8px; font-size: 12px; color: #888; }
+#serial { width: 480px; height: 120px; background: #111; color: #0f0; border: 1px solid #444; padding: 4px; font-size: 12px; font-family: monospace; overflow-y: scroll; white-space: pre-wrap; word-wrap: break-word; }
+</style>
+</head>
+<body>
+<canvas id="display" width="480" height="360"></canvas>
+<div id="status">Loading...</div>
+<div id="serial"></div>
+
+<script type="module">
+import { WasiMemfs } from './js/wasi-memfs.js';
+
+const canvas = document.getElementById('display');
+const ctx = canvas.getContext('2d');
+const status = document.getElementById('status');
+const serialDiv = document.getElementById('serial');
+
+// Serial output buffer
+let serialText = '';
+function appendSerial(text) {
+    serialText += text;
+    serialDiv.textContent = serialText;
+    serialDiv.scrollTop = serialDiv.scrollHeight;
+}
+
+// Create WASI runtime with /hal/ interception
+const wasi = new WasiMemfs({
+    args: ['circuitpython'],
+    onStdout: (text) => appendSerial(text),
+    onStderr: (text) => console.log('[stderr]', text),
+    onHardwareWrite: (path, data) => {
+        // Log hardware writes for debugging
+        if (!path.startsWith('/hal/serial')) {
+            console.log('[hal write]', path, data.length, 'bytes');
+        }
+    },
+});
+
+// Seed code.py
+wasi.writeFile('/code.py', `
+import time
+print("Hello from CircuitPython WASM!")
+print("Type in the serial monitor below")
+`);
+
+async function main() {
+    status.textContent = 'Compiling...';
+
+    const response = await fetch('build-browser/circuitpython.wasm');
+    const bytes = await response.arrayBuffer();
+    const module = await WebAssembly.compile(bytes);
+    const instance = await WebAssembly.instantiate(module, wasi.getImports());
+    wasi.setInstance(instance);
+
+    const exports = instance.exports;
+    status.textContent = 'Initializing...';
+
+    // Initialize the supervisor
+    exports.cp_init();
+
+    // Framebuffer info
+    const fbAddr = exports.wasm_display_fb_addr();
+    const fbWidth = exports.wasm_display_fb_width();
+    const fbHeight = exports.wasm_display_fb_height();
+    const imageData = ctx.createImageData(fbWidth, fbHeight);
+
+    status.textContent = `Running (${fbWidth}x${fbHeight} display)`;
+
+    // Keyboard → cp_push_key
+    document.addEventListener('keydown', (e) => {
+        let c = 0;
+        if (e.key.length === 1) {
+            c = e.key.charCodeAt(0);
+        } else switch (e.key) {
+            case 'Enter': c = 13; break;
+            case 'Backspace': c = 8; break;
+            case 'Tab': c = 9; break;
+            case 'Escape': c = 27; break;
+            case 'ArrowUp': exports.cp_push_key(27); exports.cp_push_key(91); c = 65; break;
+            case 'ArrowDown': exports.cp_push_key(27); exports.cp_push_key(91); c = 66; break;
+            case 'ArrowRight': exports.cp_push_key(27); exports.cp_push_key(91); c = 67; break;
+            case 'ArrowLeft': exports.cp_push_key(27); exports.cp_push_key(91); c = 68; break;
+        }
+        if (c) {
+            // Ctrl+C
+            if (e.ctrlKey && e.key === 'c') { c = 3; }
+            // Ctrl+D
+            if (e.ctrlKey && e.key === 'd') { c = 4; }
+            exports.cp_push_key(c);
+            e.preventDefault();
+        }
+    });
+
+    // Convert RGB565 framebuffer to RGBA for canvas
+    function paintFramebuffer() {
+        if (!fbAddr || fbWidth === 0) return;
+        const fb = new Uint16Array(exports.memory.buffer, fbAddr, fbWidth * fbHeight);
+        const rgba = imageData.data;
+        for (let i = 0; i < fb.length; i++) {
+            const pixel = fb[i];
+            // RGB565: RRRRRGGGGGGBBBBB
+            const r = ((pixel >> 11) & 0x1F) << 3;
+            const g = ((pixel >> 5) & 0x3F) << 2;
+            const b = (pixel & 0x1F) << 3;
+            const j = i * 4;
+            rgba[j]     = r;
+            rgba[j + 1] = g;
+            rgba[j + 2] = b;
+            rgba[j + 3] = 255;
+        }
+        ctx.putImageData(imageData, 0, 0);
+    }
+
+    // Main loop
+    let frameCount = 0;
+    function loop() {
+        exports.cp_step();
+        paintFramebuffer();
+        frameCount++;
+        if (frameCount % 60 === 0) {
+            status.textContent = `Running (frame ${frameCount})`;
+        }
+        requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+}
+
+main().catch(e => {
+    status.textContent = 'Error: ' + e.message;
+    console.error(e);
+});
+</script>
+</body>
+</html>

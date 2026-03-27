@@ -110,6 +110,9 @@ void stack_init(void) {}
 void toggle_rx_led(void) {}
 void toggle_tx_led(void) {}
 
+/* Autoreload stub — displayio_background checks this */
+bool autoreload_ready(void) { return false; }
+
 /* ------------------------------------------------------------------ */
 /* OnDiskBitmap stubs                                                  */
 /* OnDiskBitmap reads BMP files via FatFS (pyb_file_obj_t wraps FIL). */
