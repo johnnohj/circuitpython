@@ -1,661 +1,844 @@
 /*
- * main.c — WASM-dist Python host interface
+ * This file is part of the MicroPython project, http://micropython.org/
  *
- * JavaScript/Emscripten is the host OS; this file provides the C-side
- * interface between the JS host and the Python VM.  It is deliberately thin:
- * all scheduling, I/O routing, and state management are handled by JS
- * (library.js, PythonHost.js) and the virtual device layer (vdev.c).
+ * The MIT License (MIT)
  *
- * Exported functions (see Makefile EXPORTED_FUNCTIONS):
- *   mp_js_init(pystack_size, heap_size)
- *   mp_js_run(src, len, timeout_ms, out)      — new: timeout + state delta
- *   mp_js_do_exec(src, len, out)              — synchronous exec
- *   mp_js_do_import(name, out)
- *   mp_js_register_js_module(name, value)
+ * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2014-2017 Paul Sokolovsky
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-#include "py/builtin.h"
-#include "py/compile.h"
-#include "py/persistentcode.h"
-#include "py/runtime.h"
-#include "py/repl.h"
-#include "py/gc.h"
-#include "py/mperrno.h"
-#include "extmod/vfs.h"
-#include "extmod/vfs_posix.h"
-#include "shared/runtime/pyexec.h"
-#include "shared/runtime/gchelper.h"
-#include "py/objexcept.h"
-#include "py/stream.h"
-
-#include <fcntl.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
-
-#include "emscripten.h"
-#include "lexer_dedent.h"
-#include "library.h"
-#include "proxy_c.h"
-#include "vdev.h"
-#include "memfs_state.h"
-
-#if MICROPY_PY_SYS_SETTRACE
-#include "py/profile.h"
-#include "py/objcode.h"
+#include <ctype.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+#if !defined(__wasi__)
+#include <signal.h>
 #endif
 
-/* ---- External call depth tracking ----
- * Tracks depth of calls from JS into C.  When it reaches 0 (top-level
- * return to JS) we can safely run a top-level GC collection.             */
-static size_t external_call_depth = 0;
+#include "py/compile.h"
+#include "py/runtime.h"
+#include "py/builtin.h"
+#include "py/repl.h"
+#include "py/gc.h"
+#include "py/objstr.h"
+#include "py/cstack.h"
+#include "py/mperrno.h"
+#include "py/mphal.h"
+#include "py/mpthread.h"
+#include "extmod/misc.h"
+#include "extmod/modplatform.h"
+#include "extmod/vfs.h"
+#include "extmod/vfs_posix.h"
+#include "genhdr/mpversion.h"
+#include "input.h"
 
-/* Layout matches mp_obj_vfs_posix_file_t (extmod/vfs_posix_file.c). */
-typedef struct { mp_obj_base_t base; int fd; } _vfs_posix_file_t;
-extern _vfs_posix_file_t mp_sys_stdout_obj;
-extern _vfs_posix_file_t mp_sys_stderr_obj;
+// Command line options, with their defaults
+static bool compile_only = false;
+static uint emit_opt = MP_EMIT_OPT_NONE;
 
-/* Printer that writes to sys.stderr (redirected to /dev/py_stderr → _pyStderr). */
-static const mp_print_t mp_sys_stderr_print = {
-    &mp_sys_stderr_obj, mp_stream_write_adaptor
-};
+#if MICROPY_ENABLE_GC
+// Heap size of GC heap (if enabled)
+// Make it larger on a 64 bit machine, because pointers are larger.
+long heap_size = 1024 * 1024 * (sizeof(mp_uint_t) / 4);
+#endif
 
-void external_call_depth_inc(void) {
-    ++external_call_depth;
+// Number of heaps to assign by default if MICROPY_GC_SPLIT_HEAP=1
+#ifndef MICROPY_GC_SPLIT_HEAP_N_HEAPS
+#define MICROPY_GC_SPLIT_HEAP_N_HEAPS (1)
+#endif
+
+#if !MICROPY_PY_SYS_PATH
+#error "The unix port requires MICROPY_PY_SYS_PATH=1"
+#endif
+
+#if !MICROPY_PY_SYS_ARGV
+#error "The unix port requires MICROPY_PY_SYS_ARGV=1"
+#endif
+
+static void stderr_print_strn(void *env, const char *str, size_t len) {
+    (void)env;
+    ssize_t ret;
+    MP_HAL_RETRY_SYSCALL(ret, write(STDERR_FILENO, str, len), {});
+    // CIRCUITPY-CHANGE: This should have been conditionalized.
+    #if MICROPY_PY_OS_DUPTERM
+    mp_os_dupterm_tx_strn(str, len);
+    #endif
 }
 
-void external_call_depth_dec(void) {
-    --external_call_depth;
-    #if MICROPY_GC_SPLIT_HEAP_AUTO
-    if (external_call_depth == 0) {
-        gc_collect_top_level();
+const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};
+
+#define FORCED_EXIT (0x100)
+// If exc is SystemExit, return value where FORCED_EXIT bit set,
+// and lower 8 bits are SystemExit value. For all other exceptions,
+// return 1.
+static int handle_uncaught_exception(mp_obj_base_t *exc) {
+    // check for SystemExit
+    if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(exc->type), MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
+        // None is an exit value of 0; an int is its value; anything else is 1
+        mp_obj_t exit_val = mp_obj_exception_get_value(MP_OBJ_FROM_PTR(exc));
+        mp_int_t val = 0;
+        if (exit_val != mp_const_none && !mp_obj_get_int_maybe(exit_val, &val)) {
+            val = 1;
+        }
+        return FORCED_EXIT | (val & 255);
     }
-    #endif
+
+    // Report all other exceptions
+    mp_obj_print_exception(&mp_stderr_print, MP_OBJ_FROM_PTR(exc));
+    return 1;
 }
 
-/* ---- Stack size ---- */
-#define CSTACK_SIZE (32 * 1024)
+#define LEX_SRC_STR (1)
+#define LEX_SRC_VSTR (2)
+#define LEX_SRC_FILENAME (3)
+#define LEX_SRC_STDIN (4)
 
-/* ---- GC: top-level collection for split-heap-auto mode ---- */
-#if MICROPY_GC_SPLIT_HEAP_AUTO
-static bool gc_collect_pending = false;
+// Returns standard error codes: 0 for success, 1 for all other errors,
+// except if FORCED_EXIT bit is set then script raised SystemExit and the
+// value of the exit is in the lower 8 bits of the return value
+static int execute_from_lexer(int source_kind, const void *source, mp_parse_input_kind_t input_kind, bool is_repl) {
+    mp_hal_set_interrupt_char(CHAR_CTRL_C);
 
-size_t gc_get_max_new_split(void) {
-    return 128 * 1024 * 1024;
-}
-
-/* Don't collect inline; flag for collection at the top level */
-void gc_collect(void) {
-    gc_collect_pending = true;
-}
-
-static void gc_collect_top_level(void) {
-    if (gc_collect_pending) {
-        gc_collect_pending = false;
-        gc_collect_start();
-        gc_collect_end();
-    }
-}
-
-#else
-
-static void gc_scan_func(void *begin, void *end) {
-    gc_collect_root((void **)begin, (void **)end - (void **)begin + 1);
-}
-
-void gc_collect(void) {
-    gc_collect_start();
-    /* emscripten_scan_registers is not available without Asyncify in
-     * Emscripten 5.x.  We scan the stack only — sufficient for synchronous
-     * WASM where GC fires at safe points with no live mp_obj_t registers. */
-    emscripten_scan_stack(gc_scan_func);
-    gc_collect_end();
-}
-
-#endif  /* MICROPY_GC_SPLIT_HEAP_AUTO */
-
-/* ---- mp_js_init ---- */
-
-void mp_js_init(int pystack_size, int heap_size) {
-    mp_cstack_init_with_sp_here(CSTACK_SIZE);
-
-    #if MICROPY_ENABLE_PYSTACK
-    /* DTCM semantics: pystack buffer will be checkpointed to /mem/pystack
-     * on suspend.  Phase 1: simple malloc.  Phase 2: back with a memfs file.*/
-    mp_obj_t *pystack = (mp_obj_t *)malloc(pystack_size * sizeof(mp_obj_t));
-    mp_pystack_init(pystack, pystack + pystack_size);
-    #endif
-
-    #if MICROPY_ENABLE_GC
-    /* DTCM semantics: GC heap will be checkpointed to /mem/heap on suspend.
-     * Phase 1: simple malloc.  Phase 2: back with a memfs-mapped region.   */
-    char *heap = (char *)malloc(heap_size);
-    gc_init(heap, heap + heap_size);
-    #endif
-
-    #if MICROPY_GC_SPLIT_HEAP_AUTO
-    MP_STATE_MEM(gc_alloc_threshold) = 16 * 1024 / MICROPY_BYTES_PER_GC_BLOCK;
-    #endif
-
-    /* Create Emscripten MEMFS virtual hardware bus (/dev/, /mem/, etc.) */
-    mp_js_init_filesystem();   /* library.js: creates directory tree + registers capture devices */
-    vdev_init();               /* C: opens hot-path FDs, seeds device files */
-
-    /* Redirect sys.stdout / sys.stderr to our capture devices.
-     * extmod/vfs_posix_file.c defines mp_sys_stdout_obj with fd=STDOUT_FILENO (1),
-     * which routes to the real terminal.  We patch the fd after vdev_init()
-     * so Python print() goes through /dev/py_stdout → Module._pyStdout. */
-    if (vdev_stdout_fd >= 0) { mp_sys_stdout_obj.fd = vdev_stdout_fd; }
-    if (vdev_stderr_fd >= 0) { mp_sys_stderr_obj.fd = vdev_stderr_fd; }
-
-    mp_init();
-
-    /* Mount /flash as the VFS root so Python can import from /flash/lib */
-    #if MICROPY_VFS_POSIX
-    {
-        mp_obj_t path_args[1] = {
-            MP_OBJ_NEW_QSTR(qstr_from_str("/flash")),
-        };
-        mp_obj_t vfs = MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_posix, make_new)(
-            &mp_type_vfs_posix, 1, 0, path_args);
-        mp_obj_t mount_args[2] = {
-            vfs,
-            MP_OBJ_NEW_QSTR(qstr_from_str("/")),
-        };
-        mp_vfs_mount(2, mount_args, (mp_map_t *)&mp_const_empty_map);
-        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
-    }
-    /* Remove '' from sys.path (added by mp_init via runtime.c).
-     * '' means "current directory" but POSIX VFS has a mismatch: import_stat
-     * prepends the root to relative paths but open() does not, causing OSError
-     * when opening a module that was found by stat.  Use absolute paths only. */
-    mp_obj_list_remove(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("")));
-    /* Add '/' (= /flash/ in MEMFS) so modules in /flash/ can be imported. */
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/")));
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR__slash_lib));
-    /* Add '/circuitpy' so user code in /flash/circuitpy/ can be imported.
-     * In the browser this directory is backed by IndexedDB (IDBFS). */
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/circuitpy")));
-    #endif
-
-    /* Initialise proxy system for Python↔JS FFI */
-    proxy_c_init();
-}
-
-/* ---- mp_js_register_js_module ---- */
-
-void mp_js_register_js_module(const char *name, uint32_t *value) {
-    mp_obj_t module_name = MP_OBJ_NEW_QSTR(qstr_from_str(name));
-    mp_obj_t module = proxy_convert_js_to_mp_obj_cside(value);
-    mp_map_t *loaded = &MP_STATE_VM(mp_loaded_modules_dict).map;
-    mp_map_lookup(loaded, module_name, MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = module;
-}
-
-/* ---- mp_js_do_import ---- */
-
-void mp_js_do_import(const char *name, uint32_t *out) {
-    external_call_depth_inc();
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
-        mp_obj_t ret = mp_import_name(qstr_from_str(name), mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
-        /* Return leaf of "a.b.c" → "c" */
-        const char *m = name, *n = name;
-        for (;; ++n) {
-            if (*n == '\0' || *n == '.') {
-                if (m != name) {
-                    ret = mp_load_attr(ret, qstr_from_strn(m, n - m));
+        // create lexer based on source kind
+        mp_lexer_t *lex;
+        if (source_kind == LEX_SRC_STR) {
+            const char *line = source;
+            lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, line, strlen(line), false);
+        } else if (source_kind == LEX_SRC_VSTR) {
+            const vstr_t *vstr = source;
+            lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, vstr->buf, vstr->len, false);
+        } else if (source_kind == LEX_SRC_FILENAME) {
+            const char *filename = (const char *)source;
+            lex = mp_lexer_new_from_file(qstr_from_str(filename));
+        } else { // LEX_SRC_STDIN
+            lex = mp_lexer_new_from_fd(MP_QSTR__lt_stdin_gt_, 0, false);
+        }
+
+        qstr source_name = lex->source_name;
+
+        #if MICROPY_PY___FILE__
+        if (input_kind == MP_PARSE_FILE_INPUT) {
+            mp_store_global(MP_QSTR___file__, MP_OBJ_NEW_QSTR(source_name));
+        }
+        #endif
+
+        mp_parse_tree_t parse_tree = mp_parse(lex, input_kind);
+
+        #if defined(MICROPY_UNIX_COVERAGE)
+        // allow to print the parse tree in the coverage build
+        if (mp_verbose_flag >= 3) {
+            printf("----------------\n");
+            mp_parse_node_print(&mp_plat_print, parse_tree.root, 0);
+            printf("----------------\n");
+        }
+        #endif
+
+        mp_obj_t module_fun = mp_compile(&parse_tree, source_name, is_repl);
+
+        if (!compile_only) {
+            // execute it
+            mp_call_function_0(module_fun);
+        }
+
+        mp_hal_set_interrupt_char(-1);
+        mp_handle_pending(true);
+        nlr_pop();
+        return 0;
+
+    } else {
+        // uncaught exception
+        mp_hal_set_interrupt_char(-1);
+        mp_handle_pending(false);
+        return handle_uncaught_exception(nlr.ret_val);
+    }
+}
+
+#if MICROPY_USE_READLINE == 1
+#include "shared/readline/readline.h"
+#else
+static char *strjoin(const char *s1, int sep_char, const char *s2) {
+    int l1 = strlen(s1);
+    int l2 = strlen(s2);
+    char *s = malloc(l1 + l2 + 2);
+    memcpy(s, s1, l1);
+    if (sep_char != 0) {
+        s[l1] = sep_char;
+        l1 += 1;
+    }
+    memcpy(s + l1, s2, l2);
+    s[l1 + l2] = 0;
+    return s;
+}
+#endif
+
+static int do_repl(void) {
+    mp_hal_stdout_tx_str(MICROPY_BANNER_NAME_AND_VERSION);
+    mp_hal_stdout_tx_str("; " MICROPY_BANNER_MACHINE);
+    mp_hal_stdout_tx_str("\nUse Ctrl-D to exit, Ctrl-E for paste mode\n");
+
+    #if MICROPY_USE_READLINE == 1
+
+    // use MicroPython supplied readline
+
+    vstr_t line;
+    vstr_init(&line, 16);
+    for (;;) {
+        mp_hal_stdio_mode_raw();
+
+    input_restart:
+        vstr_reset(&line);
+        int ret = readline(&line, mp_repl_get_ps1());
+        mp_parse_input_kind_t parse_input_kind = MP_PARSE_SINGLE_INPUT;
+
+        if (ret == CHAR_CTRL_C) {
+            // cancel input
+            mp_hal_stdout_tx_str("\r\n");
+            goto input_restart;
+        } else if (ret == CHAR_CTRL_D) {
+            // EOF
+            printf("\n");
+            mp_hal_stdio_mode_orig();
+            vstr_clear(&line);
+            return 0;
+        } else if (ret == CHAR_CTRL_E) {
+            // paste mode
+            mp_hal_stdout_tx_str("\npaste mode; Ctrl-C to cancel, Ctrl-D to finish\n=== ");
+            vstr_reset(&line);
+            for (;;) {
+                char c = mp_hal_stdin_rx_chr();
+                if (c == CHAR_CTRL_C) {
+                    // cancel everything
+                    mp_hal_stdout_tx_str("\n");
+                    goto input_restart;
+                } else if (c == CHAR_CTRL_D) {
+                    // end of input
+                    mp_hal_stdout_tx_str("\n");
+                    break;
+                } else {
+                    // add char to buffer and echo
+                    vstr_add_byte(&line, c);
+                    if (c == '\r') {
+                        mp_hal_stdout_tx_str("\n=== ");
+                    } else {
+                        mp_hal_stdout_tx_strn(&c, 1);
+                    }
                 }
-                m = n + 1;
-                if (*n == '\0') {
+            }
+            parse_input_kind = MP_PARSE_FILE_INPUT;
+        } else if (line.len == 0) {
+            if (ret != 0) {
+                printf("\n");
+            }
+            goto input_restart;
+        } else {
+            // got a line with non-zero length, see if it needs continuing
+            while (mp_repl_continue_with_input(vstr_null_terminated_str(&line))) {
+                vstr_add_byte(&line, '\n');
+                ret = readline(&line, mp_repl_get_ps2());
+                if (ret == CHAR_CTRL_C) {
+                    // cancel everything
+                    printf("\n");
+                    goto input_restart;
+                } else if (ret == CHAR_CTRL_D) {
+                    // stop entering compound statement
                     break;
                 }
             }
         }
-        nlr_pop();
-        proxy_convert_mp_to_js_obj_cside(ret, out);
-    } else {
-        proxy_convert_mp_to_js_exc_cside(nlr.ret_val, out);
-    }
-    external_call_depth_dec();
-}
 
-/* ---- mp_js_do_exec_abortable — internal exec with abort support ---- */
+        mp_hal_stdio_mode_orig();
 
-/*
- * Execute src.  Returns false on normal exit or Python exception, true if
- * the VM was aborted by a timeout (signalled via mp_sched_keyboard_interrupt).
- *
- * Timeout abort: mp_js_hook() calls mp_sched_keyboard_interrupt() when the
- * deadline fires.  This raises KeyboardInterrupt via the normal NLR path.
- * We detect abort by checking whether the caught exception is KeyboardInterrupt
- * AND mp_js_run already cleared the deadline (meaning it was a timeout, not
- * user-initiated).  A simpler heuristic: if _run_deadline was cleared by the
- * hook (set to 0), this was a timeout abort.
- */
-static bool mp_js_do_exec_abortable(const char *src, size_t len, uint32_t *out) {
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_lexer_t *lex = mp_lexer_new_from_str_len_dedent(
-            MP_QSTR__lt_stdin_gt_, src, len, 0);
-        qstr source_name = lex->source_name;
-        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-        mp_obj_t module_fun = mp_compile(&parse_tree, source_name, false);
-        mp_obj_t ret = mp_call_function_0(module_fun);
-        nlr_pop();
-        proxy_convert_mp_to_js_obj_cside(ret, out);
-        return false;
-    } else {
-        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
-        /* Detect host-requested abort (timeout or /dev/interrupt).
-         * mp_js_host_aborted() is set by mp_hal_hook() in both cases, and
-         * cleared at the start of each run by mp_js_set_deadline().
-         * Python code that does `raise KeyboardInterrupt()` does NOT set it. */
-        bool aborted = (mp_js_host_aborted() &&
-                        mp_obj_is_exception_instance(exc) &&
-                        mp_obj_exception_match(exc, &mp_type_KeyboardInterrupt));
-        if (!aborted) {
-            mp_obj_print_exception(&mp_sys_stderr_print, exc);
-            proxy_convert_mp_to_js_exc_cside(nlr.ret_val, out);
-        } else {
-            proxy_convert_mp_to_js_obj_cside(mp_const_none, out);
+        ret = execute_from_lexer(LEX_SRC_VSTR, &line, parse_input_kind, true);
+        if (ret & FORCED_EXIT) {
+            return ret;
         }
-        return aborted;
     }
-}
 
-/* ---- mp_js_do_exec ---- */
+    #else
 
-void mp_js_do_exec(const char *src, size_t len, uint32_t *out) {
-    external_call_depth_inc();
-    mp_js_do_exec_abortable(src, len, out);
-    external_call_depth_dec();
-}
+    // use simple readline
 
-/* ---- mp_js_run — new: timeout + state delta ---- */
+    for (;;) {
+        char *line = prompt((char *)mp_repl_get_ps1());
+        if (line == NULL) {
+            // EOF
+            return 0;
+        }
+        while (mp_repl_continue_with_input(line)) {
+            char *line2 = prompt((char *)mp_repl_get_ps2());
+            if (line2 == NULL) {
+                break;
+            }
+            char *line3 = strjoin(line, '\n', line2);
+            free(line);
+            free(line2);
+            line = line3;
+        }
 
-/*
- * Execute src with a timeout.  Returns 0 on normal exit, 1 if aborted.
- *
- * Before execution:  snapshot globals → /state/snapshot.json
- * JS sets deadline:  Module._run_deadline = Date.now() + timeout_ms
- *                    mp_js_hook() fires mp_sched_vm_abort() when elapsed.
- * After execution:   diff globals, capture stdout → /state/result.json
- *
- * The caller (JS worker) reads /state/result.json for the result payload.
- */
-int mp_js_run(const char *src, size_t len, uint32_t timeout_ms, uint32_t *out) {
-    mp_memfs_snapshot_globals();
-    uint32_t t0 = (uint32_t)mp_js_ticks_ms();
-    mp_js_set_deadline(t0 + timeout_ms);
-    external_call_depth_inc();
-    bool aborted = mp_js_do_exec_abortable(src, len, out);
-    external_call_depth_dec();
-    mp_js_set_deadline(0);
-    mp_js_hook();  /* flush any bc_out written during last bytecodes (e.g. _thread.start_new_thread) */
-    mp_memfs_finish_run(aborted, t0);
-    return aborted ? 1 : 0;
-}
-
-/* ---- mp_js_compile_to_mpy — compile Python source to .mpy bytecode ---- */
-
-/*
- * Compile src (Python source) and write .mpy bytecode to /flash/<name>.mpy
- * via VFS (which maps to /flash/ in MEMFS).
- *
- * On success: returns 0, .mpy is at MEMFS path /flash/<name>.mpy
- * On error:   prints exception to stderr, returns -1
- */
-int mp_js_compile_to_mpy(const char *name, const char *src, size_t src_len) {
-    /* Build the MEMFS absolute path: /flash/<name>.mpy
-     * mp_raw_code_save_file() uses POSIX open() directly (bypasses MicroPython VFS),
-     * so we must use the raw MEMFS path, not the VFS-relative path. */
-    char mpy_path[256];
-    snprintf(mpy_path, sizeof(mpy_path), "/flash/%s.mpy", name);
-
-    external_call_depth_inc();
-    nlr_buf_t nlr;
-    int rc = -1;
-    if (nlr_push(&nlr) == 0) {
-        /* Parse */
-        mp_lexer_t *lex = mp_lexer_new_from_str_len_dedent(
-            qstr_from_str(name), src, src_len, 0);
-        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-
-        /* Compile to raw code */
-        mp_compiled_module_t cm;
-        mp_compile_to_raw_code(&parse_tree, qstr_from_str(name), false, &cm);
-
-        /* Serialize to .mpy via VFS */
-        mp_raw_code_save_file(&cm, qstr_from_str(mpy_path));
-
-        nlr_pop();
-        rc = 0;
-    } else {
-        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
-        mp_obj_print_exception(&mp_sys_stderr_print, exc);
+        int ret = execute_from_lexer(LEX_SRC_STR, line, MP_PARSE_SINGLE_INPUT, true);
+        free(line);
+        if (ret & FORCED_EXIT) {
+            return ret;
+        }
     }
-    external_call_depth_dec();
-    return rc;
-}
 
-/* ---- mp_js_checkpoint_vm / mp_js_restore_vm ---- */
-
-void mp_js_checkpoint_vm(void) {
-    mp_memfs_checkpoint_vm();
-}
-
-void mp_js_restore_vm(void) {
-    mp_memfs_restore_vm();
-}
-
-/* ---- mp_js_enable_trace — enable/disable sys.settrace to /debug/trace.json ---- */
-
-#if MICROPY_PY_SYS_SETTRACE
-
-/* Forward declaration so mp_trace_hook can return itself. */
-MP_DECLARE_CONST_FUN_OBJ_3(mp_trace_hook_obj);
-
-/*
- * C-native trace hook: (frame, event, arg) → self
- *
- * Called by MicroPython's profile machinery for call/line/return/exception events.
- * Emits a NDJSON record to /debug/trace.json and returns itself as the per-frame
- * callback so all event types are captured.
- */
-static mp_obj_t mp_trace_hook(mp_obj_t frame_obj, mp_obj_t event_obj, mp_obj_t arg) {
-    (void)arg;
-    mp_obj_frame_t *frame = MP_OBJ_TO_PTR(frame_obj);
-    mp_obj_code_t  *code  = frame->code;
-    const mp_raw_code_t *rc = code->rc;
-    const mp_bytecode_prelude_t *prelude = &rc->prelude;
-
-    /* Source file is at qstr_table[0]; function name at qstr_table[qstr_block_name_idx] */
-    const char *file_str = qstr_str(MP_CODE_QSTR_MAP(code->context, 0));
-    const char *name_str = qstr_str(MP_CODE_QSTR_MAP(code->context, prelude->qstr_block_name_idx));
-
-    /* Event is a Python string (call / line / return / exception) */
-    size_t event_len;
-    const char *event_str = mp_obj_str_get_data(event_obj, &event_len);
-
-    /* Build the JSON record — file/name are qstr-interned identifiers (no quotes inside) */
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-        "{\"event\":\"%.*s\",\"lineno\":%u,\"file\":\"%s\",\"name\":\"%s\"}",
-        (int)event_len, event_str,
-        (unsigned)frame->lineno,
-        file_str,
-        name_str);
-
-    mp_memfs_trace_append(buf);
-
-    /* Return self → becomes per-frame callback for line/return/exception events */
-    return MP_OBJ_FROM_PTR(&mp_trace_hook_obj);
-}
-MP_DEFINE_CONST_FUN_OBJ_3(mp_trace_hook_obj, mp_trace_hook);
-
-#endif  /* MICROPY_PY_SYS_SETTRACE */
-
-/*
- * Enable or disable the built-in trace hook.
- * on=1: truncate /debug/trace.json and start tracing
- * on=0: stop tracing
- */
-void mp_js_enable_trace(int on) {
-    #if MICROPY_PY_SYS_SETTRACE
-    if (on) {
-        int fd = open("/debug/trace.json", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        if (fd >= 0) { close(fd); }
-        mp_prof_settrace(MP_OBJ_FROM_PTR(&mp_trace_hook_obj));
-    } else {
-        mp_prof_settrace(mp_const_none);
-    }
     #endif
 }
 
-/* ---- VFS stubs (used when MICROPY_VFS is not enabled) ---- */
+static int do_file(const char *file) {
+    return execute_from_lexer(LEX_SRC_FILENAME, file, MP_PARSE_FILE_INPUT, false);
+}
 
-#if !MICROPY_VFS
-mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
-    mp_raise_OSError(MP_ENOENT);
+static int do_str(const char *str) {
+    return execute_from_lexer(LEX_SRC_STR, str, MP_PARSE_FILE_INPUT, false);
 }
-mp_import_stat_t mp_import_stat(const char *path) {
-    return MP_IMPORT_STAT_NO_EXIST;
+
+static void print_help(char **argv) {
+    printf(
+        "usage: %s [<opts>] [-X <implopt>] [-c <command> | -m <module> | <filename>]\n"
+        "Options:\n"
+        "--version : show version information\n"
+        "-h : print this help message\n"
+        "-i : enable inspection via REPL after running command/module/file\n"
+        #if MICROPY_DEBUG_PRINTERS
+        "-v : verbose (trace various operations); can be multiple\n"
+        #endif
+        "-O[N] : apply bytecode optimizations of level N\n"
+        "\n"
+        "Implementation specific options (-X):\n", argv[0]
+        );
+    int impl_opts_cnt = 0;
+    printf(
+        "  compile-only                 -- parse and compile only\n"
+        #if MICROPY_EMIT_NATIVE
+        "  emit={bytecode,native,viper} -- set the default code emitter\n"
+        #else
+        "  emit=bytecode                -- set the default code emitter\n"
+        #endif
+        );
+    impl_opts_cnt++;
+    #if MICROPY_ENABLE_GC
+    printf(
+        "  heapsize=<n>[w][K|M] -- set the heap size for the GC (default %ld)\n"
+        , heap_size);
+    impl_opts_cnt++;
+    #endif
+    #if defined(__APPLE__)
+    printf("  realtime -- set thread priority to realtime\n");
+    impl_opts_cnt++;
+    #endif
+
+    if (impl_opts_cnt == 0) {
+        printf("  (none)\n");
+    }
 }
-mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) {
-    return mp_const_none;
+
+static int invalid_args(void) {
+    fprintf(stderr, "Invalid command line arguments. Use -h option for help.\n");
+    return 1;
 }
-MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
+
+// Process options which set interpreter init options
+static void pre_process_options(int argc, char **argv) {
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-') {
+            if (strcmp(argv[a], "-c") == 0 || strcmp(argv[a], "-m") == 0) {
+                break; // Everything after this is a command/module and arguments for it
+            }
+            if (strcmp(argv[a], "-h") == 0) {
+                print_help(argv);
+                exit(0);
+            }
+            if (strcmp(argv[a], "--version") == 0) {
+                printf(MICROPY_BANNER_NAME_AND_VERSION "; " MICROPY_BANNER_MACHINE "\n");
+                exit(0);
+            }
+            if (strcmp(argv[a], "-X") == 0) {
+                if (a + 1 >= argc) {
+                    exit(invalid_args());
+                }
+                if (0) {
+                } else if (strcmp(argv[a + 1], "compile-only") == 0) {
+                    compile_only = true;
+                } else if (strcmp(argv[a + 1], "emit=bytecode") == 0) {
+                    emit_opt = MP_EMIT_OPT_BYTECODE;
+                #if MICROPY_EMIT_NATIVE
+                } else if (strcmp(argv[a + 1], "emit=native") == 0) {
+                    emit_opt = MP_EMIT_OPT_NATIVE_PYTHON;
+                } else if (strcmp(argv[a + 1], "emit=viper") == 0) {
+                    emit_opt = MP_EMIT_OPT_VIPER;
+                #endif
+                #if MICROPY_ENABLE_GC
+                } else if (strncmp(argv[a + 1], "heapsize=", sizeof("heapsize=") - 1) == 0) {
+                    char *end;
+                    heap_size = strtol(argv[a + 1] + sizeof("heapsize=") - 1, &end, 0);
+                    // Don't bring unneeded libc dependencies like tolower()
+                    // If there's 'w' immediately after number, adjust it for
+                    // target word size. Note that it should be *before* size
+                    // suffix like K or M, to avoid confusion with kilowords,
+                    // etc. the size is still in bytes, just can be adjusted
+                    // for word size (taking 32bit as baseline).
+                    bool word_adjust = false;
+                    if ((*end | 0x20) == 'w') {
+                        word_adjust = true;
+                        end++;
+                    }
+                    if ((*end | 0x20) == 'k') {
+                        heap_size *= 1024;
+                    } else if ((*end | 0x20) == 'm') {
+                        heap_size *= 1024 * 1024;
+                    } else {
+                        // Compensate for ++ below
+                        --end;
+                    }
+                    if (*++end != 0) {
+                        goto invalid_arg;
+                    }
+                    if (word_adjust) {
+                        heap_size = heap_size * MP_BYTES_PER_OBJ_WORD / 4;
+                    }
+                    // If requested size too small, we'll crash anyway
+                    if (heap_size < 700) {
+                        goto invalid_arg;
+                    }
+                #endif
+                #if defined(__APPLE__)
+                } else if (strcmp(argv[a + 1], "realtime") == 0) {
+                    #if MICROPY_PY_THREAD
+                    mp_thread_is_realtime_enabled = true;
+                    #endif
+                    // main thread was already initialized before the option
+                    // was parsed, so we have to enable realtime here.
+                    mp_thread_set_realtime();
+                #endif
+                } else {
+                invalid_arg:
+                    exit(invalid_args());
+                }
+                a++;
+            }
+        } else {
+            break; // Not an option but a file
+        }
+    }
+}
+
+static void set_sys_argv(char *argv[], int argc, int start_arg) {
+    for (int i = start_arg; i < argc; i++) {
+        mp_obj_list_append(mp_sys_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
+    }
+}
+
+#if MICROPY_PY_SYS_EXECUTABLE
+extern mp_obj_str_t mp_sys_executable_obj;
+static char executable_path[MICROPY_ALLOC_PATH_MAX];
+
+static void sys_set_excecutable(char *argv0) {
+    if (realpath(argv0, executable_path)) {
+        mp_obj_str_set_data(&mp_sys_executable_obj, (byte *)executable_path, strlen(executable_path));
+    }
+}
 #endif
 
-/* ---- Fault handlers ---- */
+#ifdef _WIN32
+#define PATHLIST_SEP_CHAR ';'
+#else
+#define PATHLIST_SEP_CHAR ':'
+#endif
+
+MP_NOINLINE int main_(int argc, char **argv);
+
+int main(int argc, char **argv) {
+    #if MICROPY_PY_THREAD
+    mp_thread_init();
+    #endif
+
+    // Define a reasonable stack limit to detect stack overflow.
+    mp_uint_t stack_size = 40000 * (sizeof(void *) / 4);
+    #if defined(__arm__) && !defined(__thumb2__)
+    // ARM (non-Thumb) architectures require more stack.
+    stack_size *= 2;
+    #endif
+
+    // We should capture stack top ASAP after start, and it should be
+    // captured guaranteedly before any other stack variables are allocated.
+    // For this, actual main (renamed main_) should not be inlined into
+    // this function. main_() itself may have other functions inlined (with
+    // their own stack variables), that's why we need this main/main_ split.
+    mp_cstack_init_with_sp_here(stack_size);
+    return main_(argc, argv);
+}
+
+MP_NOINLINE int main_(int argc, char **argv) {
+    #ifdef SIGPIPE
+    // Do not raise SIGPIPE, instead return EPIPE. Otherwise, e.g. writing
+    // to peer-closed socket will lead to sudden termination of MicroPython
+    // process. SIGPIPE is particularly nasty, because unix shell doesn't
+    // print anything for it, so the above looks like completely sudden and
+    // silent termination for unknown reason. Ignoring SIGPIPE is also what
+    // CPython does. Note that this may lead to problems using MicroPython
+    // scripts as pipe filters, but again, that's what CPython does. So,
+    // scripts which want to follow unix shell pipe semantics (where SIGPIPE
+    // means "pipe was requested to terminate, it's not an error"), should
+    // catch EPIPE themselves.
+    signal(SIGPIPE, SIG_IGN);
+    #endif
+
+    pre_process_options(argc, argv);
+
+    #if MICROPY_ENABLE_GC
+    #if !MICROPY_GC_SPLIT_HEAP
+    char *heap = malloc(heap_size);
+    gc_init(heap, heap + heap_size);
+    #else
+    assert(MICROPY_GC_SPLIT_HEAP_N_HEAPS > 0);
+    char *heaps[MICROPY_GC_SPLIT_HEAP_N_HEAPS];
+    long multi_heap_size = heap_size / MICROPY_GC_SPLIT_HEAP_N_HEAPS;
+    for (size_t i = 0; i < MICROPY_GC_SPLIT_HEAP_N_HEAPS; i++) {
+        heaps[i] = malloc(multi_heap_size);
+        if (i == 0) {
+            gc_init(heaps[i], heaps[i] + multi_heap_size);
+        } else {
+            gc_add(heaps[i], heaps[i] + multi_heap_size);
+        }
+    }
+    #endif
+    #endif
+
+    #if MICROPY_ENABLE_PYSTACK
+    static mp_obj_t pystack[1024];
+    mp_pystack_init(pystack, &pystack[MP_ARRAY_SIZE(pystack)]);
+    #endif
+
+    mp_init();
+
+    #if MICROPY_EMIT_NATIVE
+    // Set default emitter options
+    MP_STATE_VM(default_emit_opt) = emit_opt;
+    #else
+    (void)emit_opt;
+    #endif
+
+    #if MICROPY_VFS_POSIX
+    {
+        // Mount the host FS at the root of our internal VFS
+        mp_obj_t args[2] = {
+            MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_posix, make_new)(&mp_type_vfs_posix, 0, 0, NULL),
+            MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
+        };
+        mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
+
+        // Make sure the root that was just mounted is the current VFS (it's always at
+        // the end of the linked list).  Can't use chdir('/') because that will change
+        // the current path within the VfsPosix object.
+        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
+        while (MP_STATE_VM(vfs_cur)->next != NULL) {
+            MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_cur)->next;
+        }
+    }
+    #endif
+
+    {
+        // sys.path starts as [""]
+        mp_sys_path = mp_obj_new_list(0, NULL);
+        mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
+
+        // Add colon-separated entries from MICROPYPATH.
+        char *home = getenv("HOME");
+        char *path = getenv("MICROPYPATH");
+        if (path == NULL) {
+            path = MICROPY_PY_SYS_PATH_DEFAULT;
+        }
+        if (*path == PATHLIST_SEP_CHAR) {
+            // First entry is empty. We've already added an empty entry to sys.path, so skip it.
+            ++path;
+        }
+        // GCC targeting RISC-V 64 reports a warning about `path_remaining` being clobbered by
+        // either setjmp or vfork if that variable it is allocated on the stack.  This may
+        // probably be a compiler error as it occurs on a few recent GCC releases (up to 14.1.0)
+        // but LLVM doesn't report any warnings.
+        static bool path_remaining;
+        path_remaining = *path;
+        while (path_remaining) {
+            char *path_entry_end = strchr(path, PATHLIST_SEP_CHAR);
+            if (path_entry_end == NULL) {
+                path_entry_end = path + strlen(path);
+                path_remaining = false;
+            }
+            if (path[0] == '~' && path[1] == '/' && home != NULL) {
+                // Expand standalone ~ to $HOME
+                int home_l = strlen(home);
+                vstr_t vstr;
+                vstr_init(&vstr, home_l + (path_entry_end - path - 1) + 1);
+                vstr_add_strn(&vstr, home, home_l);
+                vstr_add_strn(&vstr, path + 1, path_entry_end - path - 1);
+                mp_obj_list_append(mp_sys_path, mp_obj_new_str_from_vstr(&vstr));
+            } else {
+                mp_obj_list_append(mp_sys_path, mp_obj_new_str_via_qstr(path, path_entry_end - path));
+            }
+            path = path_entry_end + 1;
+        }
+    }
+
+    mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_argv), 0);
+
+    #if defined(MICROPY_UNIX_COVERAGE)
+    {
+        MP_DECLARE_CONST_FUN_OBJ_0(extra_coverage_obj);
+        MP_DECLARE_CONST_FUN_OBJ_0(extra_cpp_coverage_obj);
+        mp_store_global(MP_QSTR_extra_coverage, MP_OBJ_FROM_PTR(&extra_coverage_obj));
+        mp_store_global(MP_QSTR_extra_cpp_coverage, MP_OBJ_FROM_PTR(&extra_cpp_coverage_obj));
+        // CIRCUITPY-CHANGE: test native base classes work as needed by CircuitPython libraries.
+        extern const mp_obj_type_t native_base_class_type;
+        mp_store_global(MP_QSTR_NativeBaseClass, MP_OBJ_FROM_PTR(&native_base_class_type));
+    }
+    #endif
+
+    // Here is some example code to create a class and instance of that class.
+    // First is the Python, then the C code.
+    //
+    // class TestClass:
+    //     pass
+    // test_obj = TestClass()
+    // test_obj.attr = 42
+    //
+    // mp_obj_t test_class_type, test_class_instance;
+    // test_class_type = mp_obj_new_type(qstr_from_str("TestClass"), mp_const_empty_tuple, mp_obj_new_dict(0));
+    // mp_store_name(qstr_from_str("test_obj"), test_class_instance = mp_call_function_0(test_class_type));
+    // mp_store_attr(test_class_instance, qstr_from_str("attr"), mp_obj_new_int(42));
+
+    /*
+    printf("bytes:\n");
+    printf("    total %d\n", m_get_total_bytes_allocated());
+    printf("    cur   %d\n", m_get_current_bytes_allocated());
+    printf("    peak  %d\n", m_get_peak_bytes_allocated());
+    */
+
+    #if MICROPY_PY_SYS_EXECUTABLE
+    sys_set_excecutable(argv[0]);
+    #endif
+
+    const int NOTHING_EXECUTED = -2;
+    int ret = NOTHING_EXECUTED;
+    bool inspect = false;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-') {
+            if (strcmp(argv[a], "-i") == 0) {
+                inspect = true;
+            } else if (strcmp(argv[a], "-c") == 0) {
+                if (a + 1 >= argc) {
+                    return invalid_args();
+                }
+                set_sys_argv(argv, a + 1, a); // The -c becomes first item of sys.argv, as in CPython
+                set_sys_argv(argv, argc, a + 2); // Then what comes after the command
+                ret = do_str(argv[a + 1]);
+                break;
+            } else if (strcmp(argv[a], "-m") == 0) {
+                if (a + 1 >= argc) {
+                    return invalid_args();
+                }
+                mp_obj_t import_args[4];
+                import_args[0] = mp_obj_new_str_from_cstr(argv[a + 1]);
+                import_args[1] = import_args[2] = mp_const_none;
+                // Ask __import__ to handle imported module specially - set its __name__
+                // to __main__, and also return this leaf module, not top-level package
+                // containing it.
+                import_args[3] = mp_const_false;
+                // TODO: https://docs.python.org/3/using/cmdline.html#cmdoption-m :
+                // "the first element of sys.argv will be the full path to
+                // the module file (while the module file is being located,
+                // the first element will be set to "-m")."
+                set_sys_argv(argv, argc, a + 1);
+
+                mp_obj_t mod;
+                nlr_buf_t nlr;
+
+                // Allocating subpkg_tried on the stack can lead to compiler warnings about this
+                // variable being clobbered when nlr is implemented using setjmp/longjmp.  Its
+                // value must be preserved across calls to setjmp/longjmp.
+                static bool subpkg_tried;
+                subpkg_tried = false;
+
+            reimport:
+                if (nlr_push(&nlr) == 0) {
+                    mod = mp_builtin___import__(MP_ARRAY_SIZE(import_args), import_args);
+                    nlr_pop();
+                } else {
+                    // uncaught exception
+                    return handle_uncaught_exception(nlr.ret_val) & 0xff;
+                }
+
+                // If this module is a package, see if it has a `__main__.py`.
+                mp_obj_t dest[2];
+                mp_load_method_protected(mod, MP_QSTR___path__, dest, true);
+                if (dest[0] != MP_OBJ_NULL && !subpkg_tried) {
+                    subpkg_tried = true;
+                    vstr_t vstr;
+                    int len = strlen(argv[a + 1]);
+                    vstr_init(&vstr, len + sizeof(".__main__"));
+                    vstr_add_strn(&vstr, argv[a + 1], len);
+                    vstr_add_strn(&vstr, ".__main__", sizeof(".__main__") - 1);
+                    import_args[0] = mp_obj_new_str_from_vstr(&vstr);
+                    goto reimport;
+                }
+
+                ret = 0;
+                break;
+            } else if (strcmp(argv[a], "-X") == 0) {
+                a += 1;
+            #if MICROPY_DEBUG_PRINTERS
+            } else if (strcmp(argv[a], "-v") == 0) {
+                mp_verbose_flag++;
+            #endif
+            } else if (strncmp(argv[a], "-O", 2) == 0) {
+                if (unichar_isdigit(argv[a][2])) {
+                    MP_STATE_VM(mp_optimise_value) = argv[a][2] & 0xf;
+                } else {
+                    MP_STATE_VM(mp_optimise_value) = 0;
+                    for (char *p = argv[a] + 1; *p && *p == 'O'; p++, MP_STATE_VM(mp_optimise_value)++) {;
+                    }
+                }
+            } else {
+                return invalid_args();
+            }
+        } else {
+            char *pathbuf = malloc(PATH_MAX);
+            char *basedir = realpath(argv[a], pathbuf);
+            if (basedir == NULL) {
+                mp_printf(&mp_stderr_print, "%s: can't open file '%s': [Errno %d] %s\n", argv[0], argv[a], errno, strerror(errno));
+                free(pathbuf);
+                // CPython exits with 2 in such case
+                ret = 2;
+                break;
+            }
+
+            // Set base dir of the script as first entry in sys.path.
+            char *p = strrchr(basedir, '/');
+            mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0), mp_obj_new_str_via_qstr(basedir, p - basedir));
+            free(pathbuf);
+
+            set_sys_argv(argv, argc, a);
+            ret = do_file(argv[a]);
+            break;
+        }
+    }
+
+    const char *inspect_env = getenv("MICROPYINSPECT");
+    if (inspect_env && inspect_env[0] != '\0') {
+        inspect = true;
+    }
+    if (ret == NOTHING_EXECUTED || inspect) {
+        if (isatty(0) || inspect) {
+            #if !defined(__wasi__)
+            prompt_read_history();
+            #endif
+            ret = do_repl();
+            #if !defined(__wasi__)
+            prompt_write_history();
+            #endif
+        } else {
+            ret = execute_from_lexer(LEX_SRC_STDIN, NULL, MP_PARSE_FILE_INPUT, false);
+        }
+    }
+
+    #if MICROPY_PY_SYS_SETTRACE
+    MP_STATE_THREAD(prof_trace_callback) = MP_OBJ_NULL;
+    #endif
+
+    #if MICROPY_PY_SYS_ATEXIT
+    // Beware, the sys.settrace callback should be disabled before running sys.atexit.
+    if (mp_obj_is_callable(MP_STATE_VM(sys_exitfunc))) {
+        mp_call_function_0(MP_STATE_VM(sys_exitfunc));
+    }
+    #endif
+
+    #if MICROPY_PY_MICROPYTHON_MEM_INFO
+    if (mp_verbose_flag) {
+        mp_micropython_mem_info(0, NULL);
+    }
+    #endif
+
+    #if MICROPY_PY_BLUETOOTH
+    void mp_bluetooth_deinit(void);
+    mp_bluetooth_deinit();
+    #endif
+
+    #if MICROPY_PY_THREAD
+    mp_thread_deinit();
+    #endif
+
+    #if defined(MICROPY_UNIX_COVERAGE)
+    gc_sweep_all();
+    #endif
+
+    mp_deinit();
+
+    #if MICROPY_ENABLE_GC && !defined(NDEBUG)
+    // We don't really need to free memory since we are about to exit the
+    // process, but doing so helps to find memory leaks.
+    #if !MICROPY_GC_SPLIT_HEAP
+    free(heap);
+    #else
+    for (size_t i = 0; i < MICROPY_GC_SPLIT_HEAP_N_HEAPS; i++) {
+        free(heaps[i]);
+    }
+    #endif
+    #endif
+
+    // printf("total bytes = %d\n", m_get_total_bytes_allocated());
+    return ret & 0xff;
+}
 
 void nlr_jump_fail(void *val) {
-    while (1) {
-        ;
-    }
+    #if MICROPY_USE_READLINE == 1
+    mp_hal_stdio_mode_orig();
+    #endif
+    fprintf(stderr, "FATAL: uncaught NLR %p\n", val);
+    exit(1);
 }
 
-/* ===========================================================================
- * Step-wise VM execution (libpyvm)
- *
- * mp_vm_start(src, len)  — compile code, create initial code_state on pystack
- * mp_vm_step()           — execute one batch of bytecodes; returns status:
- *                           0 = normal completion
- *                           1 = yielded (suspended, call step() again to resume)
- *                           2 = exception
- * mp_vm_result_stdout()  — after completion, read captured stdout
- * mp_vm_result_stderr()  — after completion, read captured stderr
- *
- * The step budget is set from JS: Module._vm_step_budget = N
- * before each mp_vm_step() call.  The VM executes up to N branch points
- * (loop iterations, if/else, function calls), then suspends.
- *
- * Between steps, JS can:
- *   - Yield to the browser event loop (await setTimeout(0))
- *   - Drain bc_out and broadcast hardware events
- *   - Sync hardware registers from bc_in
- *   - Process async callbacks and background tasks
- * =========================================================================== */
+#if MICROPY_VFS_ROM_IOCTL
 
-#if MICROPY_VM_YIELD_ENABLED
+static uint8_t romfs_buf[4] = { 0xd2, 0xcd, 0x31, 0x00 }; // empty ROMFS
+static const MP_DEFINE_MEMORYVIEW_OBJ(romfs_obj, 'B', 0, sizeof(romfs_buf), romfs_buf);
 
-/* Persistent state between mp_vm_start() and mp_vm_step() calls */
-static mp_code_state_t *_vm_step_code_state = NULL;       /* outermost (module) frame */
-static mp_obj_t         _vm_step_module_fun = MP_OBJ_NULL;
-static bool             _vm_step_started = false;
-static bool             _vm_step_first_entry = false;
+mp_obj_t mp_vfs_rom_ioctl(size_t n_args, const mp_obj_t *args) {
+    switch (mp_obj_get_int(args[0])) {
+        case MP_VFS_ROM_IOCTL_GET_NUMBER_OF_SEGMENTS:
+            return MP_OBJ_NEW_SMALL_INT(1);
 
-/* Written by the VM yield handler (MICROPY_VM_YIELD_SAVE_STATE in vm.c).
- * Contains the innermost code_state at the point of yield so we can
- * resume there instead of at the outermost frame. */
-void *mp_vm_yield_state = NULL;
-
-/*
- * Compile src and prepare code_state for stepping.
- * Returns 0 on success, -1 on compile error (exception printed to stderr).
- */
-int mp_vm_start(const char *src, size_t len) {
-    /* Reset any previous stepping state */
-    _vm_step_code_state = NULL;
-    _vm_step_module_fun = MP_OBJ_NULL;
-    _vm_step_started = false;
-
-    /* Compile the source */
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_lexer_t *lex = mp_lexer_new_from_str_len_dedent(
-            MP_QSTR__lt_stdin_gt_, src, len, 0);
-        qstr source_name = lex->source_name;
-        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-        _vm_step_module_fun = mp_compile(&parse_tree, source_name, false);
-        nlr_pop();
-    } else {
-        /* Compile error */
-        mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
-        mp_obj_print_exception(&mp_sys_stderr_print, exc);
-        return -1;
+        case MP_VFS_ROM_IOCTL_GET_SEGMENT:
+            return MP_OBJ_FROM_PTR(&romfs_obj);
     }
 
-    /* Prepare code_state on the pystack.
-     * mp_obj_fun_bc_prepare_codestate allocates on pystack (LIFO),
-     * sets up locals/stack, and saves old_globals. */
-    _vm_step_code_state = mp_obj_fun_bc_prepare_codestate(
-        _vm_step_module_fun, 0, 0, NULL);
-    if (_vm_step_code_state == NULL) {
-        mp_raise_msg(&mp_type_RuntimeError,
-            MP_ERROR_TEXT("cannot create code state for stepping"));
-        return -1;
-    }
-    _vm_step_code_state->prev = NULL;  /* top-level: no parent frame */
-    _vm_step_started = true;
-    _vm_step_first_entry = true;
-
-    /* Snapshot globals for delta tracking */
-    mp_memfs_snapshot_globals();
-    return 0;
+    return MP_OBJ_NEW_SMALL_INT(-MP_EINVAL);
 }
 
-/*
- * Execute one batch of bytecodes.  The batch size is controlled by
- * Module._vm_step_budget (set from JS before calling this).
- *
- * Returns:
- *   0 — normal completion (code finished executing)
- *   1 — yielded/suspended (call mp_vm_step() again to resume)
- *   2 — exception (printed to stderr)
- */
-int mp_vm_step(void) {
-    if (!_vm_step_started || _vm_step_code_state == NULL) {
-        return 0;  /* nothing to do */
-    }
-
-    mp_vm_return_kind_t ret;
-    mp_code_state_t *entry_state;
-
-    if (_vm_step_first_entry) {
-        _vm_step_first_entry = false;
-        mp_vm_yield_state = NULL;
-        entry_state = _vm_step_code_state;
-    } else if (mp_vm_yield_state != NULL) {
-        /* Resume at the innermost frame that was active when the VM yielded.
-         * This is critical for stackless mode: the yield may have fired deep
-         * inside a call chain (e.g. inside asyncio.run_until_complete).
-         * Without this, we'd re-enter at the outermost <module> frame and
-         * re-execute the function call from scratch. */
-        entry_state = (mp_code_state_t *)mp_vm_yield_state;
-        mp_vm_yield_state = NULL;
-    } else {
-        entry_state = _vm_step_code_state;
-    }
-
-    ret = mp_execute_bytecode(entry_state, MP_OBJ_NULL);
-
-    switch (ret) {
-        case MP_VM_RETURN_NORMAL:
-            /* Code finished.  Restore globals, write result. */
-            mp_globals_set(_vm_step_code_state->old_globals);
-            _vm_step_started = false;
-            #if MICROPY_ENABLE_PYSTACK
-            mp_pystack_free(_vm_step_code_state);
-            #endif
-            _vm_step_code_state = NULL;
-            return 0;
-
-        case MP_VM_RETURN_YIELD:
-            /* Suspended — code_state is preserved on pystack.
-             * JS does background work, then calls mp_vm_step() again. */
-            return 1;
-
-        case MP_VM_RETURN_EXCEPTION:
-            /* Exception.  Print it and clean up. */
-            mp_globals_set(_vm_step_code_state->old_globals);
-            {
-                mp_obj_t exc = MP_OBJ_FROM_PTR(_vm_step_code_state->state[0]);
-                mp_obj_print_exception(&mp_sys_stderr_print, exc);
-            }
-            _vm_step_started = false;
-            #if MICROPY_ENABLE_PYSTACK
-            mp_pystack_free(_vm_step_code_state);
-            #endif
-            _vm_step_code_state = NULL;
-            return 2;
-
-        default:
-            return 2;
-    }
-}
-
-#endif /* MICROPY_VM_YIELD_ENABLED */
-
-
-/* ===========================================================================
- * GC heap and pystack accessors (Phase 9: libpygc / libpystack)
- *
- * These return WASM linear memory offsets and sizes so JS (api.js) can
- * create typed array views (Module.HEAPU8.subarray) for direct access,
- * snapshot, and restore without MEMFS round-trips.
- * =========================================================================== */
-
-/* GC heap: ATB + block pool, saved as one contiguous region */
-int mp_gc_heap_addr(void) {
-    return (int)(uintptr_t)MP_STATE_MEM(area.gc_alloc_table_start);
-}
-int mp_gc_heap_size(void) {
-    return (int)((uintptr_t)MP_STATE_MEM(area.gc_pool_end) -
-                 (uintptr_t)MP_STATE_MEM(area.gc_alloc_table_start));
-}
-int mp_gc_pool_used(void) {
-    gc_info_t info;
-    gc_info(&info);
-    return (int)info.used;
-}
-int mp_gc_pool_total(void) {
-    gc_info_t info;
-    gc_info(&info);
-    return (int)info.total;
-}
-int mp_gc_pool_free(void) {
-    gc_info_t info;
-    gc_info(&info);
-    return (int)info.free;
-}
-
-/* mp_state_ctx: global VM state struct (dict_main, qstr tables, etc.) */
-int mp_state_ctx_addr(void) {
-    return (int)(uintptr_t)&mp_state_ctx;
-}
-int mp_state_ctx_size(void) {
-    return (int)sizeof(mp_state_ctx);
-}
-
-/* Pystack: evaluation temporaries, code_state chain (stackless mode) */
-int mp_pystack_get_addr(void) {
-    return (int)(uintptr_t)MP_STATE_THREAD(pystack_start);
-}
-int mp_pystack_get_size(void) {
-    return (int)((uintptr_t)MP_STATE_THREAD(pystack_end) -
-                 (uintptr_t)MP_STATE_THREAD(pystack_start));
-}
-int mp_pystack_get_used(void) {
-    return (int)((uintptr_t)MP_STATE_THREAD(pystack_cur) -
-                 (uintptr_t)MP_STATE_THREAD(pystack_start));
-}
-
-
-void __fatal_error(const char *msg) NORETURN;
-void __fatal_error(const char *msg) {
-    (void)msg;
-    while (1) {
-        ;
-    }
-}
-
-#ifndef NDEBUG
-void MP_WEAK __assert_func(const char *file, int line, const char *func, const char *expr) {
-    printf("Assertion '%s' failed, at file %s:%d\n", expr, file, line);
-    __fatal_error("Assertion failed");
-}
 #endif

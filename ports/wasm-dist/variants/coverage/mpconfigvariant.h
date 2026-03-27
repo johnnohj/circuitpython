@@ -3,7 +3,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2013-2016 Damien P. George
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,4 +24,33 @@
  * THE SOFTWARE.
  */
 
-// *FORMAT-OFF*
+// This config enables almost all possible features such that it can be used
+// for coverage testing.
+
+// Set base feature level.
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EVERYTHING)
+
+// Enable extra Unix features.
+#include "../mpconfigvariant_common.h"
+
+// Enable testing of split heap.
+#define MICROPY_GC_SPLIT_HEAP          (1)
+#define MICROPY_GC_SPLIT_HEAP_N_HEAPS  (4)
+
+// Enable additional features.
+#define MICROPY_DEBUG_PARSE_RULE_NAME  (1)
+#define MICROPY_TRACKED_ALLOC          (1)
+#define MICROPY_WARNINGS_CATEGORY      (1)
+#undef MICROPY_VFS_ROM_IOCTL
+#define MICROPY_VFS_ROM_IOCTL          (1)
+#define MICROPY_PY_CRYPTOLIB_CTR       (1)
+
+// CIRCUITPY-CHANGE: Disable things never used in circuitpython
+#define MICROPY_PY_CRYPTOLIB           (0)
+#undef MICROPY_PY_CRYPTOLIB_CTR
+#define MICROPY_PY_CRYPTOLIB_CTR       (0)
+#define MICROPY_PY_MICROPYTHON_RINGIO  (0)
+// CircuitPython uses shared-bindings struct
+#define MICROPY_PY_STRUCT              (0)
+#undef MICROPY_VFS_ROM_IOCTL
+#define MICROPY_VFS_ROM_IOCTL          (0)

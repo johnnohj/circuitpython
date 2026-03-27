@@ -1,192 +1,310 @@
 /*
- * WASM-dist port configuration
+ * This file is part of the MicroPython project, http://micropython.org/
  *
- * JavaScript/Emscripten is the host OS; Python is the guest process.
- * ITCM code (VM dispatch, GC, pystack alloc) stays in the WASM binary.
- * DTCM data (mp_state_ctx, GC heap, pystack) is checkpointed to MEMFS /mem/.
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2013, 2014 Damien P. George
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
+
+// CIRCUITPY-CHANGE
 #pragma once
 
-// Include variant config first — it may set MICROPY_VARIANT_MINIMAL
-// which gates whether circuitpy_mpconfig.h is included below.
-#include "mpconfigvariant.h"
+// Options to control how MicroPython is built for this port, overriding
+// defaults in py/mpconfig.h. This file is mostly about configuring the
+// features to work on Unix-like systems, see mpconfigvariant.h (and
+// mpconfigvariant_common.h) for feature enabling.
 
-#include <stdint.h>
-#include <stdlib.h>
+// For size_t and ssize_t
 #include <unistd.h>
-#include <errno.h>
-#include <alloca.h>
 
-/* ITCM/DTCM adaptation for WASM (see linker.h) */
-#include "linker.h"
-
-/* Variant-specific defines (e.g. MICROPY_VARIANT_ENABLE_JS_HOOK) */
+// Variant-specific definitions.
 #include "mpconfigvariant.h"
 
-/* Use CircuitPython extra-features config level for banner / type defs */
+// ── WASI overrides ──
+// The variant header (via mpconfigvariant_common.h) enables features
+// that don't work on WASI. Override them here after the include.
+#ifdef __wasi__
+// No POSIX signals — interrupt via MEMFS rx buffer
+#undef MICROPY_ASYNC_KBD_INTR
+#define MICROPY_ASYNC_KBD_INTR      (0)
+
+// WASI poll constants don't match MP_STREAM_POLL_* values
+#undef MICROPY_PY_SELECT_POSIX_OPTIMISATIONS
+#define MICROPY_PY_SELECT_POSIX_OPTIMISATIONS (0)
+
+// No os.system() on WASI
+#undef MICROPY_PY_OS_SYSTEM
+#define MICROPY_PY_OS_SYSTEM        (0)
+
+// RingIO — pollable ring buffer stream, used for MEMFS communication endpoints
+#undef MICROPY_PY_MICROPYTHON_RINGIO
+#define MICROPY_PY_MICROPYTHON_RINGIO (1)
+
+// No /dev/mem on WASI
+#undef MICROPY_PLAT_DEV_MEM
+#define MICROPY_PLAT_DEV_MEM        (0)
+
+// Platform string
+#undef MICROPY_PY_SYS_PLATFORM
+#define MICROPY_PY_SYS_PLATFORM     "wasi"
+#endif
+
+// Platform compiler string for banner — defined directly to avoid
+// include-order issues with extmod/modplatform.h
+#ifndef MICROPY_PLATFORM_COMPILER
+#if defined(__clang__)
+#define MICROPY_PLATFORM_COMPILER \
+    "Clang " \
+    MP_STRINGIFY(__clang_major__) "." \
+    MP_STRINGIFY(__clang_minor__) "." \
+    MP_STRINGIFY(__clang_patchlevel__)
+#else
+#define MICROPY_PLATFORM_COMPILER ""
+#endif
+#endif
+
+// CIRCUITPY-CHANGE
+#define CIRCUITPY_MICROPYTHON_ADVANCED (1)
+#define MICROPY_PY_ASYNC_AWAIT (1)
+#define MICROPY_PY_UCTYPES (0)
+
 #ifndef MICROPY_CONFIG_ROM_LEVEL
-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
 #endif
 
-/* ---- Core VM features ---- */
-#define MICROPY_STACKLESS               (1)
-#define MICROPY_STACKLESS_STRICT        (1)
-#define MICROPY_ENABLE_PYSTACK          (1)
-#define MICROPY_ENABLE_GC               (1)
-#define MICROPY_ENABLE_SCHEDULER        (1)
-#define MICROPY_ENABLE_VM_ABORT         (1)
-#define MICROPY_ENABLE_FINALIZER        (1)
-#define MICROPY_KBD_EXCEPTION           (1)
-
-/* ---- Native code emitter: WASM backend ---- */
-/* Enables @micropython.native and @micropython.viper to compile directly
- * to WebAssembly bytecodes instead of being interpreted. The JS-side
- * loader (library_asmwasm.js) wraps the emitted bytes into a valid WASM
- * module and instantiates it via WebAssembly.compile().
- *
- * setjmp is called directly (not through mp_fun_table) because Emscripten's
- * SUPPORT_LONGJMP=wasm requires static visibility of setjmp calls.
- *
- * Control flow uses marker opcodes (0xFD/FE/FF) that the JS rewriter in
- * library_asmwasm.js transforms into proper block/loop/end nesting.
- * Module compilation, function table registration, and invocation all work.
- * Table index stored at bytecode[0]; get_function_start/viper_call read it.
- * JS rewriter transforms marker opcodes to valid block/loop/end nesting.
- * REG_ARG_1=param0(self_in), REG_FUN_TABLE=local4(loaded from context). */
-#ifndef MICROPY_EMIT_WASM
-#define MICROPY_EMIT_WASM               (1)
+#ifndef MICROPY_PY_SYS_PLATFORM
+#if defined(__APPLE__) && defined(__MACH__)
+    #define MICROPY_PY_SYS_PLATFORM  "darwin"
+#else
+    #define MICROPY_PY_SYS_PLATFORM  "linux"
+#endif
 #endif
 
-/* ---- Step-wise VM execution (libpyvm) ---- */
-/* When enabled, the VM dispatch loop checks mp_vm_should_yield() at every
- * branch point.  When it returns true, the VM saves state into the
- * heap-allocated code_state and returns MP_VM_RETURN_YIELD.  JS drives
- * execution by calling mp_vm_step() in a loop, doing background work
- * (register sync, bc_out drain, event loop yield) between steps. */
-#define MICROPY_VM_YIELD_ENABLED        (1)
-/* Declared in libpyvm.js (Emscripten --js-library); checks step budget */
-extern int mp_vm_should_yield(void);
-/* Saved by the yield handler in vm.c so mp_vm_step() can resume at the
- * innermost frame, not the outermost.  Set by MICROPY_VM_YIELD_SAVE_STATE.
- * Uses void* because mpconfigport.h is included before mp_code_state_t
- * is defined; main.c casts back to mp_code_state_t*. */
-extern void *mp_vm_yield_state;
-#define MICROPY_VM_YIELD_SAVE_STATE(cs) do { mp_vm_yield_state = (void *)(cs); } while (0)
-
-/* ---- Persistent code (needed for sys.settrace and compiler worker) ---- */
-#define MICROPY_PERSISTENT_CODE_SAVE      (1)
-#define MICROPY_PERSISTENT_CODE_SAVE_FILE (1)   /* mp_raw_code_save_file() → VFS */
-#define MICROPY_PERSISTENT_CODE_LOAD      (1)
-#define MICROPY_PY_SYS_SETTRACE           (1)
-
-/* ---- VFS via POSIX (Emscripten FS routes to MEMFS) ---- */
-#define MICROPY_VFS                     (1)
-#define MICROPY_VFS_POSIX               (1)
-#ifndef MICROPY_READER_VFS
-#define MICROPY_READER_VFS              (1)
+#ifndef MICROPY_PY_SYS_PATH_DEFAULT
+#ifdef __wasi__
+#define MICROPY_PY_SYS_PATH_DEFAULT ".frozen"
+#else
+#define MICROPY_PY_SYS_PATH_DEFAULT ".frozen:~/.micropython/lib:/usr/lib/micropython"
+#endif
 #endif
 
-/* ---- Threading: _thread module maps to WebWorkers ---- */
-#define MICROPY_PY_THREAD               (1)
-#define MICROPY_PY_THREAD_GIL           (0)  /* no GIL: each worker is a separate WASM instance */
-#define MICROPY_MPTHREADPORT_H          "mpthreadport.h"
-
-/* ---- I/O ---- */
-#define MICROPY_USE_INTERNAL_PRINTF     (0)
-#define MICROPY_USE_INTERNAL_ERRNO      (1)
-
-/* ---- Disable features not needed for worker mode ---- */
-#define MICROPY_REPL_EVENT_DRIVEN       (0)
-#define MICROPY_PY_MICROPYTHON_RINGIO   (0)
-#define MICROPY_PY_UCTYPES              (0)
-#define MICROPY_COMP_ALLOW_TOP_LEVEL_AWAIT (1)
-#define MICROPY_LONGINT_IMPL            (MICROPY_LONGINT_IMPL_MPZ)
-#define MICROPY_FLOAT_IMPL              (MICROPY_FLOAT_IMPL_DOUBLE)
-#define MICROPY_EPOCH_IS_1970           (1)
-#define MICROPY_PY_SYS_PLATFORM         "webassembly"
-
-/* ---- Platform identification ---- */
-#define MICROPY_HW_BOARD_NAME           "WASM-dist"
-#define MICROPY_HW_MCU_NAME             "Emscripten"
-
-/* ---- VM hook: check abort + drain /dev/bc_out every 64 bytecodes ----
- * mp_js_hook() is the ITCM equivalent: the JS engine can tier-compile it.
- * This replaces the Asyncify-based hook from the asyncified variant.    */
-#if MICROPY_VARIANT_ENABLE_JS_HOOK
-#define MICROPY_VM_HOOK_COUNT           (64)
-#define MICROPY_VM_HOOK_INIT            static uint _hook_n = MICROPY_VM_HOOK_COUNT;
-/* mp_hal_hook() is a C function in mphalport.c:
- *   - checks run deadline (C-side variable) → mp_sched_keyboard_interrupt() if elapsed
- *   - calls mp_js_hook() for JS-side duties (bc_out drain)
- * This avoids any re-entrant WASM call from within the JS hook.             */
-#define MICROPY_VM_HOOK_POLL            \
-    if (--_hook_n == 0) {               \
-        _hook_n = MICROPY_VM_HOOK_COUNT; \
-        extern void mp_hal_hook(void);  \
-        mp_hal_hook();                  \
-    }
-#define MICROPY_VM_HOOK_LOOP            MICROPY_VM_HOOK_POLL
-#define MICROPY_VM_HOOK_RETURN          MICROPY_VM_HOOK_POLL
-#endif
-
-/* ---- Event poll (scheduler) ---- */
-#define MICROPY_EVENT_POLL_HOOK \
-    do { \
-        extern void mp_handle_pending(bool); \
-        mp_handle_pending(true); \
-    } while (0);
-
-/* ---- Port state ---- */
 #define MP_STATE_PORT MP_STATE_VM
 
-/* ---- Random seed from JS ---- */
-#define MICROPY_PY_RANDOM_SEED_INIT_FUNC (mp_js_random_u32())
-
-/* ---- GNU extensions for dirent.h DT_xxx when VFS enabled ---- */
-#if MICROPY_VFS
-#define _GNU_SOURCE
+// Configure which emitter to use for this target.
+// WASM has no native emitters — bytecode interpreter IS wasm.
+#if !defined(__wasm__)
+#if !defined(MICROPY_EMIT_X64) && defined(__x86_64__)
+    #define MICROPY_EMIT_X64        (1)
+#endif
+#if !defined(MICROPY_EMIT_X86) && defined(__i386__)
+    #define MICROPY_EMIT_X86        (1)
+#endif
+#if !defined(MICROPY_EMIT_THUMB) && defined(__thumb2__)
+    #define MICROPY_EMIT_THUMB      (1)
+    #define MICROPY_MAKE_POINTER_CALLABLE(p) ((void *)((mp_uint_t)(p) | 1))
+#endif
+// Some compilers define __thumb2__ and __arm__ at the same time, let
+// autodetected thumb2 emitter have priority.
+#if !defined(MICROPY_EMIT_ARM) && defined(__arm__) && !defined(__thumb2__)
+    #define MICROPY_EMIT_ARM        (1)
+#endif
 #endif
 
-/* ---- Type definitions (32-bit WASM) ---- */
-typedef int mp_int_t;
-typedef unsigned int mp_uint_t;
+// Type definitions for the specific machine based on the word size.
+#ifndef MICROPY_OBJ_REPR
+#ifdef __LP64__
+typedef long mp_int_t; // must be pointer size
+typedef unsigned long mp_uint_t; // must be pointer size
+#else
+// These are definitions for machines where sizeof(int) == sizeof(void*),
+// regardless of actual size.
+typedef int mp_int_t; // must be pointer size
+typedef unsigned int mp_uint_t; // must be pointer size
+#endif
+#else
+// Assume that if we already defined the obj repr then we also defined types.
+#endif
+
+// Cannot include <sys/types.h>, as it may lead to symbol name clashes
+#if _FILE_OFFSET_BITS == 64 && !defined(__LP64__)
+typedef long long mp_off_t;
+#else
 typedef long mp_off_t;
-#define MP_SSIZE_MAX (0x7fffffff)
+#endif
 
-/* ---- JS host function declarations ---- */
-extern void     mp_js_hook(void);
-extern int      mp_js_ticks_ms(void);
-extern double   mp_js_time_ms(void);
-extern uint32_t mp_js_random_u32(void);
-extern void     mp_js_write(const char *str, mp_uint_t len);
-extern void     mp_js_set_deadline(uint32_t deadline_ms);
+// We need to provide a declaration/definition of alloca()
+// unless support for it is disabled.
+#if !defined(MICROPY_NO_ALLOCA) || MICROPY_NO_ALLOCA == 0
+#if defined(__FreeBSD__) || defined(__NetBSD__)
+#include <stdlib.h>
+#else
+#include <alloca.h>
+#endif
+#endif
 
-/* ---- stderr print (used by mphalport) ---- */
+// Always enable GC.
+#define MICROPY_ENABLE_GC           (1)
+// CIRCUITPY-CHANGE
+#define MICROPY_ENABLE_SELECTIVE_COLLECT (1)
+
+#if !(defined(MICROPY_GCREGS_SETJMP) || defined(__x86_64__) || defined(__i386__) || defined(__thumb2__) || defined(__thumb__) || defined(__arm__) || (defined(__riscv) && (__riscv_xlen == 64)))
+// Fall back to setjmp() implementation for discovery of GC pointers in registers.
+#define MICROPY_GCREGS_SETJMP (1)
+#endif
+
+// Enable the VFS, and enable the posix "filesystem".
+#define MICROPY_ENABLE_FINALISER    (1)
+#define MICROPY_VFS                 (1)
+#define MICROPY_READER_VFS          (1)
+#define MICROPY_HELPER_LEXER_UNIX   (1)
+#define MICROPY_VFS_POSIX           (1)
+#define MICROPY_READER_POSIX        (1)
+// CIRCUITPY-CHANGE: define no matter what
+#ifndef MICROPY_TRACKED_ALLOC
+#define MICROPY_TRACKED_ALLOC       (MICROPY_PY_FFI || MICROPY_BLUETOOTH_BTSTACK)
+#endif
+
+// VFS stat functions should return time values relative to 1970/1/1
+#define MICROPY_EPOCH_IS_1970       (1)
+
+// Assume that select() call, interrupted with a signal, and erroring
+// with EINTR, updates remaining timeout value.
+#define MICROPY_SELECT_REMAINING_TIME (1)
+
+// Disable stackless by default.
+#ifndef MICROPY_STACKLESS
+#define MICROPY_STACKLESS           (0)
+#define MICROPY_STACKLESS_STRICT    (0)
+#endif
+
+// Implementation of the machine module.
+#ifdef __wasi__
+// WASM: linear memory is directly addressable — no /dev/mem needed.
+#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/wasm-dist/modmachine.c"
+#define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
+#define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
+#else
+#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/unix/modmachine.c"
+#define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
+#define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
+#endif
+
+#define MICROPY_FATFS_ENABLE_LFN       (1)
+#define MICROPY_FATFS_RPATH            (2)
+#define MICROPY_FATFS_MAX_SS           (4096)
+#define MICROPY_FATFS_LFN_CODE_PAGE    437 /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
+// CIRCUITPY-CHANGE: enable FAT32 support
+#define MICROPY_FATFS_MKFS_FAT32       (1)
+// CIRCUITPY-CHANGE: allow FAT label access
+#define MICROPY_FATFS_USE_LABEL (1)
+
+#define MICROPY_ALLOC_PATH_MAX      (PATH_MAX)
+
+// Ensure builtinimport.c works with -m.
+#define MICROPY_MODULE_OVERRIDE_MAIN_IMPORT (1)
+
+// Don't default sys.argv and sys.path because we do that in main.
+#define MICROPY_PY_SYS_PATH_ARGV_DEFAULTS (0)
+
+// Enable sys.executable.
+#define MICROPY_PY_SYS_EXECUTABLE (1)
+
+#ifndef __wasi__
+#define MICROPY_PY_SOCKET_LISTEN_BACKLOG_DEFAULT (SOMAXCONN < 128 ? SOMAXCONN : 128)
+#endif
+
+// Bare-metal ports don't have stderr. Printing debug to stderr may give tests
+// which check stdout a chance to pass, etc.
 extern const struct _mp_print_t mp_stderr_print;
+#define MICROPY_DEBUG_PRINTER (&mp_stderr_print)
+#define MICROPY_ERROR_PRINTER (&mp_stderr_print)
 
-/* ---- Background tasks: run the same hook as the VM poll ----
- * Real CircuitPython routes this to background_callback_run_all().
- * We route it to mp_hal_hook() which handles:
- *   1. deadline/interrupt check
- *   2. hardware register sync from bc_in
- *   3. bc_out drain via mp_js_hook()
- * This ensures any code calling RUN_BACKGROUND_TASKS (pyexec, readline,
- * mp_hal_delay_ms, etc.) services hardware I/O and events.              */
-#define RUN_BACKGROUND_TASKS do { extern void mp_hal_hook(void); mp_hal_hook(); } while (0)
-
-/* ---- Include CircuitPython base config for type defs and REPL banner ---- */
-#if !MICROPY_VARIANT_MINIMAL
-#include "py/circuitpy_mpconfig.h"
+// For the native emitter configure how to mark a region as executable.
+#ifndef __wasi__
+void mp_unix_alloc_exec(size_t min_size, void **ptr, size_t *size);
+void mp_unix_free_exec(void *ptr, size_t size);
+#define MP_PLAT_ALLOC_EXEC(min_size, ptr, size) mp_unix_alloc_exec(min_size, ptr, size)
+#define MP_PLAT_FREE_EXEC(ptr, size) mp_unix_free_exec(ptr, size)
 #endif
 
-/* ---- Post-circuitpy_mpconfig overrides ---- */
-#ifdef MICROPY_REPL_EVENT_DRIVEN
-#undef MICROPY_REPL_EVENT_DRIVEN
+// If enabled, configure how to seed random on init.
+#ifdef MICROPY_PY_RANDOM_SEED_INIT_FUNC
+#include <stddef.h>
+void mp_hal_get_random(size_t n, void *buf);
+static inline unsigned long mp_random_seed_init(void) {
+    unsigned long r;
+    mp_hal_get_random(sizeof(r), &r);
+    return r;
+}
 #endif
-#define MICROPY_REPL_EVENT_DRIVEN       (0)
 
-/* Enable GC alloc threshold for split-heap auto mode */
-#ifdef MICROPY_GC_ALLOC_THRESHOLD
-#undef MICROPY_GC_ALLOC_THRESHOLD
+#ifdef __linux__
+// Can access physical memory using /dev/mem
+#define MICROPY_PLAT_DEV_MEM  (1)
 #endif
-#define MICROPY_GC_ALLOC_THRESHOLD      (1)
+
+#ifdef __ANDROID__
+#include <android/api-level.h>
+#if __ANDROID_API__ < 4
+// Bionic libc in Android 1.5 misses these 2 functions
+#define MP_NEED_LOG2 (1)
+#define nan(x) NAN
+#endif
+#endif
+
+// From "man readdir": "Under glibc, programs can check for the availability
+// of the fields [in struct dirent] not defined in POSIX.1 by testing whether
+// the macros [...], _DIRENT_HAVE_D_TYPE are defined."
+// Other libc's don't define it, but proactively assume that dirent->d_type
+// is available on a modern *nix system.
+#ifndef _DIRENT_HAVE_D_TYPE
+#define _DIRENT_HAVE_D_TYPE (1)
+#endif
+// This macro is not provided by glibc but we need it so ports that don't have
+// dirent->d_ino can disable the use of this field.
+#ifndef _DIRENT_HAVE_D_INO
+#define _DIRENT_HAVE_D_INO (1)
+#endif
+
+#ifndef __APPLE__
+// For debugging purposes, make printf() available to any source file.
+#include <stdio.h>
+#endif
+
+// Configure the implementation of machine.idle().
+#ifdef __wasi__
+// WASI has no sched_yield — idle is a no-op (or future yield-to-JS)
+#define MICROPY_UNIX_MACHINE_IDLE
+#else
+#include <sched.h>
+#define MICROPY_UNIX_MACHINE_IDLE sched_yield();
+#endif
+
+#ifndef MICROPY_PY_BLUETOOTH_ENABLE_CENTRAL_MODE
+#define MICROPY_PY_BLUETOOTH_ENABLE_CENTRAL_MODE (1)
+#endif
+
+#ifndef MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS
+#define MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS (MICROPY_BLUETOOTH_NIMBLE)
+#endif
+
+// CIRCUITPY-CHANGE
+#define RUN_BACKGROUND_TASKS ((void)0)

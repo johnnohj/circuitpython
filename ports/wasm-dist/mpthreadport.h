@@ -1,17 +1,35 @@
 /*
- * mpthreadport.h — WASM-dist thread port
+ * WASM thread port — single-threaded, yield-aware.
  *
- * Each WebWorker is a separate WASM instance with its own GIL.
- * mp_thread_create() serializes spawn requests to /dev/bc_out so
- * PythonHost.js can launch a new Worker. No pthreads, no SharedArrayBuffer.
+ * WASM runs one thread. But CircuitPython always "runs a thread" — the
+ * Python VM is a thread that the supervisor starts and stops. The atomic
+ * section API maps to yield prevention: while inside an atomic section,
+ * the frame-budget supervisor must not trigger a VM yield.
  *
- * Mutex operations are no-ops: each worker runs single-threaded Python,
- * so intra-worker mutual exclusion is never needed.
+ * This header replaces the unix port's pthread-based mpthreadport.h.
+ * The mutex types become simple integers (nesting counters or no-ops).
  */
+
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
-/* Stub mutex type — no real locking needed inside a single WASM worker */
-typedef struct { volatile int locked; } mp_thread_mutex_t;
-typedef struct { volatile int locked; int count; } mp_thread_recursive_mutex_t;
+// Mutex types — single-threaded, so these are no-ops structurally.
+// We keep the types so code that references them still compiles.
+typedef int mp_thread_mutex_t;
+typedef int mp_thread_recursive_mutex_t;
+
+void mp_thread_init(void);
+void mp_thread_deinit(void);
+void mp_thread_gc_others(void);
+
+// Atomic sections — these track nesting depth so the supervisor
+// knows not to yield while inside one.  On real boards this disables
+// interrupts; on WASM it prevents the frame-budget yield.
+void mp_thread_unix_begin_atomic_section(void);
+void mp_thread_unix_end_atomic_section(void);
+
+// Query whether we're inside an atomic section (yield-prevention).
+// The supervisor's budget check should call this before triggering yield.
+bool mp_thread_in_atomic_section(void);

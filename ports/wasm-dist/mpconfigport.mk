@@ -1,36 +1,33 @@
-# WASM-dist port Makefile configuration
-# Lean build: no hardware modules, no asyncify
+# Enable/disable modules and 3rd-party libs to be included in interpreter
+# WASM port — based on unix port defaults, adapted for wasi-sdk
 
-CIRCUITPY_FULL_BUILD = 0
-CIRCUITPY_MIN_GCC_VERSION = 0
+# Readline (uses shared/readline, no termios dependency)
+MICROPY_USE_READLINE = 1
 
-# VFS via POSIX (Emscripten routes to MEMFS)
-MICROPY_VFS = 1
-LONGINT_IMPL = MPZ
-MICROPY_USE_READLINE = 0
+# Threading — disabled for WASM (single-threaded)
+MICROPY_PY_THREAD = 0
 
-# Async support
-MICROPY_PY_ASYNC_AWAIT = 1
-MICROPY_PY_ASYNCIO = 1
-
-# Disabled modules
-MICROPY_PY_BTREE = 0
-MICROPY_PY_THREAD = 1   # _thread → WebWorker (mpthread_wasm.c)
+# Terminal I/O — disabled (no termios in WASI, explore adaptation later)
 MICROPY_PY_TERMIOS = 0
-MICROPY_PY_SOCKET = 0
+
+# FFI — disabled (no dynamic library loading, explore JS interop later)
 MICROPY_PY_FFI = 0
+
+# Socket, SSL, BTree, JNI — not applicable
+MICROPY_PY_SOCKET = 0
 MICROPY_PY_SSL = 0
-MICROPY_SSL_AXTLS = 0
-MICROPY_SSL_MBEDTLS = 0
+MICROPY_PY_BTREE = 0
 MICROPY_PY_JNI = 0
-MICROPY_STANDALONE = 0
-MICROPY_ROM_TEXT_COMPRESSION = 0
+
+# Filesystem — POSIX VFS via WASI, no FatFS/LFS
 MICROPY_VFS_FAT = 0
 MICROPY_VFS_LFS1 = 0
 MICROPY_VFS_LFS2 = 0
-MICROPY_EMIT_NATIVE = 1
-MICROPY_EMIT_WASM = 1
+
+# Native emitters — not applicable (bytecode interpreter IS wasm)
+MICROPY_EMIT_NATIVE = 0
+
+# CircuitPython mode
+CFLAGS += -DCIRCUITPY=1
 CIRCUITPY_MESSAGE_COMPRESSION_LEVEL = 0
-USB_NUM_ENDPOINT_PAIRS = 0
-CIRCUITPY_USB_DEVICE = 0
-CIRCUITPY_STATUS_BAR = 0
+CIRCUITPY_ULAB = 0

@@ -3,7 +3,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2020 Jim Mussared
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,4 +24,10 @@
  * THE SOFTWARE.
  */
 
-// *FORMAT-OFF*
+#ifndef MICROPY_INCLUDED_UNIX_NIMBLE_PORT_H
+#define MICROPY_INCLUDED_UNIX_NIMBLE_PORT_H
+
+#define MICROPY_HW_BLE_UART_ID (0)
+#define MICROPY_HW_BLE_UART_BAUDRATE (1000000)
+
+#endif // MICROPY_INCLUDED_UNIX_NIMBLE_PORT_H
