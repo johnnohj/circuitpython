@@ -254,13 +254,26 @@ int main(int argc, char **argv) {
 
     /* Board lifecycle loop: run code.py (if exists) then REPL,
      * restart on Ctrl+D.  For now, just REPL. */
+    #if MICROPY_REPL_EVENT_DRIVEN
+    /* Event-driven REPL in CLI mode: simulate blocking by reading
+     * one character at a time from stdin and feeding it to the
+     * event-driven state machine. */
+    pyexec_event_repl_init();
+    for (;;) {
+        int c = mp_hal_stdin_rx_chr();
+        int ret = pyexec_event_repl_process_char(c);
+        if (ret & PYEXEC_FORCED_EXIT) {
+            break;
+        }
+    }
+    #else
     for (;;) {
         int ret = pyexec_friendly_repl();
-
         if (ret == PYEXEC_FORCED_EXIT) {
             break;
         }
     }
+    #endif
 
     mp_deinit();
     return 0;
@@ -279,6 +292,10 @@ int cp_init(void) {
 
     #if MICROPY_VM_YIELD_ENABLED
     vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
+    #endif
+
+    #if MICROPY_REPL_EVENT_DRIVEN
+    pyexec_event_repl_init();
     #endif
 
     fprintf(stderr, "[sup] initialized (heap=%dK budget=%dms)\n",
@@ -332,17 +349,31 @@ int cp_step(void) {
     /* ── Phase 3: Python VM ── */
     switch (_state) {
 
-    case SUP_REPL:
-        /* The blocking REPL (pyexec_friendly_repl) internally calls
-         * mp_hal_stdin_rx_chr().  With VM yield enabled, stdin_rx_chr
-         * yields when the rx buffer is empty, so the REPL suspends
-         * mid-call and resumes next frame.
-         *
-         * TODO: wire yield-driven REPL resume.  For now, cp_step()
-         * is the browser entry point but the REPL only works in
-         * CLI mode (main).  The stepping infrastructure is ready
-         * for code.py below. */
+    case SUP_REPL: {
+        #if MICROPY_REPL_EVENT_DRIVEN
+        /* Event-driven REPL: feed queued keystrokes one at a time.
+         * pyexec_event_repl_process_char is a pure state machine —
+         * no blocking.  When the user hits Enter, it compiles and
+         * executes inline.  If execution triggers VM yield (budget
+         * expired), it returns and we resume next frame. */
+        while (_rx_available() > 0) {
+            unsigned char c = _rx_buf[_rx_tail++];
+            if (_rx_tail >= _rx_head) {
+                _rx_head = 0;
+                _rx_tail = 0;
+            }
+            if (c == '\n') {
+                c = '\r';
+            }
+            int ret = pyexec_event_repl_process_char(c);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                /* Ctrl-D: restart REPL */
+                pyexec_event_repl_init();
+            }
+        }
+        #endif
         break;
+    }
 
     case SUP_CODE_RUNNING: {
         #if MICROPY_VM_YIELD_ENABLED

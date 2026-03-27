@@ -35,6 +35,12 @@
 #define CIRCUITPY_NEOPIXEL_WRITE    (1)
 #define CIRCUITPY_MICROCONTROLLER   (1)
 
+// ── Event-driven REPL for browser frame-budget model ──
+// JS pushes one char at a time via cp_push_key().
+// pyexec_event_repl_process_char() is a pure state machine — no blocking.
+// When user hits Enter, execution can yield via MP_VM_RETURN_YIELD.
+#define MICROPY_REPL_EVENT_DRIVEN   (1)
+
 // ── Status bar (rendered in terminal top row) ──
 #define CIRCUITPY_STATUS_BAR        (1)
 
