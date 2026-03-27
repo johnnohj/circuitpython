@@ -45,6 +45,9 @@
 #endif
 
 #include "supervisor/hal.h"
+#if CIRCUITPY_STATUS_BAR
+#include "supervisor/shared/status_bar.h"
+#endif
 #include "mpthreadport.h"
 
 /* ------------------------------------------------------------------ */
@@ -237,6 +240,12 @@ static void _core_init(void) {
      * Must come after mp_init() and GC setup — allocates displayio objects. */
     #if CIRCUITPY_DISPLAYIO
     board_display_init();
+    #endif
+
+    /* Initialize and start the status bar (renders to terminal top row). */
+    #if CIRCUITPY_STATUS_BAR
+    supervisor_status_bar_init();
+    supervisor_status_bar_start();
     #endif
 }
 
