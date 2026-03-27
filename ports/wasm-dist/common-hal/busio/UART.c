@@ -1,8 +1,8 @@
 /*
  * UART.c — Virtual UART backed by OPFS files.
  *
- * TX goes to /hw/uart/{port}/tx — the worker or JS reads it.
- * RX comes from /hw/uart/{port}/rx — simulated device or JS writes it.
+ * TX goes to /hal/uart/{port}/tx — the worker or JS reads it.
+ * RX comes from /hal/uart/{port}/rx — simulated device or JS writes it.
  *
  * Supports up to 8 UART ports. Port ID is auto-assigned on construct.
  */
@@ -25,13 +25,13 @@
 static uint8_t _next_port_id = 0;
 
 static void _uart_path(char *buf, size_t buflen, uint8_t port, const char *ep) {
-    snprintf(buf, buflen, "/hw/uart/%u/%s", (unsigned)port, ep);
+    snprintf(buf, buflen, "/hal/uart/%u/%s", (unsigned)port, ep);
 }
 
 static void _ensure_dirs(uint8_t port) {
-    mkdir("/hw/uart", 0777);
+    mkdir("/hal/uart", 0777);
     char dir[32];
-    snprintf(dir, sizeof(dir), "/hw/uart/%u", (unsigned)port);
+    snprintf(dir, sizeof(dir), "/hal/uart/%u", (unsigned)port);
     mkdir(dir, 0777);
 }
 

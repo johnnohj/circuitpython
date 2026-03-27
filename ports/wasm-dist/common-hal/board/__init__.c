@@ -3,7 +3,7 @@
  *
  * Default I2C/SPI/UART creation using the standard pin assignments.
  * When CIRCUITPY_BUSIO is enabled, these will create real bus objects.
- * The reactor can override pin assignments via /hw/board/config.json.
+ * The reactor can override pin assignments via /hal/board/config.json.
  */
 
 #include "shared-bindings/board/__init__.h"

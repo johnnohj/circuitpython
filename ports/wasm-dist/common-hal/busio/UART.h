@@ -1,7 +1,7 @@
 /*
  * UART.h — Virtual UART backed by OPFS ring files.
  *
- * TX/RX data flows through /hw/uart/{port}/tx and /hw/uart/{port}/rx.
+ * TX/RX data flows through /hal/uart/{port}/tx and /hal/uart/{port}/rx.
  * User code writes to TX; the worker or JS writes incoming data to RX.
  * This enables serial device simulation (GPS, BLE modules, etc.).
  */

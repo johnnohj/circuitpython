@@ -1,13 +1,13 @@
 /*
  * I2C.c — Virtual I2C backed by OPFS register files.
  *
- * Each I2C device is a file at /hw/i2c/dev/{addr_dec}.
+ * Each I2C device is a file at /hal/i2c/dev/{addr_dec}.
  * The file is the device's register space. A write of [reg, data...]
  * seeks to `reg` and writes `data`. A read reads from the current
  * file position. write_read does both in sequence.
  *
  * To simulate a BMP280 at address 0x76:
- *   echo -n '\x58' | dd of=/hw/i2c/dev/118 bs=1 seek=208  # chip ID at 0xD0
+ *   echo -n '\x58' | dd of=/hal/i2c/dev/118 bs=1 seek=208  # chip ID at 0xD0
  *   # Now i2c.readfrom_mem(0x76, 0xD0, 1) returns b'\x58'
  */
 
@@ -23,16 +23,16 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define I2C_DEV_DIR "/hw/i2c/dev"
+#define I2C_DEV_DIR "/hal/i2c/dev"
 
 /* Build the device file path for a given address. */
 static void _dev_path(char *buf, size_t buflen, uint16_t addr) {
     snprintf(buf, buflen, I2C_DEV_DIR "/%u", (unsigned)addr);
 }
 
-/* Ensure /hw/i2c/dev/ directory exists. */
+/* Ensure /hal/i2c/dev/ directory exists. */
 static void _ensure_dirs(void) {
-    mkdir("/hw/i2c", 0777);
+    mkdir("/hal/i2c", 0777);
     mkdir(I2C_DEV_DIR, 0777);
 }
 

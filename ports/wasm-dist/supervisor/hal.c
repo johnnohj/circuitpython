@@ -47,6 +47,11 @@ static void _ensure_dir(const char *path) {
 
 void hal_init(void) {
     _ensure_dir("/hal");
+    _ensure_dir("/hal/serial");
+    _ensure_dir("/hal/i2c");
+    _ensure_dir("/hal/i2c/dev");
+    _ensure_dir("/hal/spi");
+    _ensure_dir("/hal/uart");
 
     _gpio_fd = open("/hal/gpio", O_RDWR | O_CREAT, 0644);
     _analog_fd = open("/hal/analog", O_RDWR | O_CREAT, 0644);

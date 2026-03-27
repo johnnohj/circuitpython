@@ -2,7 +2,7 @@
  * SPI.c — Virtual SPI backed by OPFS transfer files.
  *
  * SPI is simpler than I2C: full-duplex byte transfers. We use a
- * transfer file at /hw/spi/xfer. Write puts data there; read pulls
+ * transfer file at /hal/spi/xfer. Write puts data there; read pulls
  * from it. A sensor simulator writes response bytes before the
  * driver reads.
  *
@@ -20,10 +20,10 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define SPI_XFER_PATH "/hw/spi/xfer"
+#define SPI_XFER_PATH "/hal/spi/xfer"
 
 static void _ensure_dirs(void) {
-    mkdir("/hw/spi", 0777);
+    mkdir("/hal/spi", 0777);
 }
 
 void common_hal_busio_spi_construct(busio_spi_obj_t *self,
