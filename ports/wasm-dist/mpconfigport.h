@@ -58,6 +58,11 @@
 #undef MICROPY_PY_MICROPYTHON_RINGIO
 #define MICROPY_PY_MICROPYTHON_RINGIO (1)
 
+// Force print() through mp_hal_stdout_tx_strn (HAL) instead of VFS fd.
+// This ensures all output flows through our routing in supervisor/micropython.c.
+#undef MICROPY_PY_SYS_STDFILES
+#define MICROPY_PY_SYS_STDFILES     (0)
+
 // No /dev/mem on WASI
 #undef MICROPY_PLAT_DEV_MEM
 #define MICROPY_PLAT_DEV_MEM        (0)

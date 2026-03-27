@@ -98,11 +98,11 @@
 #define MICROPY_PY_OS_SYSTEM           (1)
 #define MICROPY_PY_OS_URANDOM          (1)
 
-// Enable the unix-specific "time" module.
-#define MICROPY_PY_TIME                (1)
-#define MICROPY_PY_TIME_TIME_TIME_NS   (1)
-#define MICROPY_PY_TIME_CUSTOM_SLEEP   (1)
-#define MICROPY_PY_TIME_INCLUDEFILE    "ports/unix/modtime.c"
+// Time module: use CircuitPython's shared-bindings/time (not extmod/modtime.c).
+// The extmod version conflicts with CircuitPython's MP_REGISTER_MODULE for time.
+#define MICROPY_PY_TIME                (0)
+// CircuitPython's time module uses common_hal_time_* from shared-module/time.
+#define CIRCUITPY_TIME                 (1)
 
 #if MICROPY_PY_SSL
 #define MICROPY_PY_HASHLIB_MD5         (1)

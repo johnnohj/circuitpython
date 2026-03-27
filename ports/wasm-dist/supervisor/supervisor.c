@@ -57,16 +57,7 @@ extern bool vm_yield_code_running(void);
 extern void mp_vm_request_yield(int reason, uint32_t arg);
 #endif
 
-/* ------------------------------------------------------------------ */
-/* stderr printer — referenced by py/ for debug/error output           */
-/* ------------------------------------------------------------------ */
-
-static void stderr_print_strn(void *env, const char *str, size_t len) {
-    (void)env;
-    write(STDERR_FILENO, str, len);
-}
-
-const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};
+/* mp_stderr_print is in wasi_mphal.c */
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */

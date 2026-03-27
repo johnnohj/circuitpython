@@ -1,27 +1,10 @@
 /*
- * This file is part of the MicroPython project, http://micropython.org/
+ * wasi_mphal.c — WASI platform services for the WASM port.
  *
- * The MIT License (MIT)
+ * Provides timing, random, interrupt char, stdio mode, and stderr.
+ * Stdin/stdout are handled by supervisor/micropython.c + supervisor/serial.c.
  *
- * Copyright (c) 2015 Damien P. George
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * Adapted from ports/unix/unix_mphal.c with WASI guards for signals/termios.
  */
 
 #include <unistd.h>
@@ -34,14 +17,22 @@
 #include "py/mphal.h"
 #include "py/mpthread.h"
 #include "py/runtime.h"
-#include "extmod/misc.h"
+#include "py/obj.h"
 
-#if defined(__GLIBC__) && defined(__GLIBC_PREREQ)
-#if __GLIBC_PREREQ(2, 25)
-#include <sys/random.h>
-#define _HAVE_GETRANDOM
-#endif
-#endif
+/* ------------------------------------------------------------------ */
+/* stderr printer — always goes to WASI fd 2                           */
+/* ------------------------------------------------------------------ */
+
+static void stderr_print_strn(void *env, const char *str, size_t len) {
+    (void)env;
+    write(STDERR_FILENO, str, len);
+}
+
+const mp_print_t mp_stderr_print = {NULL, stderr_print_strn};
+
+/* ------------------------------------------------------------------ */
+/* Interrupt character                                                 */
+/* ------------------------------------------------------------------ */
 
 #if !defined(_WIN32) && !defined(__wasi__)
 #include <signal.h>
@@ -49,21 +40,9 @@
 static void sighandler(int signum) {
     if (signum == SIGINT) {
         #if MICROPY_ASYNC_KBD_INTR
-        #if MICROPY_PY_THREAD_GIL
-        // Since signals can occur at any time, we may not be holding the GIL when
-        // this callback is called, so it is not safe to raise an exception here
-        #error "MICROPY_ASYNC_KBD_INTR and MICROPY_PY_THREAD_GIL are not compatible"
-        #endif
-        mp_obj_exception_clear_traceback(MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_kbd_exception)));
-        sigset_t mask;
-        sigemptyset(&mask);
-        // On entry to handler, its signal is blocked, and unblocked on
-        // normal exit. As we instead perform longjmp, unblock it manually.
-        sigprocmask(SIG_SETMASK, &mask, NULL);
-        nlr_raise(MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_kbd_exception)));
+        #error "MICROPY_ASYNC_KBD_INTR not supported on this port"
         #else
         if (MP_STATE_MAIN_THREAD(mp_pending_exception) == MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_kbd_exception))) {
-            // this is the second time we are called, so die straight away
             exit(1);
         }
         mp_sched_keyboard_interrupt();
@@ -72,22 +51,17 @@ static void sighandler(int signum) {
 }
 #endif
 
-// CIRCUITPY-CHANGE: mp_hal_set_interrupt_char(int) instead of char
 void mp_hal_set_interrupt_char(int c) {
-    // configure terminal settings to (not) let ctrl-C through
     #if defined(__wasi__)
-    // WASI has no signals — interrupt char handled via MEMFS rx buffer
-    (void)c;
+    (void)c; /* Interrupt via MEMFS rx buffer / background task */
     #elif !defined(_WIN32)
     if (c == CHAR_CTRL_C) {
-        // enable signal handler
         struct sigaction sa;
         sa.sa_flags = 0;
         sa.sa_handler = sighandler;
         sigemptyset(&sa.sa_mask);
         sigaction(SIGINT, &sa, NULL);
     } else {
-        // disable signal handler
         struct sigaction sa;
         sa.sa_flags = 0;
         sa.sa_handler = SIG_DFL;
@@ -97,30 +71,25 @@ void mp_hal_set_interrupt_char(int c) {
     #endif
 }
 
-// CIRCUITPY-CHANGE
 bool mp_hal_is_interrupted(void) {
     return false;
 }
 
+/* ------------------------------------------------------------------ */
+/* stdio mode — terminal raw/cooked control                            */
+/* ------------------------------------------------------------------ */
+
 #if MICROPY_USE_READLINE == 1
-
 #if defined(__wasi__)
-// WASI has no termios — terminal mode is controlled by the JS host.
-// These are no-ops; the browser terminal is always in "raw" mode
-// because JS sends individual keypresses.
-void mp_hal_stdio_mode_raw(void) {
-}
-
-void mp_hal_stdio_mode_orig(void) {
-}
-
+/* WASI has no termios — JS host controls terminal mode. */
+void mp_hal_stdio_mode_raw(void) {}
+void mp_hal_stdio_mode_orig(void) {}
 #else
 #include <termios.h>
 
 static struct termios orig_termios;
 
 void mp_hal_stdio_mode_raw(void) {
-    // save and set terminal settings
     tcgetattr(0, &orig_termios);
     static struct termios termios;
     termios = orig_termios;
@@ -133,147 +102,14 @@ void mp_hal_stdio_mode_raw(void) {
 }
 
 void mp_hal_stdio_mode_orig(void) {
-    // restore terminal settings
     tcsetattr(0, TCSAFLUSH, &orig_termios);
 }
 #endif
-
 #endif
 
-#if MICROPY_PY_OS_DUPTERM
-static int call_dupterm_read(size_t idx) {
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_obj_t read_m[3];
-        mp_load_method(MP_STATE_VM(dupterm_objs[idx]), MP_QSTR_read, read_m);
-        read_m[2] = MP_OBJ_NEW_SMALL_INT(1);
-        mp_obj_t res = mp_call_method_n_kw(1, 0, read_m);
-        if (res == mp_const_none) {
-            return -2;
-        }
-        mp_buffer_info_t bufinfo;
-        mp_get_buffer_raise(res, &bufinfo, MP_BUFFER_READ);
-        if (bufinfo.len == 0) {
-            mp_printf(&mp_plat_print, "dupterm: EOF received, deactivating\n");
-            MP_STATE_VM(dupterm_objs[idx]) = MP_OBJ_NULL;
-            return -1;
-        }
-        nlr_pop();
-        return *(byte *)bufinfo.buf;
-    } else {
-        // Temporarily disable dupterm to avoid infinite recursion
-        mp_obj_t save_term = MP_STATE_VM(dupterm_objs[idx]);
-        MP_STATE_VM(dupterm_objs[idx]) = NULL;
-        mp_printf(&mp_plat_print, "dupterm: ");
-        mp_obj_print_exception(&mp_plat_print, nlr.ret_val);
-        MP_STATE_VM(dupterm_objs[idx]) = save_term;
-    }
-
-    return -1;
-}
-#endif
-
-/*
- * mp_hal_stdin_rx_chr — read one character, hook-aware.
- *
- * In browser mode, JS pushes bytes into the rx buffer via cp_push_key().
- * We loop with MICROPY_VM_HOOK_LOOP so that:
- *   - Background tasks run (display, hw endpoints, Ctrl-C)
- *   - The wall-clock budget is checked
- *   - If budget expires with no input, the VM yields back to JS
- *   - Next cp_step() resumes the REPL where it left off
- *
- * In CLI mode, if the rx buffer is empty we fall back to blocking read()
- * on WASI stdin.  The hook still fires so Ctrl-C detection works.
- *
- * Follows the pattern from supervisor/shared/micropython.c.
- */
-
-/*
- * mp_hal_stdin_rx_chr — read one character, hook-aware.
- *
- * In browser mode, JS pushes bytes into the rx buffer via cp_push_key().
- * We loop with MICROPY_VM_HOOK_LOOP so that:
- *   - Background tasks run (display, hw endpoints, Ctrl-C)
- *   - The wall-clock budget is checked
- *   - If budget expires with no input, the VM yields back to JS
- *   - Next cp_step() resumes the REPL where it left off
- *
- * In CLI mode (wasm_cli_mode), if the rx buffer is empty we fall back
- * to blocking read() on WASI stdin.
- *
- * Follows the pattern from supervisor/shared/micropython.c.
- */
-
-/* rx buffer — owned by supervisor/supervisor.c */
-extern uint8_t _rx_buf[];
-extern int _rx_head;
-extern int _rx_tail;
-extern int _rx_available(void);
-
-/* Runtime mode flag — set by main() in supervisor/supervisor.c */
-extern bool wasm_cli_mode;
-
-int mp_hal_stdin_rx_chr(void) {
-    for (;;) {
-        #ifdef MICROPY_VM_HOOK_LOOP
-        MICROPY_VM_HOOK_LOOP
-        #endif
-        mp_handle_pending(true);
-
-        /* Check rx buffer first (browser: JS pushed keys, CLI: unused) */
-        if (_rx_available() > 0) {
-            unsigned char c = _rx_buf[_rx_tail++];
-            /* Reset buffer when fully consumed */
-            if (_rx_tail >= _rx_head) {
-                _rx_head = 0;
-                _rx_tail = 0;
-            }
-            if (c == '\n') {
-                c = '\r';
-            }
-            return c;
-        }
-
-        /* CLI mode: blocking read from WASI stdin */
-        if (wasm_cli_mode) {
-            unsigned char c;
-            ssize_t ret;
-            MP_HAL_RETRY_SYSCALL(ret, read(STDIN_FILENO, &c, 1), {});
-            if (ret == 0) {
-                c = 4; // EOF, ctrl-D
-            } else if (c == '\n') {
-                c = '\r';
-            }
-            return c;
-        }
-
-        /* Browser mode: loop back, hook will yield if budget is spent */
-    }
-}
-
-mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
-    ssize_t ret;
-    MP_HAL_RETRY_SYSCALL(ret, write(STDOUT_FILENO, str, len), {});
-    mp_uint_t written = ret < 0 ? 0 : ret;
-    // CIRCUITPY-CHANGE: need to conditionalize MICROPY_PY_OS_DUPTERM
-    #if MICROPY_PY_OS_DUPTERM
-    int dupterm_res = mp_os_dupterm_tx_strn(str, len);
-    if (dupterm_res >= 0) {
-        written = MIN((mp_uint_t)dupterm_res, written);
-    }
-    #endif
-    return written;
-}
-
-// cooked is same as uncooked because the terminal does some postprocessing
-void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len) {
-    mp_hal_stdout_tx_strn(str, len);
-}
-
-void mp_hal_stdout_tx_str(const char *str) {
-    mp_hal_stdout_tx_strn(str, strlen(str));
-}
+/* ------------------------------------------------------------------ */
+/* Timing — CLOCK_MONOTONIC via wasi-sdk                               */
+/* ------------------------------------------------------------------ */
 
 #ifndef mp_hal_ticks_ms
 mp_uint_t mp_hal_ticks_ms(void) {
@@ -320,11 +156,10 @@ void mp_hal_delay_ms(mp_uint_t ms) {
 }
 #endif
 
-// supervisor_ticks_ms — needed by asyncio when CIRCUITPY=1.
-// asyncio defines: #define ticks() supervisor_ticks_ms()
-// Returns mp_obj_t with 29-bit wrapping tick value, matching
-// shared-bindings/supervisor/__init__.c behavior.
-#include "py/obj.h"
+/* ------------------------------------------------------------------ */
+/* supervisor_ticks_ms — needed by asyncio and shared-module/time      */
+/* ------------------------------------------------------------------ */
+
 mp_obj_t supervisor_ticks_ms(void) {
     uint64_t ticks = (uint64_t)mp_hal_ticks_ms();
     return mp_obj_new_int((ticks + 0x1fff0000) % (1 << 29));
@@ -338,13 +173,17 @@ uint32_t supervisor_ticks_ms32(void) {
     return (uint32_t)mp_hal_ticks_ms();
 }
 
+/* ------------------------------------------------------------------ */
+/* Random                                                              */
+/* ------------------------------------------------------------------ */
+
 void mp_hal_get_random(size_t n, void *buf) {
-    #ifdef _HAVE_GETRANDOM
-    RAISE_ERRNO(getrandom(buf, n, 0), errno);
-    #else
     int fd = open("/dev/random", O_RDONLY);
-    RAISE_ERRNO(fd, errno);
-    RAISE_ERRNO(read(fd, buf, n), errno);
-    close(fd);
-    #endif
+    if (fd >= 0) {
+        read(fd, buf, n);
+        close(fd);
+    } else {
+        /* Fallback: zero-fill if /dev/random unavailable */
+        memset(buf, 0, n);
+    }
 }

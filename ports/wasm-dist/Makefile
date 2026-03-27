@@ -106,6 +106,8 @@ SRC_C += \
 	supervisor/port.c \
 	supervisor/stubs.c \
 	supervisor/vm_yield.c \
+	supervisor/serial.c \
+	supervisor/micropython.c \
 	gccollect.c \
 	wasi_mphal.c \
 	mpthreadport.c \
@@ -115,9 +117,12 @@ SRC_C += \
 	$(SRC_MOD) \
 	$(wildcard $(VARIANT_DIR)/*.c)
 
-# CIRCUITPY-CHANGE
-# CircuitPython doesn't use extmod/modtime.c, but ports/unix/extmod.c depends on it.
-SRC_EXTMOD_C += extmod/modtime.c
+# CircuitPython's time module is in shared-bindings/time + shared-module/time.
+# Do NOT include extmod/modtime.c — it registers a conflicting `time` module.
+# Set MICROPY_PY_TIME=0 in config to suppress the extmod version.
+SRC_C += \
+	shared-bindings/time/__init__.c \
+	shared-module/time/__init__.c
 
 $(BUILD)/supervisor/shared/translate/translate.o: $(HEADER_BUILD)/qstrdefs.generated.h $(HEADER_BUILD)/compressed_translations.generated.h
 
