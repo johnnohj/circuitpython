@@ -77,8 +77,32 @@ SRC_C += \
 	common-hal/microcontroller/Pin.c \
 	common-hal/microcontroller/Processor.c \
 	common-hal/board/__init__.c \
+	common-hal/board/board_pins.c \
 	common-hal/os/__init__.c \
-	common-hal/displayio/__init__.c
+	common-hal/displayio/__init__.c \
+	shared/runtime/context_manager_helpers.c
+
+# ── Shared-bindings (register Python modules) ──
+SRC_C += \
+	shared-bindings/digitalio/__init__.c \
+	shared-bindings/digitalio/DigitalInOut.c \
+	shared-bindings/digitalio/DigitalInOutProtocol.c \
+	shared-bindings/digitalio/Direction.c \
+	shared-bindings/digitalio/DriveMode.c \
+	shared-bindings/digitalio/Pull.c \
+	shared-bindings/analogio/__init__.c \
+	shared-bindings/analogio/AnalogIn.c \
+	shared-bindings/analogio/AnalogOut.c \
+	shared-bindings/pwmio/__init__.c \
+	shared-bindings/pwmio/PWMOut.c \
+	shared-bindings/microcontroller/__init__.c \
+	shared-bindings/microcontroller/Pin.c \
+	shared-bindings/microcontroller/Processor.c \
+	shared-bindings/microcontroller/ResetReason.c \
+	shared-bindings/microcontroller/RunMode.c \
+	shared-bindings/board/__init__.c \
+	shared-bindings/neopixel_write/__init__.c \
+	shared-module/board/__init__.c
 
 # ── CIRCUITPY flags ──
 CFLAGS += \
@@ -92,5 +116,4 @@ CFLAGS += \
 	-DCIRCUITPY_PWMIO=1 \
 	-DCIRCUITPY_NEOPIXEL_WRITE=1 \
 	-DCIRCUITPY_MICROCONTROLLER=1 \
-	-DCIRCUITPY_BOARD=1 \
-	-DCIRCUITPY_STATUS_BAR=1
+	-DCIRCUITPY_BOARD=1

@@ -12,6 +12,9 @@
  */
 #pragma once
 
+// Port heap — must be visible to all shared code that calls port_malloc/port_free
+#include "supervisor/port_heap.h"
+
 #define MICROPY_HW_BOARD_NAME       "WASM-WASI"
 #define MICROPY_HW_MCU_NAME         "wasm32"
 #define CIRCUITPY_BOARD_ID          "wasm_wasi"

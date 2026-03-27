@@ -1,8 +1,7 @@
-MicroPython Unix port
+CircuitPython WASM port
 =====================
 
-The "unix" port runs in standard Unix-like environments including Linux, BSD,
-macOS, and Windows Subsystem for Linux.
+The "wasm" or "wasi" port runs in standard browser environments, like Chrome, Firefox, and Safari, as well as Node.js runtimes.
 
 The x86 and x64 architectures are supported (i.e. x86 32- and 64-bit), as well
 as ARM and MIPS. Extending the unix port to another architecture requires
@@ -14,12 +13,10 @@ Building
 
 ### Dependencies
 
-To build the unix port locally then you will need:
+To build the wasm port locally then you will need:
 
-* git command line executable, unless you downloaded a source .tar.xz file from
-  https://micropython.org/download/
-* gcc (or clang for macOS) toolchain
-* GNU Make
+* git command line executable
+* wasi-sdk
 * Python 3.x
 
 To build the default "standard" variant and configuration, then you will also
@@ -41,9 +38,9 @@ executable that doesn't require system `libffi` or `pkg-config`.)
 ### Default build steps
 
 To set up the environment for building (not needed every time), starting from
-the top-level MicroPython directory:
+the top-level CircuitPython directory:
 
-    $ cd ports/unix
+    $ cd ports/wasm-dist
     $ make -C ../../mpy-cross
     $ make submodules
 
@@ -52,13 +49,13 @@ cross-compiler](https://github.com/micropython/micropython/?tab=readme-ov-file#t
 The `make submodules` step can be skipped if you didn't clone the MicroPython
 source from git.
 
-Next, to build the actual executable (still in the `ports/unix` directory):
+Next, to build the actual executable (still in the `ports/wasm-dist` directory):
 
     $ make
 
 Then to give it a try:
 
-    $ ./build-standard/micropython
+    $ node run ./build-standard/micropython
     >>> list(5 * x + y for x in range(10) for y in [4, 2, 1])
 
 Use `CTRL-D` (i.e. EOF) to exit the shell.
@@ -66,30 +63,28 @@ Use `CTRL-D` (i.e. EOF) to exit the shell.
 Learn about command-line options (in particular, how to increase heap size
 which may be needed for larger applications):
 
-    $ ./build-standard/micropython -h
+    $ node run ./build-standard/micropython -h
 
 To run the complete testsuite, use:
 
     $ make test
 
-The Unix port comes with a built-in package manager called `mip`, e.g.:
+The wasm port comes with a built-in package manager called `fwip`, e.g.:
 
-    $ ./build-standard/micropython -m mip install hmac
+    $ node run ./build-standard/micropython -m mip install hmac
 
 or
 
-    $ ./build-standard/micropython
-    >>> import mip
-    >>> mip.install("hmac")
+    $ node run ./build-standard/micropython
+    >>> import fwip
+    >>> fwip.install("hmac")
 
-Browse available modules at
-[micropython-lib](https://github.com/micropython/micropython-lib). See
-[Package management](https://docs.micropython.org/en/latest/reference/packages.html)
-for more information about `mip`.
+`fwip` uses `fetch()` to import libraries from the bundle repo into the virtual board's `CIRCUITPY/lib` directory. In web browsers, this is persistent Virtual Filesystem storage backed by an Indexed Database Browse available modules at
+[Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle).
 
 ### Minimal Variant
 
-The "standard" variant of MicroPython is the default. It enables most features,
+The "standard" variant of CircuitPython is the default. It enables most features,
 including external modules interfaced using `libffi`. To instead build the
 "minimal" variant, which disables almost all optional features and modules:
 
@@ -131,7 +126,7 @@ deplibs` and `make`.
 ### Other dependencies
 
 To actually enable/disable use of dependencies, edit the
-`ports/unix/mpconfigport.mk` file, which has inline descriptions of the
+`ports/wasm-dist/mpconfigport.mk` file, which has inline descriptions of the
 options. For example, to build the SSL module, `MICROPY_PY_SSL` should be
 set to 1.
 
