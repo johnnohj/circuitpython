@@ -124,8 +124,10 @@ extern void *mp_vm_yield_state;
 #define MICROPY_PY_SYS_STDFILES (0)
 
 // circuitpy_mpconfig.h unconditionally sets MICROPY_REPL_EVENT_DRIVEN=0.
-// Override it here if the variant header set it to 1.
-#ifdef MICROPY_WORKER
+// The worker variant needs event-driven REPL (JS feeds one char at a time).
+// mpconfigvariant.h sets MICROPY_REPL_EVENT_DRIVEN=1 before this file,
+// but circuitpy_mpconfig.h above clobbers it.  Re-apply the variant's value.
+#if defined(_MICROPY_REPL_EVENT_DRIVEN_WANTED) && _MICROPY_REPL_EVENT_DRIVEN_WANTED
 #undef MICROPY_REPL_EVENT_DRIVEN
 #define MICROPY_REPL_EVENT_DRIVEN (1)
 #endif

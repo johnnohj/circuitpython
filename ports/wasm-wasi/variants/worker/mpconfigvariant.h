@@ -17,9 +17,6 @@
 
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
 
-/* Worker identification — lets mpconfigport.h and Makefile branch */
-#define MICROPY_WORKER (1)
-
 /* Display resolution — 480×360 gives 80×29 terminal at 6×12 font */
 #define WASM_DISPLAY_WIDTH  480
 #define WASM_DISPLAY_HEIGHT 360
@@ -44,6 +41,11 @@
 #define MICROPY_STACKLESS           (1)
 #define MICROPY_STACKLESS_STRICT    (1)
 #define MICROPY_ENABLE_PYSTACK      (1)
+
+/* VM yield — enables cooperative stepping for code.py execution.
+ * The VM checks mp_vm_should_yield() at backwards branches and returns
+ * MP_VM_RETURN_YIELD.  The JS host drives the step loop. */
+#define MICROPY_VM_YIELD_ENABLED    (1)
 
 /* VM hooks for background tasks (display refresh, endpoint polling) */
 #define MICROPY_ENABLE_SCHEDULER    (1)
@@ -84,8 +86,11 @@
 #define MICROPY_FLOAT_IMPL      (MICROPY_FLOAT_IMPL_DOUBLE)
 #define MICROPY_LONGINT_IMPL    (MICROPY_LONGINT_IMPL_MPZ)
 
-/* Event-driven REPL — worker feeds one char at a time, no blocking */
+/* Event-driven REPL — JS host feeds one char at a time, no blocking.
+ * circuitpy_mpconfig.h clobbers this to 0; _WANTED sentinel lets
+ * mpconfigport.h re-apply it after the include. */
 #define MICROPY_REPL_EVENT_DRIVEN (1)
+#define _MICROPY_REPL_EVENT_DRIVEN_WANTED (1)
 #define MICROPY_USE_READLINE      (1)
 #define MICROPY_USE_READLINE_HISTORY (1)
 #define MICROPY_HELPER_REPL       (1)

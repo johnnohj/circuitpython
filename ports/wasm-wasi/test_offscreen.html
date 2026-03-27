@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CircuitPython — Single Worker + OffscreenCanvas</title>
+<style>
+body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; margin: 20px; }
+canvas { image-rendering: pixelated; border: 2px solid #0f3460;
+         display: block; margin: 10px 0; background: #000; cursor: text; }
+#status { color: #7ec8e3; margin: 5px 0; }
+#stdout { background: #0a0a1a; border: 1px solid #333; padding: 8px;
+          max-height: 150px; overflow-y: auto; white-space: pre-wrap;
+          font-size: 12px; margin: 10px 0; }
+button { background: #0f3460; color: #e0e0e0; border: none; padding: 8px 16px;
+         cursor: pointer; margin: 4px; font-family: monospace; }
+button:hover { background: #16498a; }
+h3 { color: #7ec8e3; margin: 5px 0; }
+.pins { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.pin { display: flex; align-items: center; gap: 4px; padding: 3px 8px;
+       border-radius: 4px; background: #111; border: 1px solid #333;
+       min-width: 70px; font-size: 11px; }
+.led { width: 10px; height: 10px; border-radius: 50%;
+       background: #333; border: 1px solid #444; transition: background 0.15s; }
+.note { color: #666; font-size: 11px; margin: 4px 0; }
+</style>
+</head>
+<body>
+<h2>CircuitPython — Single Worker + OffscreenCanvas</h2>
+<p class="note">
+    One WASM VM in a Web Worker. Canvas painted directly via OffscreenCanvas.
+    No reactor, no U2IF for internal hw, no framebuffer transfers.
+</p>
+<div id="status">Loading...</div>
+
+<h3>Display (click to focus, then type)</h3>
+<canvas id="display" tabindex="0"></canvas>
+
+<h3>Board Pins</h3>
+<div id="board-pins" class="pins"></div>
+
+<h3>code.py</h3>
+<textarea id="codepy" rows="6" style="width:100%;max-width:600px;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:8px;font-family:monospace;font-size:12px;resize:vertical;">import time
+print("Hello from code.py!")
+for i in range(5):
+    print(f"count: {i}")
+    time.sleep(0.5)
+print("Done!")
+</textarea>
+<br>
+<button id="btn-run">Send &amp; Run code.py</button>
+<button id="btn-repl">Switch to REPL</button>
+
+<h3>Debug Log</h3>
+<div id="stdout"></div>
+
+<script>
+const canvas = document.getElementById('display');
+const statusEl = document.getElementById('status');
+const stdoutEl = document.getElementById('stdout');
+
+function log(text) {
+    stdoutEl.textContent += text;
+    stdoutEl.scrollTop = stdoutEl.scrollHeight;
+}
+
+// ── Board pin visualization ──
+
+const PIN_NAMES = [
+    'D0','D1','D2','D3','D4','D5','D6','D7',
+    'D8/SDA','D9/SCL','D10/MOSI','D11/MISO','D12/SCK','D13/LED',
+];
+const pinElements = {};
+const boardPinsEl = document.getElementById('board-pins');
+
+for (let i = 0; i < PIN_NAMES.length; i++) {
+    const el = document.createElement('div');
+    el.className = 'pin';
+    const led = document.createElement('div');
+    led.className = 'led';
+    const lbl = document.createElement('span');
+    lbl.textContent = PIN_NAMES[i];
+    lbl.style.color = '#888';
+    el.appendChild(led);
+    el.appendChild(lbl);
+    boardPinsEl.appendChild(el);
+    pinElements[i] = { el, led, lbl };
+}
+
+function updateBoardViz(diffBuffer, count) {
+    const data = new Uint8Array(diffBuffer);
+    for (let i = 0; i < count; i++) {
+        const offset = i * 64;
+        const opcode = data[offset + 1];
+        const pin = data[offset + 2];
+        if (pin >= PIN_NAMES.length) continue;
+        const pe = pinElements[pin];
+        if (!pe) continue;
+        if (opcode === 0x20) {
+            const direction = data[offset + 3];
+            const value = data[offset + 5];
+            if (direction === 1) {
+                pe.led.style.background = value
+                    ? (pin === 13 ? '#00ff41' : '#ff6b35')
+                    : (pin === 13 ? '#1a3a1a' : '#3a2a1a');
+                pe.lbl.style.color = '#ccc';
+            } else {
+                pe.led.style.background = value ? '#4a9eff' : '#333';
+                pe.lbl.style.color = '#888';
+            }
+        }
+    }
+}
+
+// ── Worker setup ──
+
+const offscreen = canvas.transferControlToOffscreen();
+const worker = new Worker('js/worker-offscreen.js', { type: 'module' });
+
+worker.onmessage = (e) => {
+    const msg = e.data;
+    switch (msg.type) {
+        case 'ready':
+            statusEl.textContent = `Worker ready: ${msg.width}×${msg.height} — painting via OffscreenCanvas`;
+            // Scale the CSS size for visibility (actual pixels are framebuffer-sized)
+            canvas.style.width = (msg.width * 1.5) + 'px';
+            canvas.style.height = (msg.height * 1.5) + 'px';
+            log(`[ready] ${msg.width}×${msg.height} display, single VM, direct canvas\n`);
+            break;
+
+        case 'hw_diff':
+            updateBoardViz(msg.data, msg.count);
+            break;
+
+        case 'stdout':
+            log(msg.text);
+            break;
+
+        case 'exit':
+            statusEl.textContent = 'Worker exited: ' + msg.code;
+            break;
+
+        case 'mode':
+            log(`[mode] ${msg.mode}\n`);
+            break;
+
+        case 'error':
+            statusEl.textContent = 'Error: ' + msg.message;
+            log('[error] ' + msg.message + '\n');
+            break;
+    }
+};
+
+// Transfer canvas to worker — main thread can never paint to it again
+const absoluteWasmUrl = new URL('build-worker/circuitpython.wasm', location.href).href;
+worker.postMessage(
+    { type: 'init', canvas: offscreen, wasmUrl: absoluteWasmUrl },
+    [offscreen]
+);
+statusEl.textContent = 'Starting worker...';
+
+// ── Keyboard forwarding ──
+
+canvas.addEventListener('keydown', (e) => {
+    e.preventDefault();
+    let bytes = null;
+
+    if (e.ctrlKey && e.key === 'c') bytes = [0x03];
+    else if (e.ctrlKey && e.key === 'd') bytes = [0x04];
+    else if (e.key.length === 1) bytes = [e.key.charCodeAt(0)];
+    else {
+        switch (e.key) {
+            case 'Enter':      bytes = [0x0D]; break;
+            case 'Backspace':  bytes = [0x08]; break;
+            case 'Tab':        bytes = [0x09]; break;
+            case 'Escape':     bytes = [0x1B]; break;
+            case 'ArrowUp':    bytes = [0x1B, 0x5B, 0x41]; break;
+            case 'ArrowDown':  bytes = [0x1B, 0x5B, 0x42]; break;
+            case 'ArrowRight': bytes = [0x1B, 0x5B, 0x43]; break;
+            case 'ArrowLeft':  bytes = [0x1B, 0x5B, 0x44]; break;
+            case 'Home':       bytes = [0x1B, 0x5B, 0x48]; break;
+            case 'End':        bytes = [0x1B, 0x5B, 0x46]; break;
+            case 'Delete':     bytes = [0x1B, 0x5B, 0x33, 0x7E]; break;
+        }
+    }
+
+    if (bytes) {
+        worker.postMessage({ type: 'keys', chars: bytes });
+    }
+});
+
+// ── code.py editor ──
+
+document.getElementById('btn-run').addEventListener('click', () => {
+    const code = document.getElementById('codepy').value;
+    worker.postMessage({ type: 'write_file', path: '/code.py', data: code });
+    worker.postMessage({ type: 'run', path: '/code.py' });
+    canvas.focus();
+});
+
+document.getElementById('btn-repl').addEventListener('click', () => {
+    // Send Ctrl+C then Ctrl+D to interrupt and restart REPL
+    worker.postMessage({ type: 'keys', chars: [0x03] });
+    canvas.focus();
+});
+
+canvas.focus();
+</script>
+</body>
+</html>

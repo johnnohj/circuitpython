@@ -25,9 +25,6 @@
 #include "wasm_framebuffer.h"
 #endif
 
-#if MICROPY_WORKER
-#endif
-
 // mp_hal_set_interrupt_char and mp_hal_is_interrupted are provided
 // by shared/runtime/interrupt_char.c
 
@@ -62,78 +59,12 @@ void _rx_refill(void) {
     }
 }
 
-#if CIRCUITPY_DISPLAYIO
-bool _display_content_dirty = false;
-
-static void _refresh_display(void) {
-    if (!_display_content_dirty) {
-        return;  /* Nothing changed since last refresh */
-    }
-    framebufferio_framebufferdisplay_obj_t *fbdisp =
-        &displays[0].framebuffer_display;
-    if (fbdisp->base.type == &framebufferio_framebufferdisplay_type) {
-        fbdisp->core.full_refresh = true;
-        common_hal_framebufferio_framebufferdisplay_refresh(fbdisp, 0, 0);
-    }
-    _display_content_dirty = false;
-}
-
-/* Called by mp_hal_stdout_tx_strn when text is written to the terminal */
-static void _mark_display_dirty(void) {
-    _display_content_dirty = true;
-}
-
-// Flush the WasmFramebuffer to OPFS (worker variant only)
-static void _flush_fb_to_opfs(void) {
-    #if MICROPY_WORKER
-    uint8_t *fb_addr = wasm_display_fb_addr();
-    int w = wasm_display_fb_width();
-    int h = wasm_display_fb_height();
-    size_t fb_size = (size_t)w * h * 2;
-    /* Open+write+close each time to ensure mtime updates. */
-    int fd = open("/hw/display/fb", O_WRONLY | O_CREAT, 0666);
-    if (fd >= 0) {
-        write(fd, fb_addr, fb_size);
-        close(fd);
-    }
-    #endif
-}
-#endif
 
 int mp_hal_stdin_rx_chr(void) {
-    #if MICROPY_WORKER
-    // Worker variant: poll /hw/repl/rx for keyboard input.
-    // While waiting, keep the display refreshed.
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 16000000 };  // 16ms (~60fps)
-
-    for (;;) {
-        // Check buffer first
-        if (_rx_available() > 0) {
-            uint8_t c = _rx_buf[_rx_tail++];
-            if (c == '\n') c = '\r';
-            return c;
-        }
-
-        // Try to refill from OPFS
-        _rx_refill();
-        if (_rx_available() > 0) {
-            continue;  // Got data, loop back to return it
-        }
-
-        // No input — refresh + flush display only if content changed
-        #if CIRCUITPY_DISPLAYIO
-        if (_display_content_dirty) {
-            _refresh_display();  /* clears _display_content_dirty */
-            _flush_fb_to_opfs();
-        }
-        #endif
-
-        // Hardware state sync handled by worker_u2if.c via postMessage
-
-        nanosleep(&ts, NULL);
-    }
-    #else
-    // Standard/reactor variant: read from WASI stdin (fd 0)
+    // Blocking read from WASI stdin (fd 0).
+    // Used by standard variant and main() CLI mode.
+    // The event-driven REPL (MICROPY_REPL_EVENT_DRIVEN) bypasses this
+    // entirely — JS pushes chars via cp_push_key → _rx_buf.
     unsigned char c;
     ssize_t ret;
     MP_HAL_RETRY_SYSCALL(ret, read(STDIN_FILENO, &c, 1), {});
@@ -143,7 +74,6 @@ int mp_hal_stdin_rx_chr(void) {
         c = '\r';
     }
     return c;
-    #endif
 }
 
 // ---- stdout ----
@@ -163,16 +93,16 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     dev_repl_stdout_write(str, len);
     #endif
 
-    // Worker: route ALL output to our terminal (clean path, no supervisor)
-    #if MICROPY_WORKER
-    #include "worker_terminal.h"
-    worker_terminal_write(str, len);
-    #elif CIRCUITPY_TERMINALIO
-    // Non-worker variants: use supervisor terminal if available
+    // Route output to supervisor terminal (VT100 + display rendering).
+    #if CIRCUITPY_TERMINALIO
     if (supervisor_terminal_started()) {
         int errcode;
         common_hal_terminalio_terminal_write(
             &supervisor_terminal, (const uint8_t *)str, len, &errcode);
+        #if CIRCUITPY_DISPLAYIO
+        extern bool worker_terminal_dirty;
+        worker_terminal_dirty = true;
+        #endif
     }
     #endif
 

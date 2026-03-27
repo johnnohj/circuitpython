@@ -1,17 +1,14 @@
 ################################################################################
 # WASI port Makefile
 #
-# Headless CircuitPython VM compiled with wasi-sdk.
-# No Emscripten, no JavaScript. All I/O through WASI fd_read/fd_write.
+# CircuitPython compiled with wasi-sdk for browser and CLI use.
 #
 # Variants:
-#   standard — simple REPL on stdin/stdout (test suite + CLI)
-#   reactor  — main-thread VM, externally-driven stepping, JS host is supervisor
-#   worker   — hardware peripheral controller, owns display pipeline + common-hal
+#   standard — headless REPL on stdin/stdout (test suite + CLI)
+#   worker   — the board: display, hardware, REPL, code.py (browser)
 #
 # Usage:
 #   make                          # build standard variant
-#   make VARIANT=reactor          # build main-thread reactor
 #   make VARIANT=worker           # build worker with display + hardware
 ################################################################################
 
@@ -29,7 +26,7 @@ include ../../py/mkenv.mk
 include mpconfigport.mk
 
 # Use the variant-specified frozen manifest.
-FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py
+FROZEN_MANIFEST ?= variants/manifest.py
 
 # CircuitPython module configuration (194 CIRCUITPY_* → CFLAGS)
 # This is what makes us a CircuitPython port, not a MicroPython port.
@@ -166,12 +163,12 @@ SRC_DISPLAYIO =
 endif
 
 # tick.c provides mp_hal_delay_ms and supervisor tick counters.
-# The reactor variant provides its own yield-based delay, so it
-# excludes tick.c and stubs the few functions other code needs.
-ifneq ($(VARIANT),reactor)
-SRC_SUPERVISOR = $(SRC_SUPERVISOR_COMMON) supervisor/shared/tick.c
-else
+# The worker variant provides its own yield-based delay (vm_yield.c),
+# so it excludes tick.c.
+ifeq ($(MICROPY_VM_YIELD_ENABLED),1)
 SRC_SUPERVISOR = $(SRC_SUPERVISOR_COMMON)
+else
+SRC_SUPERVISOR = $(SRC_SUPERVISOR_COMMON) supervisor/shared/tick.c
 endif
 
 # FatFS config (supervisor/filesystem.h includes vfs_fat.h)
@@ -180,19 +177,12 @@ CFLAGS += -DFFCONF_H=\"ffconf.h\"
 
 # ---- Variant-specific sources ----
 
-ifeq ($(VARIANT),reactor)
-
-SRC_C = \
-	$(SRC_C_COMMON) \
-	main_reactor.c \
-	gccollect.c \
-	supervisor/port.c \
-
-else ifeq ($(VARIANT),worker)
+ifeq ($(VARIANT),worker)
 
 SRC_C = \
 	$(SRC_C_COMMON) \
 	main_worker.c \
+	vm_yield.c \
 	worker_u2if.c \
 	gccollect.c \
 	supervisor/port.c \
@@ -252,8 +242,8 @@ SRC_CIRCUITPY = \
 	shared-module/struct/__init__.c \
 	shared-module/warnings/__init__.c \
 
-# Hardware shared-bindings — worker only (reactor uses Python shims)
-ifeq ($(VARIANT),worker)
+# Hardware shared-bindings + common-hal (when hardware peripherals enabled)
+ifeq ($(CIRCUITPY_DIGITALIO),1)
 SRC_CIRCUITPY += \
 	shared-bindings/microcontroller/__init__.c \
 	shared-bindings/microcontroller/Pin.c \
@@ -284,9 +274,8 @@ endif
 SRC_COMMON_HAL = \
 	common-hal/os/__init__.c \
 
-# Hardware common-hal — worker only (reads/writes OPFS endpoints).
-# The reactor uses frozen Python shims instead.
-ifeq ($(VARIANT),worker)
+# Hardware common-hal (when hardware peripherals enabled)
+ifeq ($(CIRCUITPY_DIGITALIO),1)
 SRC_COMMON_HAL += \
 	hw_state.c \
 	common-hal/microcontroller/__init__.c \

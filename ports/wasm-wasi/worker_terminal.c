@@ -26,6 +26,11 @@
 #include "shared-module/displayio/__init__.h"
 #include "supervisor/shared/display.h"
 
+#if CIRCUITPY_TERMINALIO
+#include "shared-module/terminalio/Terminal.h"
+#include "shared-bindings/terminalio/Terminal.h"
+#endif
+
 /* ── Extern references to supervisor display objects ─────────────── */
 
 extern displayio_tilegrid_t supervisor_terminal_scroll_area_text_grid;
@@ -64,6 +69,16 @@ static bool _banner_line_active = false;
 static bool _cursor_visible = true;
 static uint32_t _cursor_last_toggle_ms = 0;
 #define CURSOR_BLINK_MS 500
+
+/* VT100 escape sequence parser state. */
+enum {
+    ESC_NONE = 0,   /* normal character processing */
+    ESC_ESC,        /* received ESC (0x1b) */
+    ESC_CSI,        /* received ESC [ — collecting params */
+};
+static int _esc_state = ESC_NONE;
+static int _esc_params[4];
+static int _esc_param_count = 0;
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 
@@ -162,9 +177,19 @@ static void cursor_xor(void) {
     int fb_w = wasm_display_fb_width();
     int fb_h = wasm_display_fb_height();
 
+    /* Read cursor position from the supervisor terminal. */
+    #if CIRCUITPY_TERMINALIO
+    extern terminalio_terminal_obj_t supervisor_terminal;
+    uint16_t cx = common_hal_terminalio_terminal_get_cursor_x(&supervisor_terminal);
+    uint16_t cy = common_hal_terminalio_terminal_get_cursor_y(&supervisor_terminal);
+    #else
+    uint16_t cx = _cur_x;
+    uint16_t cy = _cur_y;
+    #endif
+
     /* Pixel origin of the cursor cell. */
-    int px = _tg->x + _cur_x * GLYPH_W;
-    int py = _tg->y + phys_y(_cur_y) * GLYPH_H;
+    int px = _tg->x + cx * GLYPH_W;
+    int py = _tg->y + cy * GLYPH_H;
 
     for (int row = 0; row < GLYPH_H; row++) {
         int y = py + row;
@@ -187,11 +212,111 @@ void worker_terminal_cursor_tick(uint32_t now_ms) {
     }
 }
 
+/* Handle a CSI (ESC [) sequence finale character. */
+static void _handle_csi(char final) {
+    int p0 = (_esc_param_count > 0) ? _esc_params[0] : 0;
+    int p1 = (_esc_param_count > 1) ? _esc_params[1] : 0;
+
+    switch (final) {
+    case 'A': /* CUU — cursor up */
+        if (p0 == 0) p0 = 1;
+        _cur_y = (_cur_y >= (uint16_t)p0) ? _cur_y - p0 : 0;
+        break;
+    case 'B': /* CUD — cursor down */
+        if (p0 == 0) p0 = 1;
+        _cur_y += p0;
+        if (_cur_y >= _rows) _cur_y = _rows - 1;
+        break;
+    case 'C': /* CUF — cursor forward */
+        if (p0 == 0) p0 = 1;
+        _cur_x += p0;
+        if (_cur_x >= _cols) _cur_x = _cols - 1;
+        break;
+    case 'D': /* CUB — cursor back */
+        if (p0 == 0) p0 = 1;
+        _cur_x = (_cur_x >= (uint16_t)p0) ? _cur_x - p0 : 0;
+        break;
+    case 'H': /* CUP — cursor position (row;col, 1-based) */
+    case 'f':
+        _cur_y = (p0 > 0) ? p0 - 1 : 0;
+        _cur_x = (p1 > 0) ? p1 - 1 : 0;
+        if (_cur_y >= _rows) _cur_y = _rows - 1;
+        if (_cur_x >= _cols) _cur_x = _cols - 1;
+        break;
+    case 'J': /* ED — erase in display */
+        if (p0 == 0) {
+            /* Clear from cursor to end of screen */
+            for (uint16_t x = _cur_x; x < _cols; x++) set_tile(x, _cur_y, 0);
+            for (uint16_t y = _cur_y + 1; y < _rows; y++) clear_row(y);
+        } else if (p0 == 1) {
+            /* Clear from start to cursor */
+            for (uint16_t y = 0; y < _cur_y; y++) clear_row(y);
+            for (uint16_t x = 0; x <= _cur_x; x++) set_tile(x, _cur_y, 0);
+        } else if (p0 == 2) {
+            /* Clear entire screen */
+            for (uint16_t y = 0; y < _rows; y++) clear_row(y);
+            _cur_x = 0;
+            _cur_y = 0;
+        }
+        break;
+    case 'K': /* EL — erase in line */
+        if (p0 == 0) {
+            /* Clear from cursor to end of line */
+            for (uint16_t x = _cur_x; x < _cols; x++) set_tile(x, _cur_y, 0);
+        } else if (p0 == 1) {
+            /* Clear from start of line to cursor */
+            for (uint16_t x = 0; x <= _cur_x; x++) set_tile(x, _cur_y, 0);
+        } else if (p0 == 2) {
+            /* Clear entire line */
+            for (uint16_t x = 0; x < _cols; x++) set_tile(x, _cur_y, 0);
+        }
+        break;
+    default:
+        /* Unrecognized CSI sequence — silently ignore */
+        break;
+    }
+}
+
 void worker_terminal_write(const char *str, size_t len) {
     for (size_t i = 0; i < len; i++) {
         char c = str[i];
 
-        if (c == '\r') {
+        /* ── VT100 escape sequence state machine ── */
+        if (_esc_state == ESC_ESC) {
+            if (c == '[') {
+                _esc_state = ESC_CSI;
+                _esc_param_count = 0;
+                memset(_esc_params, 0, sizeof(_esc_params));
+            } else {
+                /* Non-CSI escape (e.g. ESC c for reset) — ignore for now */
+                _esc_state = ESC_NONE;
+            }
+            continue;
+        }
+        if (_esc_state == ESC_CSI) {
+            if (c >= '0' && c <= '9') {
+                /* Accumulate parameter digit */
+                if (_esc_param_count == 0) _esc_param_count = 1;
+                _esc_params[_esc_param_count - 1] =
+                    _esc_params[_esc_param_count - 1] * 10 + (c - '0');
+            } else if (c == ';') {
+                /* Next parameter */
+                if (_esc_param_count < 4) _esc_param_count++;
+            } else if (c >= 0x40 && c <= 0x7e) {
+                /* Final byte — dispatch the command */
+                _handle_csi(c);
+                _esc_state = ESC_NONE;
+            } else {
+                /* Unexpected byte — abort sequence */
+                _esc_state = ESC_NONE;
+            }
+            continue;
+        }
+
+        /* ── Normal character processing ── */
+        if (c == '\x1b') {
+            _esc_state = ESC_ESC;
+        } else if (c == '\r') {
             _cur_x = 0;
         } else if (c == '\n') {
             /* Absorb the first \n so banner stays on line 0 next to Blinka. */
