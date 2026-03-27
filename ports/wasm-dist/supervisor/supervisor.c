@@ -44,6 +44,7 @@
 #include "board_display.h"
 #endif
 
+#include "supervisor/hal.h"
 #include "mpthreadport.h"
 
 /* ------------------------------------------------------------------ */
@@ -195,6 +196,10 @@ static void _core_init(void) {
     mp_pystack_init(pystack_buf,
                     pystack_buf + WASM_PYSTACK_SIZE / sizeof(mp_obj_t));
     #endif
+
+    /* Open /hal/ fd endpoints before mp_init() — hardware must be
+     * available before Python starts. */
+    hal_init();
 
     mp_init();
 
