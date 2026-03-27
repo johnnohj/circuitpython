@@ -173,34 +173,83 @@ static int call_dupterm_read(size_t idx) {
 }
 #endif
 
-int mp_hal_stdin_rx_chr(void) {
-    #if MICROPY_PY_OS_DUPTERM
-    // TODO only support dupterm one slot at the moment
-    if (MP_STATE_VM(dupterm_objs[0]) != MP_OBJ_NULL) {
-        int c;
-        do {
-            c = call_dupterm_read(0);
-        } while (c == -2);
-        if (c == -1) {
-            goto main_term;
-        }
-        if (c == '\n') {
-            c = '\r';
-        }
-        return c;
-    }
-main_term:;
-    #endif
+/*
+ * mp_hal_stdin_rx_chr — read one character, hook-aware.
+ *
+ * In browser mode, JS pushes bytes into the rx buffer via cp_push_key().
+ * We loop with MICROPY_VM_HOOK_LOOP so that:
+ *   - Background tasks run (display, hw endpoints, Ctrl-C)
+ *   - The wall-clock budget is checked
+ *   - If budget expires with no input, the VM yields back to JS
+ *   - Next cp_step() resumes the REPL where it left off
+ *
+ * In CLI mode, if the rx buffer is empty we fall back to blocking read()
+ * on WASI stdin.  The hook still fires so Ctrl-C detection works.
+ *
+ * Follows the pattern from supervisor/shared/micropython.c.
+ */
 
-    unsigned char c;
-    ssize_t ret;
-    MP_HAL_RETRY_SYSCALL(ret, read(STDIN_FILENO, &c, 1), {});
-    if (ret == 0) {
-        c = 4; // EOF, ctrl-D
-    } else if (c == '\n') {
-        c = '\r';
+/*
+ * mp_hal_stdin_rx_chr — read one character, hook-aware.
+ *
+ * In browser mode, JS pushes bytes into the rx buffer via cp_push_key().
+ * We loop with MICROPY_VM_HOOK_LOOP so that:
+ *   - Background tasks run (display, hw endpoints, Ctrl-C)
+ *   - The wall-clock budget is checked
+ *   - If budget expires with no input, the VM yields back to JS
+ *   - Next cp_step() resumes the REPL where it left off
+ *
+ * In CLI mode (wasm_cli_mode), if the rx buffer is empty we fall back
+ * to blocking read() on WASI stdin.
+ *
+ * Follows the pattern from supervisor/shared/micropython.c.
+ */
+
+/* rx buffer — owned by supervisor/supervisor.c */
+extern uint8_t _rx_buf[];
+extern int _rx_head;
+extern int _rx_tail;
+extern int _rx_available(void);
+
+/* Runtime mode flag — set by main() in supervisor/supervisor.c */
+extern bool wasm_cli_mode;
+
+int mp_hal_stdin_rx_chr(void) {
+    for (;;) {
+        #ifdef MICROPY_VM_HOOK_LOOP
+        MICROPY_VM_HOOK_LOOP
+        #endif
+        mp_handle_pending(true);
+
+        /* Check rx buffer first (browser: JS pushed keys, CLI: unused) */
+        if (_rx_available() > 0) {
+            unsigned char c = _rx_buf[_rx_tail++];
+            /* Reset buffer when fully consumed */
+            if (_rx_tail >= _rx_head) {
+                _rx_head = 0;
+                _rx_tail = 0;
+            }
+            if (c == '\n') {
+                c = '\r';
+            }
+            return c;
+        }
+
+        /* CLI mode: blocking read from WASI stdin */
+        if (wasm_cli_mode) {
+            unsigned char c;
+            ssize_t ret;
+            MP_HAL_RETRY_SYSCALL(ret, read(STDIN_FILENO, &c, 1), {});
+            if (ret == 0) {
+                c = 4; // EOF, ctrl-D
+            } else if (c == '\n') {
+                c = '\r';
+            }
+            return c;
+        }
+
+        /* Browser mode: loop back, hook will yield if budget is spent */
     }
-    return c;
 }
 
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {

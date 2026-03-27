@@ -110,6 +110,9 @@ static sup_state_t _state = SUP_UNINITIALIZED;
 static uint32_t _frame_count = 0;
 static uint64_t _frame_start_ms = 0;
 
+/* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
+bool wasm_cli_mode = false;
+
 /* ------------------------------------------------------------------ */
 /* Keyboard input buffer                                               */
 /*                                                                     */
@@ -216,6 +219,7 @@ static void _core_init(void) {
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
 
+    wasm_cli_mode = true;
     _core_init();
     _state = SUP_REPL;
 

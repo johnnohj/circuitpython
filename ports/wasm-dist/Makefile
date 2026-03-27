@@ -107,7 +107,7 @@ SRC_C += \
 	supervisor/stubs.c \
 	supervisor/vm_yield.c \
 	gccollect.c \
-	unix_mphal.c \
+	wasi_mphal.c \
 	mpthreadport.c \
 	modringio.c \
 	shared-module/os/__init__.c \
