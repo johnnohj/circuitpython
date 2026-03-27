@@ -91,12 +91,17 @@ void mp_vm_request_yield(int reason, uint32_t arg) {
 /* Forward declaration — implemented in wasm_supervisor.c */
 extern void wasm_background_tasks(void);
 
+/* CLI mode flag — set by main() in supervisor.c */
+extern bool wasm_cli_mode;
+
 void wasm_vm_hook_loop(void) {
     /* 1. Run port background tasks */
     wasm_background_tasks();
 
-    /* 2. Check wall-clock budget (skip if in atomic section) */
-    if (!_yield_requested && !mp_thread_in_atomic_section()) {
+    /* 2. Check wall-clock budget (skip in CLI mode and atomic sections).
+     *    CLI mode uses blocking I/O — no frame budget, no yield.
+     *    Browser mode yields when the frame budget is exhausted. */
+    if (!wasm_cli_mode && !_yield_requested && !mp_thread_in_atomic_section()) {
         uint64_t now = (uint64_t)mp_hal_ticks_ms();
         if (now - _frame_start_ms >= _frame_budget_ms) {
             mp_vm_request_yield(YIELD_BUDGET, 0);
