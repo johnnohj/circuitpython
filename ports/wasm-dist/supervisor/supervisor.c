@@ -64,6 +64,49 @@ extern void mp_vm_request_yield(int reason, uint32_t arg);
 /* mp_stderr_print is in wasi_mphal.c */
 
 /* ------------------------------------------------------------------ */
+/* Supervisor state (declared early for supervisor_execution_status)    */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    SUP_UNINITIALIZED = 0,
+    SUP_REPL,           /* REPL active (blocking in CLI, yielding in browser) */
+    SUP_CODE_RUNNING,   /* code.py executing */
+    SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
+} sup_state_t;
+
+static sup_state_t _state = SUP_UNINITIALIZED;
+static uint32_t _frame_count = 0;
+static uint64_t _frame_start_ms = 0;
+
+/* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
+bool wasm_cli_mode = false;
+
+/* ------------------------------------------------------------------ */
+/* supervisor_execution_status — called by status_bar.c                */
+/* ------------------------------------------------------------------ */
+
+#if CIRCUITPY_STATUS_BAR
+#include "supervisor/shared/serial.h"
+
+void supervisor_execution_status(void) {
+    switch (_state) {
+        case SUP_REPL:
+            serial_write("REPL");
+            break;
+        case SUP_CODE_RUNNING:
+            serial_write("code.py");
+            break;
+        case SUP_CODE_FINISHED:
+            serial_write("Done");
+            break;
+        default:
+            serial_write("...");
+            break;
+    }
+}
+#endif
+
+/* ------------------------------------------------------------------ */
 /* Configuration                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -89,24 +132,6 @@ static char heap[WASM_GC_HEAP_SIZE];
 #if MICROPY_ENABLE_PYSTACK
 static mp_obj_t pystack_buf[WASM_PYSTACK_SIZE / sizeof(mp_obj_t)];
 #endif
-
-/* ------------------------------------------------------------------ */
-/* Supervisor state                                                    */
-/* ------------------------------------------------------------------ */
-
-typedef enum {
-    SUP_UNINITIALIZED = 0,
-    SUP_REPL,           /* REPL active (blocking in CLI, yielding in browser) */
-    SUP_CODE_RUNNING,   /* code.py executing */
-    SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
-} sup_state_t;
-
-static sup_state_t _state = SUP_UNINITIALIZED;
-static uint32_t _frame_count = 0;
-static uint64_t _frame_start_ms = 0;
-
-/* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
-bool wasm_cli_mode = false;
 
 /* ------------------------------------------------------------------ */
 /* Keyboard input buffer                                               */

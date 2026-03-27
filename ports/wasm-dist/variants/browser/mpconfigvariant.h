@@ -35,5 +35,8 @@
 #define CIRCUITPY_NEOPIXEL_WRITE    (1)
 #define CIRCUITPY_MICROCONTROLLER   (1)
 
+// ── Status bar (rendered in terminal top row) ──
+#define CIRCUITPY_STATUS_BAR        (1)
+
 // ── Board ──
 // CIRCUITPY_BOARD set via -D in mpconfigvariant.mk

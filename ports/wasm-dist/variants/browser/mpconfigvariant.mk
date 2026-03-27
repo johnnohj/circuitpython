@@ -64,7 +64,8 @@ SRC_C += \
 	wasm_framebuffer.c \
 	board_display.c \
 	hw_state.c \
-	supervisor/display.c
+	supervisor/display.c \
+	supervisor/status_bar.c
 
 # ── Common-HAL sources ──
 SRC_C += \
