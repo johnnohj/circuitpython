@@ -338,5 +338,6 @@ extern void wasm_vm_hook_loop(void);
 #define MICROPY_VM_HOOK_LOOP
 #endif
 
-// CIRCUITPY-CHANGE
-#define RUN_BACKGROUND_TASKS ((void)0)
+// CIRCUITPY-CHANGE: wire to port-local background_callback_run_all()
+extern void background_callback_run_all(void);
+#define RUN_BACKGROUND_TASKS (background_callback_run_all())

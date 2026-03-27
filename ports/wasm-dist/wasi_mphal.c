@@ -156,22 +156,8 @@ void mp_hal_delay_ms(mp_uint_t ms) {
 }
 #endif
 
-/* ------------------------------------------------------------------ */
-/* supervisor_ticks_ms — needed by asyncio and shared-module/time      */
-/* ------------------------------------------------------------------ */
-
-mp_obj_t supervisor_ticks_ms(void) {
-    uint64_t ticks = (uint64_t)mp_hal_ticks_ms();
-    return mp_obj_new_int((ticks + 0x1fff0000) % (1 << 29));
-}
-
-uint64_t supervisor_ticks_ms64(void) {
-    return (uint64_t)mp_hal_ticks_ms();
-}
-
-uint32_t supervisor_ticks_ms32(void) {
-    return (uint32_t)mp_hal_ticks_ms();
-}
+/* supervisor_ticks_ms, supervisor_ticks_ms64, supervisor_ticks_ms32
+ * are now provided by supervisor/tick.c */
 
 /* ------------------------------------------------------------------ */
 /* Random                                                              */

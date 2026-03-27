@@ -108,6 +108,9 @@ SRC_C += \
 	supervisor/vm_yield.c \
 	supervisor/serial.c \
 	supervisor/micropython.c \
+	supervisor/background_callback.c \
+	supervisor/tick.c \
+	supervisor/hal.c \
 	gccollect.c \
 	wasi_mphal.c \
 	mpthreadport.c \

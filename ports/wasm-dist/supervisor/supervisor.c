@@ -254,15 +254,23 @@ int cp_init(void) {
 /* ------------------------------------------------------------------ */
 /* Exported: cp_step — one frame of supervisor work                    */
 /*                                                                     */
-/* Called once per rAF (~60fps).  The supervisor spends its budget:     */
-/*   1. Start frame timer                                              */
-/*   2. Run background tasks                                           */
-/*   3. Enter the active VM (REPL or code.py)                          */
-/*   4. VM runs until budget expires at a backwards branch             */
-/*   5. HOOK_LOOP fires background tasks one last time                 */
-/*   6. Yield check saves state and returns MP_VM_RETURN_YIELD         */
-/*   7. Control returns here → return to JS for canvas paint + events  */
+/* Called once per rAF (~60fps).  Five phases:                          */
+/*                                                                     */
+/*   1. HAL STEP — drive simulated hardware (poll /hal/ endpoints)     */
+/*   2. TICK CATCHUP + CALLBACKS — simulate elapsed ms, drain queue    */
+/*   3. PYTHON VM — REPL or code.py until budget spent                 */
+/*   4. POST-VM CALLBACKS — drain queue one more time                  */
+/*   5. HAL EXPORT — flush hw_state changes to /hal/ endpoints         */
+/*                                                                     */
+/* On a real board, hardware runs itself.  On WASM, nothing happens    */
+/* unless the supervisor makes it happen.  The HAL step (phase 1)      */
+/* replaces real hardware — it advances the simulation so Python sees  */
+/* fresh data.                                                         */
 /* ------------------------------------------------------------------ */
+
+/* Forward declarations — supervisor/hal.c */
+extern void hal_step(void);
+extern void hal_export_dirty(void);
 
 __attribute__((export_name("cp_step")))
 int cp_step(void) {
@@ -277,9 +285,16 @@ int cp_step(void) {
     vm_yield_set_frame_start(_frame_start_ms);
     #endif
 
-    /* Run background tasks at frame start */
-    wasm_background_tasks();
+    /* ── Phase 1: HAL step ── */
+    hal_step();
 
+    /* ── Phase 2: Tick catchup + background callbacks ── */
+    /* background_callback_run_all() calls port_background_task() first
+     * (which simulates elapsed ms via supervisor_tick), then drains
+     * the callback queue (supervisor_background_tick, etc). */
+    RUN_BACKGROUND_TASKS;
+
+    /* ── Phase 3: Python VM ── */
     switch (_state) {
 
     case SUP_REPL:
@@ -298,10 +313,8 @@ int cp_step(void) {
         #if MICROPY_VM_YIELD_ENABLED
         int ret = vm_yield_step();
         if (ret == 0) {
-            /* code.py finished normally */
             _state = SUP_CODE_FINISHED;
         } else if (ret == 2) {
-            /* code.py exception — switch to REPL */
             _state = SUP_CODE_FINISHED;
         }
         /* ret == 1: yielded, will resume next frame */
@@ -317,6 +330,12 @@ int cp_step(void) {
     default:
         break;
     }
+
+    /* ── Phase 4: Post-VM background callbacks ── */
+    RUN_BACKGROUND_TASKS;
+
+    /* ── Phase 5: HAL export ── */
+    hal_export_dirty();
 
     return (int)_state;
 }

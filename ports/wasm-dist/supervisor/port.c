@@ -37,11 +37,9 @@ static uint64_t _monotonic_ms(void) {
 static uint64_t _last_tick_ms = 0;
 static bool _ticks_enabled = false;
 
-/* supervisor_tick — called per-ms to queue background_tick.
- * Stubbed here; will be wired to supervisor/shared/tick.c when
- * we include the full supervisor infrastructure. */
-void supervisor_tick(void);
-MP_WEAK void supervisor_tick(void) {}
+/* supervisor_tick() is provided by supervisor/tick.c.
+ * port_background_task() calls it once per elapsed millisecond. */
+extern void supervisor_tick(void);
 
 /* ------------------------------------------------------------------ */
 /* port_background_task — called frequently by RUN_BACKGROUND_TASKS    */
