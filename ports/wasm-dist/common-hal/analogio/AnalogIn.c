@@ -1,18 +1,38 @@
+/*
+ * AnalogIn.c — Virtual ADC via /hal/analog fd endpoint.
+ *
+ * Slot layout (4 bytes per pin at offset pin * 4):
+ *   [0] enabled    (uint8)
+ *   [1] is_output  (uint8)
+ *   [2-3] value    (uint16 LE)
+ */
+
 #include "common-hal/analogio/AnalogIn.h"
 #include "shared-bindings/analogio/AnalogIn.h"
 #include "shared-bindings/microcontroller/Pin.h"
-#include "hw_state.h"
+#include "supervisor/hal.h"
 #include "py/runtime.h"
+
 #include <string.h>
+#include <unistd.h>
 
-analog_pin_state_t analog_state[64];
+#define ANALOG_SLOT_SIZE 4
 
-void analogio_reset_analog_state(void) {
-    for (int i = 0; i < 64; i++) {
-        analog_state[i].value = 32768;
-        analog_state[i].is_output = false;
-        analog_state[i].enabled = false;
+static void _read_pin(uint8_t pin, uint8_t slot[ANALOG_SLOT_SIZE]) {
+    int fd = hal_analog_fd();
+    if (fd < 0) { memset(slot, 0, ANALOG_SLOT_SIZE); return; }
+    lseek(fd, pin * ANALOG_SLOT_SIZE, SEEK_SET);
+    ssize_t n = read(fd, slot, ANALOG_SLOT_SIZE);
+    if (n < ANALOG_SLOT_SIZE) {
+        memset(slot + (n > 0 ? n : 0), 0, ANALOG_SLOT_SIZE - (n > 0 ? n : 0));
     }
+}
+
+static void _write_pin(uint8_t pin, const uint8_t slot[ANALOG_SLOT_SIZE]) {
+    int fd = hal_analog_fd();
+    if (fd < 0) return;
+    lseek(fd, pin * ANALOG_SLOT_SIZE, SEEK_SET);
+    write(fd, slot, ANALOG_SLOT_SIZE);
 }
 
 const mcu_pin_obj_t *common_hal_analogio_analogin_validate_pin(mp_obj_t obj) {
@@ -23,19 +43,14 @@ void common_hal_analogio_analogin_construct(analogio_analogin_obj_t *self,
     const mcu_pin_obj_t *pin) {
     self->pin = pin;
     claim_pin(pin);
-    uint8_t n = pin->number;
-    analog_state[n].is_output = false;
-    analog_state[n].enabled = true;
-    analog_state[n].value = 32768;
-    hw_analog_dirty = true;
+    uint8_t slot[ANALOG_SLOT_SIZE] = {1, 0, 0x00, 0x80}; /* enabled, input, value=32768 */
+    _write_pin(pin->number, slot);
 }
 
 void common_hal_analogio_analogin_deinit(analogio_analogin_obj_t *self) {
-    if (common_hal_analogio_analogin_deinited(self)) {
-        return;
-    }
-    analog_state[self->pin->number].enabled = false;
-    hw_analog_dirty = true;
+    if (common_hal_analogio_analogin_deinited(self)) return;
+    uint8_t slot[ANALOG_SLOT_SIZE] = {0};
+    _write_pin(self->pin->number, slot);
     reset_pin_number(self->pin->number);
     self->pin = NULL;
 }
@@ -45,7 +60,9 @@ bool common_hal_analogio_analogin_deinited(analogio_analogin_obj_t *self) {
 }
 
 uint16_t common_hal_analogio_analogin_get_value(analogio_analogin_obj_t *self) {
-    return analog_state[self->pin->number].value;
+    uint8_t slot[ANALOG_SLOT_SIZE];
+    _read_pin(self->pin->number, slot);
+    return (uint16_t)slot[2] | ((uint16_t)slot[3] << 8);
 }
 
 float common_hal_analogio_analogin_get_reference_voltage(analogio_analogin_obj_t *self) {

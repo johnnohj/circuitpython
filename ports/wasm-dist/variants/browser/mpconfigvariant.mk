@@ -63,7 +63,6 @@ SRC_C += $(SRC_DISPLAYIO)
 SRC_C += \
 	wasm_framebuffer.c \
 	board_display.c \
-	hw_state.c \
 	supervisor/display.c \
 	supervisor/status_bar.c
 
