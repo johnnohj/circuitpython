@@ -90,17 +90,9 @@ CFLAGS += -DMICROPY_USE_READLINE=1
 SHARED_SRC_C_EXTRA += readline/readline.c
 endif
 
-# Source files — core set that compiles with wasi-sdk.
-# Files kept in tree but excluded from initial build:
-#   mpthreadport.c — WASM-adapted: single-threaded, yield-aware atomic sections
-#   input.c — needs termios (study for event-driven input)
-#   alloc.c — needs mmap (study for WASM linear memory adaptation)
-#   fatfs_port.c — needs FatFS (not used, memfs instead)
-#   modffi.c — needs libffi (study for JS interop adaptation)
-#   modmachine.c — needs /dev/mem (study for simulated hardware)
-#   modtermios.c — needs termios (study for browser terminal)
-# main.c is the unix port entry point — kept for reference.
+# Source files — core set shared by all variants.
 # The WASM supervisor (supervisor/) provides main() and cp_step() exports.
+# main.c is the unix port entry point — kept for reference only.
 SRC_C += \
 	supervisor/supervisor.c \
 	supervisor/port.c \
