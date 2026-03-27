@@ -7,22 +7,16 @@
  *
  *   - Two Python VMs: REPL and code.py
  *   - Switching between them (code.py finishes → REPL, Ctrl+D → restart)
- *   - Frame budget enforcement (~12-14ms per cp_step)
+ *   - Frame budget enforcement (~13ms per cp_step)
  *   - port_background_task(): things Python needs WASM/JS to do
  *
- * The REPL uses the standard blocking pyexec_friendly_repl().  It calls
- * mp_hal_stdin_rx_chr() which blocks until input is available.  In CLI
- * mode (wasmtime/node), this is a blocking read(2) on stdin.  In the
- * browser variant, the VM yield machinery suspends and resumes across
- * frames — the supervisor yields when stdin is empty and the budget is
- * spent, and resumes the REPL where it left off next frame.
+ * CLI mode (main): blocking REPL via pyexec_friendly_repl().
  *
- * code.py uses the same mechanism: compile, enter mp_execute_bytecode,
- * yield at backwards branches when budget exhausted, resume next frame.
- *
- * The supervisor does NOT use MICROPY_REPL_EVENT_DRIVEN.  The blocking
- * REPL handles all edge cases (paste mode, history, multiline) and the
- * yield machinery makes it cooperative transparently.
+ * Browser mode (cp_step): yield-driven stepping.  The REPL calls
+ * mp_hal_stdin_rx_chr() which yields when the rx buffer is empty.
+ * code.py yields at backwards branches when the wall-clock budget
+ * is spent.  Both use MICROPY_VM_YIELD_ENABLED + pystack so all
+ * Python state lives on the heap, not the C stack.
  */
 
 #include <stdbool.h>
@@ -47,6 +41,21 @@
 #endif
 
 #include "mpthreadport.h"
+
+/* ------------------------------------------------------------------ */
+/* Forward declarations — vm_yield.c                                   */
+/* ------------------------------------------------------------------ */
+
+#if MICROPY_VM_YIELD_ENABLED
+extern void vm_yield_set_frame_start(uint64_t ms);
+extern void vm_yield_set_budget(uint32_t ms);
+extern int mp_hal_delay_active(void);
+extern int vm_yield_start_file(const char *path);
+extern int vm_yield_step(void);
+extern void vm_yield_stop(void);
+extern bool vm_yield_code_running(void);
+extern void mp_vm_request_yield(int reason, uint32_t arg);
+#endif
 
 /* ------------------------------------------------------------------ */
 /* stderr printer — referenced by py/ for debug/error output           */
@@ -92,16 +101,14 @@ static mp_obj_t pystack_buf[WASM_PYSTACK_SIZE / sizeof(mp_obj_t)];
 
 typedef enum {
     SUP_UNINITIALIZED = 0,
-    SUP_REPL,           /* blocking REPL active */
+    SUP_REPL,           /* REPL active (blocking in CLI, yielding in browser) */
     SUP_CODE_RUNNING,   /* code.py executing */
-    SUP_CODE_SLEEPING,  /* code.py called time.sleep() */
     SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
 } sup_state_t;
 
 static sup_state_t _state = SUP_UNINITIALIZED;
 static uint32_t _frame_count = 0;
 static uint64_t _frame_start_ms = 0;
-static uint64_t _sleep_until_ms = 0;
 
 /* ------------------------------------------------------------------ */
 /* Keyboard input buffer                                               */
@@ -119,9 +126,22 @@ int _rx_available(void) {
     return _rx_head - _rx_tail;
 }
 
-static void _rx_reset(void) {
-    _rx_head = 0;
-    _rx_tail = 0;
+/* ------------------------------------------------------------------ */
+/* Background tasks — called from MICROPY_VM_HOOK_LOOP (vm_yield.c)    */
+/*                                                                     */
+/* "Things Python needs the platform to do to keep going."             */
+/* ------------------------------------------------------------------ */
+
+void wasm_background_tasks(void) {
+    /* Check for Ctrl-C in rx buffer */
+    for (int i = _rx_tail; i < _rx_head; i++) {
+        if (_rx_buf[i] == 3) {
+            mp_sched_keyboard_interrupt();
+            break;
+        }
+    }
+
+    /* Future: check MEMFS hw endpoints, cursor blink, display dirty */
 }
 
 /* ------------------------------------------------------------------ */
@@ -138,23 +158,6 @@ bool wasm_budget_exhausted(void) {
 
 uint64_t wasm_frame_start_ms(void) {
     return _frame_start_ms;
-}
-
-/* ------------------------------------------------------------------ */
-/* port_background_task — things Python needs the platform to do       */
-/*                                                                     */
-/* Called during RUN_BACKGROUND_TASKS (when wired up).                 */
-/* Checks MEMFS endpoints, Ctrl-C, budget.                             */
-/* ------------------------------------------------------------------ */
-
-static void _port_background_task(void) {
-    /* Check for Ctrl-C in rx buffer */
-    for (int i = _rx_tail; i < _rx_head; i++) {
-        if (_rx_buf[i] == 3) {
-            mp_sched_keyboard_interrupt();
-            break;
-        }
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -184,8 +187,6 @@ static void _core_init(void) {
     }
     #endif
 
-    /* Set up sys.path — must be a proper list, not the default string.
-     * The unix port parses MICROPYPATH; we just set sensible defaults. */
     #if MICROPY_PY_SYS_PATH
     {
         mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_path), 0);
@@ -198,7 +199,6 @@ static void _core_init(void) {
     }
     #endif
 
-    /* Set up sys.argv */
     #if MICROPY_PY_SYS_ARGV
     {
         mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_argv), 0);
@@ -207,25 +207,10 @@ static void _core_init(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* REPL runner                                                         */
-/*                                                                     */
-/* Calls the standard blocking REPL. mp_hal_stdin_rx_chr() reads from  */
-/* the rx buffer; in CLI mode it blocks on WASI stdin.  In the browser */
-/* variant (future), the VM yield machinery will suspend here when the  */
-/* rx buffer is empty and the budget is spent, resuming next frame.     */
-/* ------------------------------------------------------------------ */
-
-static int _run_repl(void) {
-    /* pyexec_friendly_repl returns when Ctrl+D is pressed */
-    return pyexec_friendly_repl();
-}
-
-/* ------------------------------------------------------------------ */
 /* _start / main — CLI mode                                            */
 /*                                                                     */
 /* Standard WASI entry point for wasmtime/node testing.                */
-/* The supervisor runs the REPL in a loop, restarting on Ctrl+D.       */
-/* This is the real board lifecycle: code.py → REPL → restart.         */
+/* The supervisor runs the blocking REPL, restarting on Ctrl+D.        */
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char **argv) {
@@ -240,11 +225,9 @@ int main(int argc, char **argv) {
     /* Board lifecycle loop: run code.py (if exists) then REPL,
      * restart on Ctrl+D.  For now, just REPL. */
     for (;;) {
-        int ret = _run_repl();
+        int ret = pyexec_friendly_repl();
 
         if (ret == PYEXEC_FORCED_EXIT) {
-            /* Ctrl+D in REPL — on a real board this restarts code.py.
-             * For CLI mode, exit. */
             break;
         }
     }
@@ -264,6 +247,10 @@ int cp_init(void) {
     _core_init();
     _state = SUP_REPL;
 
+    #if MICROPY_VM_YIELD_ENABLED
+    vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
+    #endif
+
     fprintf(stderr, "[sup] initialized (heap=%dK budget=%dms)\n",
             WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     return 0;
@@ -272,17 +259,14 @@ int cp_init(void) {
 /* ------------------------------------------------------------------ */
 /* Exported: cp_step — one frame of supervisor work                    */
 /*                                                                     */
-/* The browser variant entry point.  Called once per rAF (~60fps).     */
-/* The supervisor spends its budget, then returns.                     */
-/*                                                                     */
-/* In the browser variant (with MICROPY_VM_YIELD_ENABLED), this will:  */
-/*   1. Run background tasks                                           */
-/*   2. Resume the VM (REPL or code.py) until budget exhausted         */
-/*   3. Return to JS for canvas paint + event handling                 */
-/*                                                                     */
-/* The VM yield saves code_state on pystack and returns                */
-/* MP_VM_RETURN_YIELD.  Next cp_step() resumes at the saved state.     */
-/* mp_hal_stdin_rx_chr() yields when the rx buffer is empty.           */
+/* Called once per rAF (~60fps).  The supervisor spends its budget:     */
+/*   1. Start frame timer                                              */
+/*   2. Run background tasks                                           */
+/*   3. Enter the active VM (REPL or code.py)                          */
+/*   4. VM runs until budget expires at a backwards branch             */
+/*   5. HOOK_LOOP fires background tasks one last time                 */
+/*   6. Yield check saves state and returns MP_VM_RETURN_YIELD         */
+/*   7. Control returns here → return to JS for canvas paint + events  */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_step")))
@@ -294,32 +278,41 @@ int cp_step(void) {
     _frame_start_ms = (uint64_t)mp_hal_ticks_ms();
     _frame_count++;
 
-    _port_background_task();
+    #if MICROPY_VM_YIELD_ENABLED
+    vm_yield_set_frame_start(_frame_start_ms);
+    #endif
+
+    /* Run background tasks at frame start */
+    wasm_background_tasks();
 
     switch (_state) {
 
     case SUP_REPL:
-        /* Browser variant: resume the blocking REPL.
-         * The VM yield machinery suspends when:
-         *   - Budget exhausted (backwards branch check)
-         *   - stdin empty (mp_hal_stdin_rx_chr yield)
+        /* The blocking REPL (pyexec_friendly_repl) internally calls
+         * mp_hal_stdin_rx_chr().  With VM yield enabled, stdin_rx_chr
+         * yields when the rx buffer is empty, so the REPL suspends
+         * mid-call and resumes next frame.
          *
-         * TODO: wire up VM yield for REPL resume.
-         * For now, cp_step is a placeholder — the CLI path
-         * (main) runs the blocking REPL directly. */
+         * TODO: wire yield-driven REPL resume.  For now, cp_step()
+         * is the browser entry point but the REPL only works in
+         * CLI mode (main).  The stepping infrastructure is ready
+         * for code.py below. */
         break;
 
-    case SUP_CODE_RUNNING:
-        /* Resume code.py bytecodes until budget exhausted.
-         * TODO: integrate vm_yield.c pattern */
-        break;
-
-    case SUP_CODE_SLEEPING:
-        if ((uint64_t)mp_hal_ticks_ms() >= _sleep_until_ms) {
-            _sleep_until_ms = 0;
-            _state = SUP_CODE_RUNNING;
+    case SUP_CODE_RUNNING: {
+        #if MICROPY_VM_YIELD_ENABLED
+        int ret = vm_yield_step();
+        if (ret == 0) {
+            /* code.py finished normally */
+            _state = SUP_CODE_FINISHED;
+        } else if (ret == 2) {
+            /* code.py exception — switch to REPL */
+            _state = SUP_CODE_FINISHED;
         }
+        /* ret == 1: yielded, will resume next frame */
+        #endif
         break;
+    }
 
     case SUP_CODE_FINISHED:
         _state = SUP_REPL;
@@ -329,8 +322,6 @@ int cp_step(void) {
     default:
         break;
     }
-
-    _port_background_task();
 
     return (int)_state;
 }
@@ -352,11 +343,18 @@ void cp_push_key(int c) {
 
 __attribute__((export_name("cp_run_file")))
 int cp_run_file(const char *path) {
+    #if MICROPY_VM_YIELD_ENABLED
     fprintf(stderr, "[sup] run_file: %s\n", path);
-    _state = SUP_CODE_RUNNING;
-    _sleep_until_ms = 0;
-    /* TODO: compile file, prepare code_state for stepping */
-    return 0;
+    int ret = vm_yield_start_file(path);
+    if (ret == 0) {
+        _state = SUP_CODE_RUNNING;
+    }
+    return ret;
+    #else
+    (void)path;
+    fprintf(stderr, "[sup] run_file: VM yield not enabled\n");
+    return -1;
+    #endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -372,6 +370,20 @@ __attribute__((export_name("cp_get_frame_count")))
 uint32_t cp_get_frame_count(void) {
     return _frame_count;
 }
+
+#if MICROPY_VM_YIELD_ENABLED
+__attribute__((export_name("cp_get_yield_reason")))
+int cp_get_yield_reason(void) {
+    extern volatile int mp_vm_yield_reason;
+    return mp_vm_yield_reason;
+}
+
+__attribute__((export_name("cp_get_yield_arg")))
+uint32_t cp_get_yield_arg(void) {
+    extern volatile uint32_t mp_vm_yield_arg;
+    return mp_vm_yield_arg;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Required stubs                                                      */

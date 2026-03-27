@@ -102,9 +102,10 @@ endif
 # main.c is the unix port entry point — kept for reference.
 # The WASM supervisor (supervisor/) provides main() and cp_step() exports.
 SRC_C += \
-	supervisor/wasm_supervisor.c \
+	supervisor/supervisor.c \
 	supervisor/port.c \
 	supervisor/stubs.c \
+	supervisor/vm_yield.c \
 	gccollect.c \
 	unix_mphal.c \
 	mpthreadport.c \

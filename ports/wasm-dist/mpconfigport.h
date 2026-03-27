@@ -306,5 +306,32 @@ static inline unsigned long mp_random_seed_init(void) {
 #define MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS (MICROPY_BLUETOOTH_NIMBLE)
 #endif
 
+// ── VM yield protocol ──
+// When enabled, the VM checks mp_vm_should_yield() at backwards branches
+// and returns MP_VM_RETURN_YIELD with state saved for resumption.
+#if MICROPY_VM_YIELD_ENABLED
+extern int mp_vm_should_yield(void);
+extern void *mp_vm_yield_state;
+#define MICROPY_VM_YIELD_SAVE_STATE(cs) do { mp_vm_yield_state = (void *)(cs); } while (0)
+
+// Override mp_hal_delay_ms — yield-as-sleep instead of busy-wait.
+// The #define prevents unix_mphal.c from providing a blocking version.
+void mp_hal_delay_ms(mp_uint_t ms);
+#define mp_hal_delay_ms mp_hal_delay_ms
+#endif
+
+// ── VM hook: background tasks + budget check at every branch ──
+// MICROPY_VM_HOOK_LOOP runs at backwards branches in py/vm.c, immediately
+// before the MICROPY_VM_YIELD_ENABLED check.  This is where we service
+// background tasks (display, hw endpoints, Ctrl-C) and check the wall-clock
+// budget.  When budget is expired, we call mp_vm_request_yield() so the
+// yield check right after will save state and return.
+#if MICROPY_VM_YIELD_ENABLED
+extern void wasm_vm_hook_loop(void);
+#define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop();
+#else
+#define MICROPY_VM_HOOK_LOOP
+#endif
+
 // CIRCUITPY-CHANGE
 #define RUN_BACKGROUND_TASKS ((void)0)
