@@ -40,6 +40,10 @@
 #include "py/pystack.h"
 #endif
 
+#if CIRCUITPY_DISPLAYIO
+#include "board_display.h"
+#endif
+
 #include "mpthreadport.h"
 
 /* ------------------------------------------------------------------ */
@@ -197,6 +201,12 @@ static void _core_init(void) {
     {
         mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_argv), 0);
     }
+    #endif
+
+    /* Initialize the display + supervisor terminal (Blinka logo + REPL).
+     * Must come after mp_init() and GC setup — allocates displayio objects. */
+    #if CIRCUITPY_DISPLAYIO
+    board_display_init();
     #endif
 }
 

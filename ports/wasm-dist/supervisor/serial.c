@@ -24,6 +24,11 @@
 #include "py/mpconfig.h"
 #include "supervisor/shared/serial.h"
 
+#if CIRCUITPY_TERMINALIO
+#include "shared-bindings/terminalio/Terminal.h"
+#include "supervisor/shared/display.h"
+#endif
+
 /* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
@@ -68,15 +73,20 @@ uint32_t serial_write_substring(const char *text, uint32_t length) {
         return 0;
     }
 
-    /* Display path: render to supervisor terminal (displayio).
-     * TODO: wire common_hal_terminalio_terminal_write when display is enabled.
-     */
-    // if (!_display_write_disabled) {
-    //     terminal_write(text, length);
-    // }
+    uint32_t length_sent = length;
+
+    /* Display path: render to supervisor terminal (displayio framebuffer).
+     * This is what makes print() output appear on the canvas/screen. */
+    #if CIRCUITPY_TERMINALIO
+    if (!_display_write_disabled) {
+        int errcode;
+        length_sent = common_hal_terminalio_terminal_write(
+            &supervisor_terminal, (const uint8_t *)text, length, &errcode);
+    }
+    #endif
 
     if (_console_write_disabled) {
-        return length;
+        return length_sent;
     }
 
     /* Console path: write to /hal/serial/tx fd.
@@ -90,7 +100,7 @@ uint32_t serial_write_substring(const char *text, uint32_t length) {
         (void)ret;
     }
 
-    return length;
+    return length_sent;
 }
 
 void serial_write(const char *text) {
