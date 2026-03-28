@@ -265,6 +265,13 @@ int main(int argc, char **argv) {
 
     wasm_cli_mode = true;
     _core_init();
+
+    /* Boot sequence: run boot.py if present. */
+    {
+        pyexec_result_t result;
+        pyexec_file_if_exists("/boot.py", &result);
+    }
+
     _state = SUP_REPL;
 
     fprintf(stderr, "[sup] CircuitPython WASM (heap=%dK)\n",
@@ -306,11 +313,21 @@ int cp_init(void) {
     if (_state != SUP_UNINITIALIZED) return 0;
 
     _core_init();
-    _state = SUP_REPL;
 
     #if MICROPY_VM_YIELD_ENABLED
     vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
     #endif
+
+    /* ── Boot sequence ──
+     * Run boot.py if present (board setup, pin aliases, etc.).
+     * settings.toml is read on demand by os.getenv() — no explicit
+     * load step needed.  After boot, drop into REPL. */
+    {
+        pyexec_result_t result;
+        pyexec_file_if_exists("/boot.py", &result);
+    }
+
+    _state = SUP_REPL;
 
     #if MICROPY_REPL_EVENT_DRIVEN
     pyexec_event_repl_init();
