@@ -16,7 +16,7 @@ canvas { border: 1px solid #444; image-rendering: pixelated; }
 <div id="serial"></div>
 
 <script type="module">
-import { WasiMemfs } from './js/wasi-memfs.js';
+import { WasiMemfs, IdbBackend } from './js/wasi-memfs.js';
 
 const canvas = document.getElementById('display');
 const ctx = canvas.getContext('2d');
@@ -31,9 +31,13 @@ function appendSerial(text) {
     serialDiv.scrollTop = serialDiv.scrollHeight;
 }
 
+// IndexedDB persistence for CIRCUITPY drive
+const idb = new IdbBackend();
+
 // Create WASI runtime with /hal/ interception
 const wasi = new WasiMemfs({
     args: ['circuitpython'],
+    idb,
     onStdout: (text) => appendSerial(text),
     onStderr: (text) => console.log('[stderr]', text),
     onHardwareWrite: (path, data) => {
@@ -44,14 +48,21 @@ const wasi = new WasiMemfs({
     },
 });
 
-// Seed code.py
-wasi.writeFile('/code.py', `
-import time
-print("Hello from CircuitPython WASM!")
-print("Type in the serial monitor below")
-`);
-
 async function main() {
+    status.textContent = 'Loading filesystem...';
+
+    // Restore persisted CIRCUITPY files from IndexedDB
+    const restored = await idb.load(wasi);
+    console.log(`[idb] restored ${restored} files`);
+
+    // Ensure CIRCUITPY drive directory exists
+    wasi.dirs.add('/CIRCUITPY');
+
+    // Seed code.py only on first run
+    if (!wasi.readFile('/CIRCUITPY/code.py')) {
+        wasi.writeFile('/CIRCUITPY/code.py', 'print("Hello from CircuitPython WASM!")\n');
+    }
+
     status.textContent = 'Compiling...';
 
     const response = await fetch('build-browser/circuitpython.wasm');

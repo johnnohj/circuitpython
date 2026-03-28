@@ -436,13 +436,13 @@ export class WasiMemfsExit extends Error {
  * IdbBackend — IndexedDB persistence for WasiMemfs.
  *
  * Provides a persistent CIRCUITPY drive backed by IndexedDB.
- * Files under the persist prefix (default "/circuitpy/") are
+ * Files under the persist prefix (default "/CIRCUITPY/") are
  * saved to IndexedDB on fd_close and restored on load().
  *
  * No CORS headers required. Works everywhere IndexedDB works.
  *
  * Usage:
- *   const idb = new IdbBackend({ prefix: '/circuitpy/' });
+ *   const idb = new IdbBackend();
  *   await idb.load(wasiMemfs);   // restore files from IDB
  *   // ... later, on fd_close:
  *   idb.save(path, data);        // persist to IDB
@@ -451,7 +451,7 @@ export class IdbBackend {
     constructor(options = {}) {
         this.dbName = options.dbName || 'circuitpython-fs';
         this.storeName = options.storeName || 'files';
-        this.prefix = options.prefix || '/circuitpy/';
+        this.prefix = options.prefix || '/CIRCUITPY/';
         this._db = null;
     }
 

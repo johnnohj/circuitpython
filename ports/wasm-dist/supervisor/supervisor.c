@@ -208,9 +208,13 @@ static void _core_init(void) {
 
     #if MICROPY_VFS_POSIX
     {
+        /* Mount VfsPosix("/CIRCUITPY") at "/" so Python sees /code.py etc.
+         * but the underlying WASI paths are /CIRCUITPY/code.py — matching
+         * the IdbBackend persistence prefix and real-board drive name. */
+        mp_obj_t root_arg = mp_obj_new_str_via_qstr("/CIRCUITPY", 10);
         mp_obj_t args[2] = {
             MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_posix, make_new)(
-                &mp_type_vfs_posix, 0, 0, NULL),
+                &mp_type_vfs_posix, 1, 0, &root_arg),
             MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
         };
         mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
