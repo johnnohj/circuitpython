@@ -45,6 +45,8 @@
 #endif
 
 #include "supervisor/hal.h"
+#include "supervisor/semihosting.h"
+#include "wasm_framebuffer.h"
 #if CIRCUITPY_STATUS_BAR
 #include "supervisor/shared/status_bar.h"
 #endif
@@ -63,6 +65,8 @@ extern int vm_yield_step(void);
 extern void vm_yield_stop(void);
 extern bool vm_yield_code_running(void);
 extern void mp_vm_request_yield(int reason, uint32_t arg);
+extern volatile int mp_vm_yield_reason;
+extern volatile uint32_t mp_vm_yield_arg;
 #endif
 
 /* mp_stderr_print is in wasi_mphal.c */
@@ -140,8 +144,8 @@ static mp_obj_t pystack_buf[WASM_PYSTACK_SIZE / sizeof(mp_obj_t)];
 /* ------------------------------------------------------------------ */
 /* Keyboard input buffer                                               */
 /*                                                                     */
-/* JS pushes bytes via cp_push_key().  mp_hal_stdin_rx_chr() reads     */
-/* from here.  In CLI mode, _rx_refill() reads from WASI stdin.       */
+/* sh_on_event(KEY_DOWN) pushes bytes here.  serial_read() reads       */
+/* from here.  In CLI mode, serial_read() falls back to WASI stdin.   */
 /* ------------------------------------------------------------------ */
 
 #define RX_BUF_SIZE 256
@@ -203,6 +207,7 @@ static void _core_init(void) {
     /* Open /hal/ fd endpoints before mp_init() — hardware must be
      * available before Python starts. */
     hal_init();
+    sh_init();
 
     mp_init();
 
@@ -319,22 +324,37 @@ int cp_init(void) {
     #endif
 
     /* ── Boot sequence ──
-     * Run boot.py if present (board setup, pin aliases, etc.).
-     * settings.toml is read on demand by os.getenv() — no explicit
-     * load step needed.  After boot, drop into REPL. */
+     * 1. Run boot.py if present (board setup, pin aliases, etc.)
+     * 2. Try to run code.py — if it exists, start yield-stepping it
+     * 3. If no code.py, drop straight into REPL
+     *
+     * This matches real CircuitPython board behavior:
+     *   boot.py → code.py → REPL (when code.py finishes)
+     * settings.toml is read on demand by os.getenv(). */
     {
         pyexec_result_t result;
         pyexec_file_if_exists("/boot.py", &result);
     }
 
-    _state = SUP_REPL;
-
-    #if MICROPY_REPL_EVENT_DRIVEN
-    pyexec_event_repl_init();
+    /* Try to start code.py via the yield-stepping machinery.
+     * If it exists and compiles, we enter SUP_CODE_RUNNING.
+     * If not, we fall through to REPL. */
+    #if MICROPY_VM_YIELD_ENABLED
+    if (vm_yield_start_file("/code.py") == 0) {
+        _state = SUP_CODE_RUNNING;
+        fprintf(stderr, "[sup] initialized → code.py (heap=%dK budget=%dms)\n",
+                WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+    } else
     #endif
+    {
+        _state = SUP_REPL;
+        #if MICROPY_REPL_EVENT_DRIVEN
+        pyexec_event_repl_init();
+        #endif
+        fprintf(stderr, "[sup] initialized → REPL (heap=%dK budget=%dms)\n",
+                WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+    }
 
-    fprintf(stderr, "[sup] initialized (heap=%dK budget=%dms)\n",
-            WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     return 0;
 }
 
@@ -402,8 +422,18 @@ int cp_step(void) {
             }
             int ret = pyexec_event_repl_process_char(c);
             if (ret & PYEXEC_FORCED_EXIT) {
-                /* Ctrl-D: restart REPL */
+                /* Ctrl-D: restart cycle — try code.py, then REPL.
+                 * This matches real board behavior: soft-reboot. */
+                #if MICROPY_VM_YIELD_ENABLED
+                if (vm_yield_start_file("/code.py") == 0) {
+                    _state = SUP_CODE_RUNNING;
+                    fprintf(stderr, "[sup] Ctrl-D → code.py\n");
+                    break;
+                }
+                #endif
+                /* No code.py — just restart the REPL */
                 pyexec_event_repl_init();
+                fprintf(stderr, "[sup] Ctrl-D → REPL\n");
             }
         }
         #endif
@@ -425,6 +455,9 @@ int cp_step(void) {
 
     case SUP_CODE_FINISHED:
         _state = SUP_REPL;
+        #if MICROPY_REPL_EVENT_DRIVEN
+        pyexec_event_repl_init();
+        #endif
         fprintf(stderr, "[sup] code.py finished → REPL\n");
         break;
 
@@ -435,20 +468,54 @@ int cp_step(void) {
     /* ── Phase 4: Post-VM background callbacks ── */
     RUN_BACKGROUND_TASKS;
 
-    /* ── Phase 5: HAL export ── */
+    /* ── Phase 5: HAL export + state export ── */
     hal_export_dirty();
+
+    {
+        uint32_t yr = 0, ya = 0, depth = 0;
+        #if MICROPY_VM_YIELD_ENABLED
+        yr = (uint32_t)mp_vm_yield_reason;
+        ya = (uint32_t)mp_vm_yield_arg;
+        #endif
+        #if MICROPY_ENABLE_PYSTACK
+        depth = (uint32_t)mp_pystack_usage();
+        #endif
+        sh_export_state((uint32_t)_state, yr, ya, _frame_count, depth);
+    }
+
+    /* Update cursor info for JS-side rendering */
+    wasm_cursor_info_update();
 
     return (int)_state;
 }
 
 /* ------------------------------------------------------------------ */
-/* Exported: cp_push_key                                               */
+/* Semihosting event handler                                           */
+/*                                                                     */
+/* Called by sh_drain_events() (in hal_step, phase 1) for each event   */
+/* JS appended to /sys/events.  Routes events to the appropriate       */
+/* subsystem — keyboard input to _rx_buf, timers to scheduler, etc.    */
+/*                                                                     */
+/* This is the single entry point for all JS → Python input.  There    */
+/* is no cp_push_key() export — keyboard input arrives here.           */
 /* ------------------------------------------------------------------ */
 
-__attribute__((export_name("cp_push_key")))
-void cp_push_key(int c) {
-    if (_rx_head < RX_BUF_SIZE) {
-        _rx_buf[_rx_head++] = (uint8_t)c;
+void sh_on_event(const sh_event_t *evt) {
+    switch (evt->event_type) {
+    case SH_EVT_KEY_DOWN: {
+        uint8_t c = (uint8_t)evt->event_data;
+        if (c == 3) {
+            /* Ctrl-C: schedule interrupt immediately rather than
+             * waiting for background_tasks to scan the buffer. */
+            mp_sched_keyboard_interrupt();
+        }
+        if (_rx_head < RX_BUF_SIZE) {
+            _rx_buf[_rx_head++] = c;
+        }
+        break;
+    }
+    default:
+        break;
     }
 }
 
@@ -474,6 +541,8 @@ int cp_run_file(const char *path) {
 
 /* ------------------------------------------------------------------ */
 /* Exported: accessors                                                 */
+/* Superseded by /sys/state (readable without WASM calls)            */
+/* but kept for CLI/testing use.                                       */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_get_state")))

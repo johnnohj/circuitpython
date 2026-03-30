@@ -26,6 +26,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "supervisor/semihosting.h"
+
 /* ------------------------------------------------------------------ */
 /* HAL file descriptors                                                */
 /* ------------------------------------------------------------------ */
@@ -77,9 +79,13 @@ int hal_serial_tx_fd(void) { return _serial_tx_fd; }
 /* ------------------------------------------------------------------ */
 
 void hal_step(void) {
+    /* Drain events from the shared linear-memory event ring.
+     * JS writes events directly into _event_ring via sh_event_ring_addr();
+     * no WASI fd round-trip needed. */
+    sh_drain_event_ring();
+
     /* JS writes to /hal/ endpoints are visible immediately via WASI.
-     * No explicit poll needed — common-hal reads the fd on demand.
-     * Future: batch-read for efficiency if per-read overhead matters. */
+     * No explicit poll needed — common-hal reads the fd on demand. */
 }
 
 /* ------------------------------------------------------------------ */

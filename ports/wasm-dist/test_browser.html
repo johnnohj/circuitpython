@@ -16,37 +16,51 @@ canvas { border: 1px solid #444; image-rendering: pixelated; }
 <div id="serial"></div>
 
 <script type="module">
-import { WasiMemfs, IdbBackend } from './js/wasi-memfs.js';
+import { WasiMemfs, IdbBackend, seedDrive } from './js/wasi-memfs.js';
+import { Semihosting } from './js/semihosting.js';
+import { env } from './js/env.js';
 
 const canvas = document.getElementById('display');
 const ctx = canvas.getContext('2d');
 const status = document.getElementById('status');
 const serialDiv = document.getElementById('serial');
 
-// Serial output buffer
+// Serial output buffer — strip VT100/ANSI escape sequences
+// (cursor positioning, color, erase) that the serial div can't render.
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 let serialText = '';
 function appendSerial(text) {
-    serialText += text;
+    serialText += text.replace(ANSI_RE, '');
     serialDiv.textContent = serialText;
     serialDiv.scrollTop = serialDiv.scrollHeight;
 }
 
+// Semihosting handler — JS side of the back door
+const sh = new Semihosting();
+sh.onDebugLog = (level, msg) => {
+    const fn = [console.log, console.warn, console.error][level] || console.log;
+    fn(`[cp] ${msg}`);
+};
+
 // IndexedDB persistence for CIRCUITPY drive
 const idb = new IdbBackend();
 
-// Create WASI runtime with /hal/ interception
+// Create WASI runtime with /hal/ and /sys/ interception
 const wasi = new WasiMemfs({
     args: ['circuitpython'],
     idb,
     onStdout: (text) => appendSerial(text),
     onStderr: (text) => console.log('[stderr]', text),
     onHardwareWrite: (path, data) => {
-        // Log hardware writes for debugging
         if (!path.startsWith('/hal/serial')) {
             console.log('[hal write]', path, data.length, 'bytes');
         }
     },
+    onSyscall: (callBuf) => sh.handleCall(callBuf),
 });
+
+// Wire semihosting to MEMFS (deferred binding — MEMFS created first)
+sh.setMemfs(wasi);
 
 async function main() {
     status.textContent = 'Loading filesystem...';
@@ -55,13 +69,10 @@ async function main() {
     const restored = await idb.load(wasi);
     console.log(`[idb] restored ${restored} files`);
 
-    // Ensure CIRCUITPY drive directory exists
-    wasi.dirs.add('/CIRCUITPY');
-
-    // Seed code.py only on first run
-    if (!wasi.readFile('/CIRCUITPY/code.py')) {
-        wasi.writeFile('/CIRCUITPY/code.py', 'print("Hello from CircuitPython WASM!")\n');
-    }
+    // Seed CIRCUITPY drive structure (only creates files that don't exist)
+    seedDrive(wasi, {
+        codePy: 'print("Hello from CircuitPython WASM!")\n',
+    });
 
     status.textContent = 'Compiling...';
 
@@ -70,22 +81,29 @@ async function main() {
     const module = await WebAssembly.compile(bytes);
     const instance = await WebAssembly.instantiate(module, wasi.getImports());
     wasi.setInstance(instance);
+    sh.setInstance(instance);
 
     const exports = instance.exports;
     status.textContent = 'Initializing...';
 
-    // Initialize the supervisor
+    // Initialize the supervisor (opens /hal/ and /sys/ endpoints)
     exports.cp_init();
 
-    // Framebuffer info
+    // Framebuffer info — read once at init (static), then use
+    // direct memory addresses for per-frame dirty checking.
     const fbAddr = exports.wasm_display_fb_addr();
     const fbWidth = exports.wasm_display_fb_width();
     const fbHeight = exports.wasm_display_fb_height();
+    const cursorInfoAddr = exports.wasm_cursor_info_addr();
     const imageData = ctx.createImageData(fbWidth, fbHeight);
+
+    // Scale canvas to match displayio group scale
+    canvas.style.width = fbWidth + 'px';
+    canvas.style.height = fbHeight + 'px';
 
     status.textContent = `Running (${fbWidth}x${fbHeight} display)`;
 
-    // Keyboard → cp_push_key
+    // Keyboard → semihosting events via /sys/events
     document.addEventListener('keydown', (e) => {
         let c = 0;
         if (e.key.length === 1) {
@@ -95,17 +113,15 @@ async function main() {
             case 'Backspace': c = 8; break;
             case 'Tab': c = 9; break;
             case 'Escape': c = 27; break;
-            case 'ArrowUp': exports.cp_push_key(27); exports.cp_push_key(91); c = 65; break;
-            case 'ArrowDown': exports.cp_push_key(27); exports.cp_push_key(91); c = 66; break;
-            case 'ArrowRight': exports.cp_push_key(27); exports.cp_push_key(91); c = 67; break;
-            case 'ArrowLeft': exports.cp_push_key(27); exports.cp_push_key(91); c = 68; break;
+            case 'ArrowUp':    sh.pushKey(27); sh.pushKey(91); c = 65; break;
+            case 'ArrowDown':  sh.pushKey(27); sh.pushKey(91); c = 66; break;
+            case 'ArrowRight': sh.pushKey(27); sh.pushKey(91); c = 67; break;
+            case 'ArrowLeft':  sh.pushKey(27); sh.pushKey(91); c = 68; break;
         }
         if (c) {
-            // Ctrl+C
             if (e.ctrlKey && e.key === 'c') { c = 3; }
-            // Ctrl+D
             if (e.ctrlKey && e.key === 'd') { c = 4; }
-            exports.cp_push_key(c);
+            sh.pushKey(c);
             e.preventDefault();
         }
     });
@@ -113,11 +129,11 @@ async function main() {
     // Convert RGB565 framebuffer to RGBA for canvas
     function paintFramebuffer() {
         if (!fbAddr || fbWidth === 0) return;
+
         const fb = new Uint16Array(exports.memory.buffer, fbAddr, fbWidth * fbHeight);
         const rgba = imageData.data;
         for (let i = 0; i < fb.length; i++) {
             const pixel = fb[i];
-            // RGB565: RRRRRGGGGGGBBBBB
             const r = ((pixel >> 11) & 0x1F) << 3;
             const g = ((pixel >> 5) & 0x3F) << 2;
             const b = (pixel & 0x1F) << 3;
@@ -130,19 +146,80 @@ async function main() {
         ctx.putImageData(imageData, 0, 0);
     }
 
-    // Main loop
+    // Cursor — drawn by JS on the canvas, not in the framebuffer.
+    // Reads cursor info struct from WASM linear memory each frame.
+    // cursor_info_t layout (all uint16_t, little-endian):
+    //   0: cursor_x, 2: cursor_y, 4: scroll_x, 6: scroll_y,
+    //   8: top_left_y, 10: height_tiles, 12: glyph_w, 14: glyph_h,
+    //   16: scale
+    const CURSOR_BLINK_MS = 500;
+    let cursorBlinkOn = true;
+    let cursorLastToggle = performance.now();
+
+    function drawCursor() {
+        const now = performance.now();
+        if (now - cursorLastToggle >= CURSOR_BLINK_MS) {
+            cursorBlinkOn = !cursorBlinkOn;
+            cursorLastToggle = now;
+        }
+        if (!cursorBlinkOn) return;
+
+        const mem = exports.memory.buffer;
+        const ci = new DataView(mem, cursorInfoAddr, 20);
+        const cx = ci.getUint16(0, true);
+        const cy = ci.getUint16(2, true);
+        const sx = ci.getUint16(4, true);
+        const sy = ci.getUint16(6, true);
+        const tly = ci.getUint16(8, true);
+        const htiles = ci.getUint16(10, true);
+        const gw = ci.getUint16(12, true);
+        const gh = ci.getUint16(14, true);
+        const scale = ci.getUint16(16, true) || 1;
+
+        if (gw === 0 || gh === 0 || htiles === 0) return;
+
+        // Map logical cursor row through circular buffer offset
+        const visualRow = ((cy - tly) % htiles + htiles) % htiles;
+        const px = (sx + cx * gw) * scale;
+        const py = (sy + visualRow * gh) * scale;
+        const w = gw * scale;
+        const h = gh * scale;
+
+        // Draw inverted rectangle (white with "difference" blend
+        // simulates XOR without touching the framebuffer)
+        ctx.save();
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(px, py, w, h);
+        ctx.restore();
+    }
+
+    // Main loop — read VM state directly from linear memory
     let frameCount = 0;
+    const SUP_STATES = ['INIT', 'REPL', 'CODE', 'DONE'];
+    const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
+
     function loop() {
         exports.cp_step();
         paintFramebuffer();
+        drawCursor();
         frameCount++;
+
         if (frameCount % 60 === 0) {
-            status.textContent = `Running (frame ${frameCount})`;
+            const state = sh.readState();
+            if (state) {
+                const sup = SUP_STATES[state.supState] || '?';
+                const yr = YIELD_REASONS[state.yieldReason] || '?';
+                status.textContent =
+                    `${sup} | yield: ${yr} | pystack: ${state.vmDepth}B | frame ${state.frameCount}`;
+            } else {
+                status.textContent = `Running (frame ${frameCount})`;
+            }
         }
-        requestAnimationFrame(loop);
+        env.requestFrame(loop);
     }
 
-    requestAnimationFrame(loop);
+    env.requestFrame(loop);
 }
 
 main().catch(e => {

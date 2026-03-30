@@ -36,7 +36,7 @@
 #define CIRCUITPY_MICROCONTROLLER   (1)
 
 // ── Event-driven REPL for browser frame-budget model ──
-// JS pushes one char at a time via cp_push_key().
+// JS pushes keyboard events via /sys/events (semihosting protocol).
 // pyexec_event_repl_process_char() is a pure state machine — no blocking.
 // When user hits Enter, execution can yield via MP_VM_RETURN_YIELD.
 #define MICROPY_REPL_EVENT_DRIVEN   (1)

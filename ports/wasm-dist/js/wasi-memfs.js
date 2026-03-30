@@ -61,6 +61,7 @@ export class WasiMemfs {
         this.onHardwareWrite = options.onHardwareWrite || null;
         this.onHardwareRead = options.onHardwareRead || null;
         this.onHardwareCommand = options.onHardwareCommand || null;
+        this.onSyscall = options.onSyscall || null;
 
         // IndexedDB persistence backend (optional)
         this.idb = options.idb || null;
@@ -167,6 +168,11 @@ export class WasiMemfs {
                     // Intercept /hal/ writes → notify hardware listeners
                     if (entry.path.startsWith('/hal/') && self.onHardwareWrite) {
                         self.onHardwareWrite(entry.path, buf);
+                    }
+
+                    // Intercept /sys/call writes → semihosting dispatch
+                    if (entry.path === '/sys/call' && self.onSyscall) {
+                        self.onSyscall(buf);
                     }
 
                     self._view().setUint32(nwritten, data.length, true);
@@ -420,6 +426,37 @@ export class WasiMemfs {
                     return ERRNO.SUCCESS;
                 },
                 fd_readdir() { return ERRNO.NOSYS; },
+                fd_filestat_get(fd, buf) {
+                    const entry = self.fds.get(fd);
+                    if (!entry) return ERRNO.BADF;
+                    const view = self._view();
+                    for (let i = 0; i < 64; i++) view.setUint8(buf + i, 0);
+                    if (entry.type === 'dir') {
+                        view.setUint8(buf + 16, 3);
+                    } else {
+                        const data = self.files.get(entry.path);
+                        view.setUint8(buf + 16, 4);
+                        view.setBigUint64(buf + 32, BigInt(data ? data.length : 0), true);
+                    }
+                    view.setBigUint64(buf + 24, 1n, true);
+                    return ERRNO.SUCCESS;
+                },
+                fd_filestat_set_size(fd, size) {
+                    const entry = self.fds.get(fd);
+                    if (!entry || entry.type !== 'file') return ERRNO.BADF;
+                    const newSize = Number(size);
+                    const existing = self.files.get(entry.path) || new Uint8Array(0);
+                    if (newSize === 0) {
+                        self.files.set(entry.path, new Uint8Array(0));
+                    } else if (newSize < existing.length) {
+                        self.files.set(entry.path, existing.slice(0, newSize));
+                    } else if (newSize > existing.length) {
+                        const buf = new Uint8Array(newSize);
+                        buf.set(existing);
+                        self.files.set(entry.path, buf);
+                    }
+                    return ERRNO.SUCCESS;
+                },
             }
         };
     }
@@ -537,5 +574,34 @@ export class IdbBackend {
             req.onsuccess = () => resolve();
             req.onerror = () => reject(req.error);
         });
+    }
+}
+
+/**
+ * seedDrive — Ensure the CIRCUITPY drive has minimum required structure.
+ *
+ * On a real board, the drive ships with boot_out.txt and an empty lib/.
+ * This seeds the same structure if files don't already exist.
+ *
+ * Call after loading from the persistence backend but before cp_init().
+ */
+export function seedDrive(memfs, options = {}) {
+    const prefix = '/CIRCUITPY';
+
+    memfs.dirs.add(prefix);
+    memfs.dirs.add(prefix + '/lib');
+
+    if (options.bootPy != null && !memfs.readFile(prefix + '/boot.py')) {
+        memfs.writeFile(prefix + '/boot.py', options.bootPy);
+    }
+    if (options.codePy != null && !memfs.readFile(prefix + '/code.py')) {
+        memfs.writeFile(prefix + '/code.py', options.codePy);
+    }
+    if (options.settingsToml != null && !memfs.readFile(prefix + '/settings.toml')) {
+        memfs.writeFile(prefix + '/settings.toml', options.settingsToml);
+    }
+    if (!memfs.readFile(prefix + '/boot_out.txt')) {
+        memfs.writeFile(prefix + '/boot_out.txt',
+            'CircuitPython WASM\nBoard ID: wasm-browser\n');
     }
 }

@@ -103,6 +103,7 @@ SRC_C += \
 	supervisor/background_callback.c \
 	supervisor/tick.c \
 	supervisor/hal.c \
+	supervisor/semihosting.c \
 	gccollect.c \
 	wasi_mphal.c \
 	mpthreadport.c \

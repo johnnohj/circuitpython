@@ -25,71 +25,10 @@
 #include "shared-module/displayio/__init__.h"
 #endif
 
-#if CIRCUITPY_TERMINALIO
-#include "shared-bindings/terminalio/Terminal.h"
-#include "supervisor/shared/display.h"
-#include "wasm_framebuffer.h"
-#endif
-
-/* ------------------------------------------------------------------ */
-/* Cursor blink — XOR a glyph-sized block in the framebuffer           */
-/* ------------------------------------------------------------------ */
-
-#if CIRCUITPY_TERMINALIO
-
-#define CURSOR_BLINK_MS 500
-#define CURSOR_GLYPH_W  6
-#define CURSOR_GLYPH_H  12
-
-static bool _cursor_visible = false;
-static uint32_t _cursor_last_toggle_ms = 0;
-
-/* XOR a glyph-sized block at the cursor position.
- * Calling twice restores the original pixels (XOR is self-inverse). */
-static void _cursor_xor(void) {
-    uint8_t *fb = (uint8_t *)wasm_display_fb_addr();
-    int fb_w = wasm_display_fb_width();
-    int fb_h = wasm_display_fb_height();
-
-    uint16_t cx = common_hal_terminalio_terminal_get_cursor_x(&supervisor_terminal);
-    uint16_t cy = common_hal_terminalio_terminal_get_cursor_y(&supervisor_terminal);
-
-    /* Pixel origin: scroll area position + cursor cell */
-    extern displayio_tilegrid_t supervisor_terminal_scroll_area_text_grid;
-    int px = supervisor_terminal_scroll_area_text_grid.x + cx * CURSOR_GLYPH_W;
-    int py = supervisor_terminal_scroll_area_text_grid.y + cy * CURSOR_GLYPH_H;
-
-    for (int row = 0; row < CURSOR_GLYPH_H; row++) {
-        int y = py + row;
-        if (y < 0 || y >= fb_h) {
-            continue;
-        }
-        for (int col = 0; col < CURSOR_GLYPH_W; col++) {
-            int x = px + col;
-            if (x < 0 || x >= fb_w) {
-                continue;
-            }
-            int off = (y * fb_w + x) * 2;
-            fb[off]     ^= 0xFF;
-            fb[off + 1] ^= 0xFF;
-        }
-    }
-}
-
-static void _cursor_tick(uint32_t now_ms) {
-    if (now_ms - _cursor_last_toggle_ms >= CURSOR_BLINK_MS) {
-        _cursor_last_toggle_ms = now_ms;
-        if (_cursor_visible) {
-            _cursor_xor(); /* erase old cursor */
-        }
-        _cursor_visible = !_cursor_visible;
-        if (_cursor_visible) {
-            _cursor_xor(); /* draw new cursor */
-        }
-    }
-}
-
-#endif /* CIRCUITPY_TERMINALIO */
+/* Cursor rendering is handled by JS on the canvas — not in C.
+ * JS reads cursor position from a shared struct in linear memory
+ * (exported via wasm_cursor_info_addr) and draws a blinking
+ * rectangle on top of the framebuffer paint.  No XOR, no burn-in. */
 
 /* ------------------------------------------------------------------ */
 /* Tick state                                                          */
@@ -112,10 +51,6 @@ static void supervisor_background_tick(void *unused) {
 
     #if CIRCUITPY_DISPLAYIO
     displayio_background();
-    #endif
-
-    #if CIRCUITPY_TERMINALIO
-    _cursor_tick(supervisor_ticks_ms32());
     #endif
 
     /* TODO: filesystem_background() when filesystem is wired */

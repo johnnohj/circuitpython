@@ -137,3 +137,49 @@ __attribute__((export_name("wasm_display_frame_count")))
 uint32_t wasm_display_frame_count(void) {
     return wasm_framebuffer_instance.frame_count;
 }
+
+/* Address of the frame counter in linear memory.
+ * JS polls this directly (no WASM call) to check if the
+ * framebuffer has new data before doing the RGB565→RGBA
+ * conversion.  Same direct-memory pattern as sh_state_addr(). */
+__attribute__((export_name("wasm_display_frame_count_addr")))
+uintptr_t wasm_display_frame_count_addr(void) {
+    return (uintptr_t)&wasm_framebuffer_instance.frame_count;
+}
+
+// ---- Cursor info for JS-side rendering ----
+//
+// JS draws the cursor on the canvas as an overlay — no framebuffer
+// XOR, no burn-in.  This struct is filled by wasm_cursor_info_update()
+// (called from cp_step) and read by JS via direct memory access.
+
+#if CIRCUITPY_TERMINALIO
+#include "shared-bindings/terminalio/Terminal.h"
+#include "supervisor/shared/display.h"
+#endif
+
+static wasm_cursor_info_t _cursor_info;
+
+__attribute__((export_name("wasm_cursor_info_addr")))
+uintptr_t wasm_cursor_info_addr(void) {
+    return (uintptr_t)&_cursor_info;
+}
+
+void wasm_cursor_info_update(void) {
+    #if CIRCUITPY_TERMINALIO
+    _cursor_info.cursor_x = common_hal_terminalio_terminal_get_cursor_x(&supervisor_terminal);
+    _cursor_info.cursor_y = common_hal_terminalio_terminal_get_cursor_y(&supervisor_terminal);
+
+    extern displayio_tilegrid_t supervisor_terminal_scroll_area_text_grid;
+    displayio_tilegrid_t *sa = &supervisor_terminal_scroll_area_text_grid;
+    _cursor_info.scroll_x = sa->x;
+    _cursor_info.scroll_y = sa->y;
+    _cursor_info.top_left_y = sa->top_left_y;
+    _cursor_info.height_tiles = sa->height_in_tiles;
+    _cursor_info.glyph_w = sa->tile_width;
+    _cursor_info.glyph_h = sa->tile_height;
+
+    extern displayio_group_t circuitpython_splash;
+    _cursor_info.scale = circuitpython_splash.scale;
+    #endif
+}

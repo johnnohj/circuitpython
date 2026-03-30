@@ -10,7 +10,7 @@
  *     └── CLI path: write(STDOUT_FILENO) for wasmtime/node testing
  *
  *   serial_read()
- *     ├── rx ring buffer (browser: JS pushes via cp_push_key)
+ *     ├── rx ring buffer (browser: JS pushes via /sys/events)
  *     └── read(STDIN_FILENO) (CLI fallback)
  *
  * We own the entire I/O path — no USB, BLE, UART, or WebSocket deps.
@@ -68,6 +68,7 @@ bool serial_connected(void) {
 /* Output                                                              */
 /* ------------------------------------------------------------------ */
 
+
 uint32_t serial_write_substring(const char *text, uint32_t length) {
     if (length == 0) {
         return 0;
@@ -76,7 +77,8 @@ uint32_t serial_write_substring(const char *text, uint32_t length) {
     uint32_t length_sent = length;
 
     /* Display path: render to supervisor terminal (displayio framebuffer).
-     * This is what makes print() output appear on the canvas/screen. */
+     * Erase cursor first (standard terminal emulator behavior), then
+     * write characters.  The cursor is redrawn by _cursor_tick. */
     #if CIRCUITPY_TERMINALIO
     if (!_display_write_disabled) {
         int errcode;
@@ -118,7 +120,7 @@ uint32_t serial_bytes_available(void) {
 }
 
 char serial_read(void) {
-    /* Check rx buffer first (browser: JS pushed keys via cp_push_key) */
+    /* Check rx buffer first (browser: JS pushed keys via /sys/events) */
     if (_rx_available() > 0) {
         unsigned char c = _rx_buf[_rx_tail++];
         /* Reset buffer when fully consumed */

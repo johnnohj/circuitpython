@@ -52,4 +52,21 @@ void wasm_framebuffer_init(void);
 uint8_t *wasm_display_fb_addr(void);
 int wasm_display_fb_width(void);
 int wasm_display_fb_height(void);
+
+// Cursor info — filled by wasm_cursor_info_update(), read by JS
+// via wasm_cursor_info_addr() direct memory access.
+typedef struct {
+    uint16_t cursor_x;      // character column
+    uint16_t cursor_y;      // character row (logical, in tile buffer)
+    uint16_t scroll_x;      // scroll area pixel origin X
+    uint16_t scroll_y;      // scroll area pixel origin Y
+    uint16_t top_left_y;    // circular buffer scroll offset
+    uint16_t height_tiles;  // scroll area height in tiles
+    uint16_t glyph_w;       // glyph width in pixels
+    uint16_t glyph_h;       // glyph height in pixels
+    uint16_t scale;         // display group scale factor
+    uint16_t _pad;
+} wasm_cursor_info_t;
+
+void wasm_cursor_info_update(void);
 uint32_t wasm_display_frame_count(void);
