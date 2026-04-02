@@ -91,14 +91,33 @@ const SH_EVENT_SIZE  = 8;
 /* Semihosting handler                                                 */
 /* ------------------------------------------------------------------ */
 
+// fwip shared buffer constants — must match semihosting.h
+const FWIP_CMD_NONE    = 0;
+const FWIP_CMD_INSTALL = 1;
+const FWIP_CMD_REMOVE  = 2;
+const FWIP_CMD_LIST    = 3;
+
+const FWIP_STATE_IDLE     = 0;
+const FWIP_STATE_PENDING  = 1;
+const FWIP_STATE_PROGRESS = 2;
+const FWIP_STATE_DONE     = 3;
+const FWIP_STATE_ERROR    = 4;
+
+const FWIP_NAME_MAX   = 128;
+const FWIP_STATUS_MAX = 128;
+
 export class Semihosting {
     constructor() {
         this.memfs = null;        // Set via setMemfs()
         this.instance = null;     // Set via setInstance()
+        this.fwip = null;         // Set via setFwip()
         this.timers = new Map();  // timer_id → setTimeout handle
         this.fetches = new Map(); // request_id → { status, response }
         this.nextFetchId = 1;
         this.startTime = env.now();
+
+        // fwip async state
+        this._fwipBusy = false;
 
         // User-provided handlers for extensibility
         this.onExit = null;           // (status) => {}
@@ -113,6 +132,92 @@ export class Semihosting {
 
     setInstance(instance) {
         this.instance = instance;
+    }
+
+    setFwip(fwip) {
+        this.fwip = fwip;
+    }
+
+    /* ---- fwip shared buffer polling ---- */
+
+    /**
+     * Poll the fwip shared buffer in WASM linear memory.
+     * Called each frame from the main loop (after cp_step).
+     * When Python writes a command, JS picks it up here and
+     * starts the async install/remove, updating status as it goes.
+     */
+    pollFwip() {
+        if (!this.instance || !this.fwip) return;
+        const exports = this.instance.exports;
+        if (!exports.sh_fwip_addr) return;
+
+        const addr = exports.sh_fwip_addr();
+        const mem = exports.memory.buffer;
+        const view = new DataView(mem, addr, 264);
+        const bytes = new Uint8Array(mem, addr, 264);
+
+        const command = view.getUint8(0);
+        const state = view.getUint8(1);
+
+        // Nothing to do if idle or already being handled
+        if (command === FWIP_CMD_NONE || state >= FWIP_STATE_DONE) return;
+        if (this._fwipBusy) return;
+
+        // Read the package name (offset 8, up to 128 bytes, NUL-terminated)
+        const nameBytes = bytes.subarray(8, 8 + FWIP_NAME_MAX);
+        const nameEnd = nameBytes.indexOf(0);
+        const name = new TextDecoder().decode(
+            nameBytes.subarray(0, nameEnd === -1 ? FWIP_NAME_MAX : nameEnd)
+        );
+
+        if (!name) return;
+
+        const setStatus = (msg) => {
+            // Write status string into shared buffer at offset 136
+            const encoded = new TextEncoder().encode(msg);
+            const len = Math.min(encoded.length, FWIP_STATUS_MAX - 1);
+            bytes.fill(0, 136, 136 + FWIP_STATUS_MAX);
+            bytes.set(encoded.subarray(0, len), 136);
+            // Update status_len (offset 6, uint16 LE)
+            view.setUint16(6, len, true);
+            // Set state to PROGRESS so Python sees the update
+            view.setUint8(1, FWIP_STATE_PROGRESS);
+        };
+
+        const finish = (success, msg) => {
+            if (msg) setStatus(msg);
+            view.setUint8(1, success ? FWIP_STATE_DONE : FWIP_STATE_ERROR);
+            this._fwipBusy = false;
+        };
+
+        if (command === FWIP_CMD_INSTALL) {
+            this._fwipBusy = true;
+            // Override fwip's log to push status into shared buffer
+            const origLog = this.fwip.log;
+            this.fwip.log = (msg) => {
+                origLog(msg);
+                setStatus(msg);
+            };
+
+            this.fwip.install(name).then((info) => {
+                this.fwip.log = origLog;
+                const count = this.fwip.installed.size;
+                view.setUint16(4, count, true);
+                finish(true, `[fwip] done`);
+            }).catch((err) => {
+                this.fwip.log = origLog;
+                finish(false, `[fwip] error: ${err.message}`);
+            });
+
+        } else if (command === FWIP_CMD_REMOVE) {
+            this._fwipBusy = true;
+            try {
+                this.fwip.remove(name);
+                finish(true, `[fwip] removed ${name}`);
+            } catch (err) {
+                finish(false, `[fwip] error: ${err.message}`);
+            }
+        }
     }
 
     /* ---- Call dispatch ---- */

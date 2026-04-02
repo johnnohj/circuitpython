@@ -108,6 +108,7 @@ SRC_C += \
 	wasi_mphal.c \
 	mpthreadport.c \
 	modringio.c \
+	modfwip.c \
 	shared-module/os/__init__.c \
 	supervisor/shared/translate/translate.c \
 	$(SRC_MOD) \

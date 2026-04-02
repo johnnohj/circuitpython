@@ -80,11 +80,18 @@ typedef enum {
     SUP_REPL,           /* REPL active (blocking in CLI, yielding in browser) */
     SUP_CODE_RUNNING,   /* code.py executing */
     SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
+    SUP_FWIP_BUSY,      /* fwip install/remove in progress (JS async) */
 } sup_state_t;
+
+/* fwip request flag — set by modfwip.c, checked in cp_step() */
+volatile bool fwip_request_pending = false;
 
 static sup_state_t _state = SUP_UNINITIALIZED;
 static uint32_t _frame_count = 0;
 static uint64_t _frame_start_ms = 0;
+
+/* fwip polling state — tracks last printed status to avoid repeats */
+static char _fwip_last_status[FWIP_STATUS_MAX] = {0};
 
 /* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
 bool wasm_cli_mode = false;
@@ -436,6 +443,14 @@ int cp_step(void) {
                 fprintf(stderr, "[sup] Ctrl-D → REPL\n");
             }
         }
+        /* Check if fwip.install() was called — transition after
+         * the REPL expression returns so pystack is clean. */
+        if (fwip_request_pending) {
+            fwip_request_pending = false;
+            _state = SUP_FWIP_BUSY;
+            _fwip_last_status[0] = '\0';
+            fprintf(stderr, "[sup] → fwip\n");
+        }
         #endif
         break;
     }
@@ -460,6 +475,36 @@ int cp_step(void) {
         #endif
         fprintf(stderr, "[sup] code.py finished → REPL\n");
         break;
+
+    case SUP_FWIP_BUSY: {
+        /* Pure C polling — no VM, no bytecode.  JS does the async
+         * fetch and updates the shared buffer.  We just print status
+         * and wait for DONE/ERROR. */
+        fwip_buf_t *buf = (fwip_buf_t *)sh_fwip_addr();
+        uint8_t st = buf->state;
+
+        /* Print new status messages as they arrive */
+        if (buf->status_len > 0 &&
+            strncmp(buf->status, _fwip_last_status, FWIP_STATUS_MAX) != 0) {
+            mp_printf(&mp_plat_print, "%s\n", buf->status);
+            strncpy(_fwip_last_status, buf->status, FWIP_STATUS_MAX - 1);
+            _fwip_last_status[FWIP_STATUS_MAX - 1] = '\0';
+        }
+
+        if (st == FWIP_STATE_DONE || st == FWIP_STATE_ERROR) {
+            if (st == FWIP_STATE_ERROR) {
+                mp_printf(&mp_plat_print, "Error: %s\n", buf->status);
+            }
+            buf->command = FWIP_CMD_NONE;
+            buf->state = FWIP_STATE_IDLE;
+            _state = SUP_REPL;
+            #if MICROPY_REPL_EVENT_DRIVEN
+            pyexec_event_repl_init();
+            #endif
+            fprintf(stderr, "[sup] fwip done → REPL\n");
+        }
+        break;
+    }
 
     default:
         break;

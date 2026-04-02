@@ -1,3 +1,4 @@
-add_library("unix-ffi", "$(MPY_LIB_DIR)/unix-ffi")
-require("mip-cmdline")
-require("ssl")
+# Base manifest for wasm-dist port.
+# unix-ffi, mip, ssl removed — not useful in browser context.
+# Runtime library installation is handled by fwip (JS-side).
+require("argparse")
