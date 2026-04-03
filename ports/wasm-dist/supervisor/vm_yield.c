@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "py/bc.h"
 #include "py/compile.h"
 #include "py/runtime.h"
 #include "py/gc.h"
@@ -31,6 +32,7 @@
 #include "extmod/vfs.h"
 
 #include "mpthreadport.h"
+#include "supervisor/context.h"
 
 /* ------------------------------------------------------------------ */
 /* Yield exception sentinel                                            */
@@ -109,15 +111,18 @@ extern void wasm_background_tasks(void);
 /* CLI mode flag — set by main() in supervisor.c */
 extern bool wasm_cli_mode;
 
+/* JS time source — written by cp_step() each frame. */
+extern volatile uint64_t wasm_js_now_ms;
+
 void wasm_vm_hook_loop(void) {
-    /* 1. Run port background tasks */
+    /* 1. Run port background tasks (Ctrl-C check) */
     wasm_background_tasks();
 
     /* 2. Check wall-clock budget (skip in CLI mode and atomic sections).
      *    CLI mode uses blocking I/O — no frame budget, no yield.
      *    Browser mode yields when the frame budget is exhausted. */
     if (!wasm_cli_mode && !_yield_requested && !mp_thread_in_atomic_section()) {
-        uint64_t now = (uint64_t)mp_hal_ticks_ms();
+        uint64_t now = wasm_js_now_ms ? wasm_js_now_ms : (uint64_t)mp_hal_ticks_ms();
         if (now - _frame_start_ms >= _frame_budget_ms) {
             mp_vm_request_yield(YIELD_BUDGET, 0);
         }
@@ -128,18 +133,18 @@ void wasm_vm_hook_loop(void) {
 /* Delay-as-yield                                                      */
 /*                                                                     */
 /* time.sleep() doesn't block — it sets a target time and yields.      */
-/* The supervisor checks mp_hal_delay_active() each frame and skips    */
-/* VM execution until the sleep expires.                               */
+/* The deadline is stored per-context so sleeping contexts don't block  */
+/* other contexts from running.                                        */
 /* ------------------------------------------------------------------ */
 
-static uint64_t _delay_until = 0;
-
 int mp_hal_delay_active(void) {
-    if (_delay_until == 0) {
+    int id = cp_context_active();
+    uint64_t du = cp_context_get_delay(id);
+    if (du == 0) {
         return 0;
     }
-    if ((uint64_t)mp_hal_ticks_ms() >= _delay_until) {
-        _delay_until = 0;
+    if ((uint64_t)mp_hal_ticks_ms() >= du) {
+        cp_context_set_delay(id, 0);
         return 0;
     }
     return 1;
@@ -149,87 +154,42 @@ void mp_hal_delay_ms(mp_uint_t ms) {
     if (ms == 0) {
         return;
     }
-    _delay_until = (uint64_t)mp_hal_ticks_ms() + ms;
+    uint64_t deadline = (uint64_t)mp_hal_ticks_ms() + ms;
+    int id = cp_context_active();
+    cp_context_set_delay(id, deadline);
+    cp_context_set_sleeping(id, deadline);
     mp_vm_request_yield(YIELD_SLEEP, (uint32_t)ms);
 }
 
 /* ------------------------------------------------------------------ */
-/* Stepping state — persistent between cp_step() calls                 */
+/* Stepping state — per-context via cp_context_vm_t                    */
+/*                                                                     */
+/* All stepping state is indexed by the active context id.  Context    */
+/* switching (cp_context_save/restore) swaps pystack pointers and      */
+/* yield_state; the _vm[] array in context.c holds per-context         */
+/* code_state, started, and first_entry flags.                         */
 /* ------------------------------------------------------------------ */
 
-static mp_code_state_t *_vm_code_state = NULL;
-static mp_obj_t _vm_module_fun = MP_OBJ_NULL;
-static bool _vm_started = false;
-static bool _vm_first_entry = false;
-
 bool vm_yield_code_running(void) {
-    return _vm_started;
+    cp_context_vm_t *vm = cp_context_vm(cp_context_active());
+    return vm->started;
 }
 
 /*
- * Compile a .py file and prepare for stepping.
- * Returns 0 on success, -1 on compile error.
+ * Start stepping a pre-compiled code_state (from cp_compile_str/file).
+ * Writes to the active context's VM state.
  */
-int vm_yield_start_file(const char *path) {
-    _vm_code_state = NULL;
-    _vm_module_fun = MP_OBJ_NULL;
-    _vm_started = false;
-    _delay_until = 0;
-
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_lexer_t *lex = mp_lexer_new_from_file(qstr_from_str(path));
-        qstr source_name = lex->source_name;
-        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-        _vm_module_fun = mp_compile(&parse_tree, source_name, false);
-        nlr_pop();
-    } else {
-        mp_obj_print_exception(&mp_stderr_print, MP_OBJ_FROM_PTR(nlr.ret_val));
-        return -1;
-    }
-
-    _vm_code_state = mp_obj_fun_bc_prepare_codestate(
-        _vm_module_fun, 0, 0, NULL);
-    if (_vm_code_state == NULL) {
-        fprintf(stderr, "[vm_yield] cannot create code state\n");
-        return -1;
-    }
-    _vm_code_state->prev = NULL;
-    _vm_started = true;
-    _vm_first_entry = true;
+void vm_yield_start(mp_code_state_t *cs) {
+    cp_context_vm_t *vm = cp_context_vm(cp_context_active());
+    vm->code_state = cs;
+    vm->started = true;
+    vm->first_entry = true;
+    cp_context_set_delay(cp_context_active(), 0);
     mp_vm_yield_state = NULL;
-
-    return 0;
 }
 
 /*
- * Start stepping a pre-compiled module function (e.g. from REPL).
- * The caller has already compiled the source — we just prepare the
- * code_state and mark it ready for vm_yield_step().
- * Returns 0 on success, -1 on error.
- */
-int vm_yield_start_expr(mp_obj_t module_fun) {
-    _vm_code_state = NULL;
-    _vm_module_fun = module_fun;
-    _vm_started = false;
-    _delay_until = 0;
-
-    _vm_code_state = mp_obj_fun_bc_prepare_codestate(
-        module_fun, 0, 0, NULL);
-    if (_vm_code_state == NULL) {
-        fprintf(stderr, "[vm_yield] cannot create code state for expr\n");
-        return -1;
-    }
-    _vm_code_state->prev = NULL;
-    _vm_started = true;
-    _vm_first_entry = true;
-    mp_vm_yield_state = NULL;
-
-    return 0;
-}
-
-/*
- * Execute one burst of bytecodes for the file started by vm_yield_start_file.
+ * Execute one burst of bytecodes for the active context.
  *
  * Returns:
  *   0 — normal completion (code finished)
@@ -237,7 +197,9 @@ int vm_yield_start_expr(mp_obj_t module_fun) {
  *   2 — exception (traceback printed to stderr)
  */
 int vm_yield_step(void) {
-    if (!_vm_started || _vm_code_state == NULL) {
+    cp_context_vm_t *vm = cp_context_vm(cp_context_active());
+
+    if (!vm->started || vm->code_state == NULL) {
         return 0;
     }
 
@@ -252,52 +214,52 @@ int vm_yield_step(void) {
 
     mp_code_state_t *entry_state;
 
-    if (_vm_first_entry) {
-        _vm_first_entry = false;
+    if (vm->first_entry) {
+        vm->first_entry = false;
         mp_vm_yield_state = NULL;
-        entry_state = _vm_code_state;
+        entry_state = vm->code_state;
     } else if (mp_vm_yield_state != NULL) {
         /* Resume at the innermost frame that was active when VM yielded. */
         entry_state = (mp_code_state_t *)mp_vm_yield_state;
         mp_vm_yield_state = NULL;
     } else {
-        entry_state = _vm_code_state;
+        entry_state = vm->code_state;
     }
 
     mp_vm_return_kind_t ret = mp_execute_bytecode(entry_state, MP_OBJ_NULL);
 
     switch (ret) {
         case MP_VM_RETURN_NORMAL:
-            mp_globals_set(_vm_code_state->old_globals);
-            _vm_started = false;
+            mp_globals_set(vm->code_state->old_globals);
+            vm->started = false;
             #if MICROPY_ENABLE_PYSTACK
-            mp_pystack_free(_vm_code_state);
+            mp_pystack_free(vm->code_state);
             #endif
-            _vm_code_state = NULL;
+            vm->code_state = NULL;
             return 0;
 
         case MP_VM_RETURN_YIELD:
             return 1;
 
         case MP_VM_RETURN_EXCEPTION: {
-            mp_obj_t exc = MP_OBJ_FROM_PTR(_vm_code_state->state[0]);
+            mp_obj_t exc = MP_OBJ_FROM_PTR(vm->code_state->state[0]);
             if (mp_obj_is_subclass_fast(
                     MP_OBJ_FROM_PTR(((mp_obj_base_t *)MP_OBJ_TO_PTR(exc))->type),
                     MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
-                _vm_started = false;
+                vm->started = false;
                 #if MICROPY_ENABLE_PYSTACK
-                mp_pystack_free(_vm_code_state);
+                mp_pystack_free(vm->code_state);
                 #endif
-                _vm_code_state = NULL;
+                vm->code_state = NULL;
                 return 0;
             }
             mp_obj_print_exception(&mp_stderr_print, exc);
-            mp_globals_set(_vm_code_state->old_globals);
-            _vm_started = false;
+            mp_globals_set(vm->code_state->old_globals);
+            vm->started = false;
             #if MICROPY_ENABLE_PYSTACK
-            mp_pystack_free(_vm_code_state);
+            mp_pystack_free(vm->code_state);
             #endif
-            _vm_code_state = NULL;
+            vm->code_state = NULL;
             return 2;
         }
 
@@ -307,14 +269,14 @@ int vm_yield_step(void) {
 }
 
 void vm_yield_stop(void) {
-    if (_vm_started && _vm_code_state != NULL) {
+    cp_context_vm_t *vm = cp_context_vm(cp_context_active());
+    if (vm->started && vm->code_state != NULL) {
         #if MICROPY_ENABLE_PYSTACK
-        mp_pystack_free(_vm_code_state);
+        mp_pystack_free(vm->code_state);
         #endif
     }
-    _vm_code_state = NULL;
-    _vm_module_fun = MP_OBJ_NULL;
-    _vm_started = false;
-    _delay_until = 0;
+    vm->code_state = NULL;
+    vm->started = false;
+    cp_context_set_delay(cp_context_active(), 0);
     _yield_requested = false;
 }

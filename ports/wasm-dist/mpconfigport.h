@@ -206,10 +206,6 @@ typedef long mp_off_t;
 #define MICROPY_PY_MACHINE_INCLUDEFILE "ports/wasm-dist/modmachine.c"
 #define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
 #define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
-#else
-#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/unix/modmachine.c"
-#define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
-#define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
 #endif
 
 #define MICROPY_FATFS_ENABLE_LFN       (1)
@@ -232,23 +228,11 @@ typedef long mp_off_t;
 // Enable sys.executable.
 #define MICROPY_PY_SYS_EXECUTABLE (1)
 
-#ifndef __wasi__
-#define MICROPY_PY_SOCKET_LISTEN_BACKLOG_DEFAULT (SOMAXCONN < 128 ? SOMAXCONN : 128)
-#endif
-
 // Bare-metal ports don't have stderr. Printing debug to stderr may give tests
 // which check stdout a chance to pass, etc.
 extern const struct _mp_print_t mp_stderr_print;
 #define MICROPY_DEBUG_PRINTER (&mp_stderr_print)
 #define MICROPY_ERROR_PRINTER (&mp_stderr_print)
-
-// For the native emitter configure how to mark a region as executable.
-#ifndef __wasi__
-void mp_unix_alloc_exec(size_t min_size, void **ptr, size_t *size);
-void mp_unix_free_exec(void *ptr, size_t size);
-#define MP_PLAT_ALLOC_EXEC(min_size, ptr, size) mp_unix_alloc_exec(min_size, ptr, size)
-#define MP_PLAT_FREE_EXEC(ptr, size) mp_unix_free_exec(ptr, size)
-#endif
 
 // If enabled, configure how to seed random on init.
 #ifdef MICROPY_PY_RANDOM_SEED_INIT_FUNC
@@ -259,20 +243,6 @@ static inline unsigned long mp_random_seed_init(void) {
     mp_hal_get_random(sizeof(r), &r);
     return r;
 }
-#endif
-
-#ifdef __linux__
-// Can access physical memory using /dev/mem
-#define MICROPY_PLAT_DEV_MEM  (1)
-#endif
-
-#ifdef __ANDROID__
-#include <android/api-level.h>
-#if __ANDROID_API__ < 4
-// Bionic libc in Android 1.5 misses these 2 functions
-#define MP_NEED_LOG2 (1)
-#define nan(x) NAN
-#endif
 #endif
 
 // From "man readdir": "Under glibc, programs can check for the availability

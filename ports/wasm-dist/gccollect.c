@@ -30,6 +30,7 @@
 #include "py/gc.h"
 
 #include "shared/runtime/gchelper.h"
+#include "supervisor/context.h"
 
 #if MICROPY_ENABLE_GC
 
@@ -39,6 +40,10 @@ void gc_collect(void) {
     #if MICROPY_PY_THREAD
     mp_thread_gc_others();
     #endif
+    /* Scan all context pystack regions as GC roots.
+     * Inactive contexts' pystacks are in static arrays in linear memory,
+     * so the GC can see them directly — no copy needed. */
+    cp_context_gc_collect();
     gc_collect_end();
 }
 

@@ -104,6 +104,15 @@ async function main() {
 
     status.textContent = `Running (${fbWidth}x${fbHeight} display)`;
 
+    // fwip — firmware package installer (JS-native, no C round-trip)
+    //   From REPL: fwip neopixel
+    //   From console: await fwip.install('neopixel')
+    const fwip = new Fwip(wasi, {
+        log: (msg) => { console.log(msg); appendSerial(msg + '\n'); },
+        exports,
+    });
+    window.fwip = fwip;
+
     // ── JS-side readline ──
     // JS owns input accumulation.  When Enter is pressed, the
     // complete expression is written to the shared input buffer
@@ -140,6 +149,191 @@ async function main() {
         termWrite(prompt);
     }
 
+    // ── Shell commands ──
+    // Intercept lines that match shell builtins before they reach cp_exec.
+    // Returns true if the line was handled.
+    function tryShellCommand(line) {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+
+        const parts = trimmed.split(/\s+/);
+
+        // ── ctx — context management ──
+        if (parts[0] === 'ctx') {
+            const sub = parts[1] || 'help';
+
+            if (sub === 'run') {
+                const code = trimmed.slice(trimmed.indexOf('run') + 4);
+                if (!code.trim()) {
+                    termWrite('Usage: ctx run <python code>\r\n');
+                    showPrompt();
+                    return true;
+                }
+                const len = writeInputBuf(code);
+                const id = exports.cp_context_exec(len, 200);
+                if (id >= 0) {
+                    termWrite(`[ctx] started context ${id}\r\n`);
+                } else if (id === -1) {
+                    termWrite('[ctx] error: no free context slots\r\n');
+                } else {
+                    termWrite('[ctx] error: compile failed\r\n');
+                }
+                showPrompt();
+                return true;
+            }
+
+            if (sub === 'list') {
+                let found = false;
+                for (let i = 0; i < ctxMax; i++) {
+                    const m = readContextMeta(i);
+                    if (m && m.status > 0) {
+                        termWrite(`  ctx ${i}: ${CTX_STATUSES[m.status]} pri=${m.priority}\r\n`);
+                        found = true;
+                    }
+                }
+                if (!found) termWrite('  No active contexts.\r\n');
+                showPrompt();
+                return true;
+            }
+
+            if (sub === 'kill') {
+                const id = parseInt(parts[2]);
+                if (id > 0 && id < ctxMax) {
+                    exports.cp_context_destroy(id);
+                    termWrite(`[ctx] killed context ${id}\r\n`);
+                } else {
+                    termWrite('Usage: ctx kill <id>  (id > 0)\r\n');
+                }
+                showPrompt();
+                return true;
+            }
+
+            // help
+            termWrite('ctx — execution context manager\r\n');
+            termWrite('  ctx run <code>       run code in background context\r\n');
+            termWrite('  ctx list             list active contexts\r\n');
+            termWrite('  ctx kill <id>        destroy a context\r\n');
+            showPrompt();
+            return true;
+        }
+
+        if (parts[0] !== 'fwip') return false;
+
+        // Parse flags: --py
+        const flags = new Set(parts.filter(p => p.startsWith('--')));
+        const words = parts.filter(p => !p.startsWith('--'));
+        const usePy = flags.has('--py');
+        const sub = words[1] || 'help';
+        const args = words.slice(2);
+
+        // fwip install <name> [--py]  /  fwip <name> [--py]
+        if (sub === 'install' || (!['remove', 'list', 'freeze', 'frozen', 'help', '-r'].includes(sub))) {
+            const name = sub === 'install' ? args[0] : sub;
+            if (!name) {
+                termWrite('Usage: fwip install <package> [--py]\r\n');
+                showPrompt();
+                return true;
+            }
+            const kind = usePy ? ' (source)' : '';
+            termWrite(`[fwip] installing ${name}${kind}...\r\n`);
+            fwip.install(name, { py: usePy }).then((info) => {
+                if (info) {
+                    termWrite(`[fwip] installed ${info.name}@${info.version} (${info.files.length} file${info.files.length === 1 ? '' : 's'})\r\n`);
+                }
+                showPrompt();
+            }).catch((err) => {
+                termWrite(`[fwip] error: ${err.message}\r\n`);
+                showPrompt();
+            });
+            return true;
+        }
+
+        // fwip -r [--py]  — install from requirements.txt
+        if (sub === '-r') {
+            termWrite('[fwip] installing from requirements.txt...\r\n');
+            fwip.installRequirements({ py: usePy }).then(() => {
+                showPrompt();
+            }).catch((err) => {
+                termWrite(`[fwip] error: ${err.message}\r\n`);
+                showPrompt();
+            });
+            return true;
+        }
+
+        // fwip freeze  — write requirements.txt
+        if (sub === 'freeze') {
+            try {
+                const lines = fwip.freeze();
+                for (const l of lines) {
+                    termWrite(`  ${l}\r\n`);
+                }
+            } catch (err) {
+                termWrite(`[fwip] error: ${err.message}\r\n`);
+            }
+            showPrompt();
+            return true;
+        }
+
+        // fwip remove <name>
+        if (sub === 'remove') {
+            const name = args[0];
+            if (!name) {
+                termWrite('Usage: fwip remove <package>\r\n');
+                showPrompt();
+                return true;
+            }
+            try {
+                fwip.remove(name);
+                termWrite(`[fwip] removed ${name}\r\n`);
+            } catch (err) {
+                termWrite(`[fwip] error: ${err.message}\r\n`);
+            }
+            showPrompt();
+            return true;
+        }
+
+        // fwip frozen  — list frozen modules
+        if (sub === 'frozen') {
+            const frozen = fwip._getFrozenModules();
+            if (frozen.size === 0) {
+                termWrite('No frozen modules detected.\r\n');
+            } else {
+                const sorted = [...frozen].sort();
+                for (const m of sorted) {
+                    termWrite(`  ${m} (frozen)\r\n`);
+                }
+            }
+            showPrompt();
+            return true;
+        }
+
+        // fwip list
+        if (sub === 'list') {
+            const pkgs = fwip.list();
+            if (pkgs.length === 0) {
+                termWrite('No packages installed.\r\n');
+            } else {
+                for (const pkg of pkgs) {
+                    termWrite(`  ${pkg.module} (${pkg.version})\r\n`);
+                }
+            }
+            showPrompt();
+            return true;
+        }
+
+        // help
+        termWrite('fwip — firmware package installer\r\n');
+        termWrite('  fwip <package>           install a package\r\n');
+        termWrite('  fwip install <pkg> [--py] install (--py for source)\r\n');
+        termWrite('  fwip remove <package>    remove a package\r\n');
+        termWrite('  fwip list                list installed packages\r\n');
+        termWrite('  fwip freeze              write requirements.txt\r\n');
+        termWrite('  fwip frozen              list frozen (built-in) modules\r\n');
+        termWrite('  fwip -r [--py]           install from requirements.txt\r\n');
+        showPrompt();
+        return true;
+    }
+
     document.addEventListener('keydown', (e) => {
         // Ctrl+C — interrupt running expression
         if (e.ctrlKey && e.key === 'c') {
@@ -168,6 +362,16 @@ async function main() {
         if (e.key === 'Enter') {
             e.preventDefault();
             termWrite('\r\n');
+
+            // Shell command interception — before the VM sees it
+            if (!inputLines && tryShellCommand(inputLine)) {
+                if (inputLine.trim()) {
+                    inputHistory.unshift(inputLine.trimEnd());
+                }
+                inputLine = '';
+                historyIdx = -1;
+                return;
+            }
 
             const fullInput = inputLines ? inputLines + inputLine + '\n' : inputLine;
 
@@ -350,15 +554,31 @@ async function main() {
         ctx.restore();
     }
 
+    // ── Context management ──
+    const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
+    const ctxMetaSize = exports.cp_context_meta_size();
+    const ctxMax = exports.cp_context_max();
+
+    function readContextMeta(id) {
+        const addr = exports.cp_context_meta_addr(id);
+        if (!addr) return null;
+        const view = new DataView(exports.memory.buffer, addr, ctxMetaSize);
+        return {
+            status: view.getUint8(0),
+            priority: view.getUint8(1),
+            pystackCurOff: view.getUint32(4, true),
+            yieldStateOff: view.getUint32(8, true),
+        };
+    }
+
     // Main loop — read VM state directly from linear memory
     let frameCount = 0;
     const SUP_REPL = 1;
-    const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'FWIP'];
+    const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE'];
     const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 
     function loop() {
-        sh.pollFwip();
-        const supState = exports.cp_step();
+        const supState = exports.cp_step(performance.now() | 0);
         paintFramebuffer();
         drawCursor();
         frameCount++;
@@ -371,26 +591,25 @@ async function main() {
 
         if (frameCount % 60 === 0) {
             const state = sh.readState();
+            // Count active contexts
+            let activeCtxs = 0;
+            for (let i = 0; i < ctxMax; i++) {
+                const m = readContextMeta(i);
+                if (m && m.status > 0) activeCtxs++;
+            }
             if (state) {
                 const sup = SUP_STATES[state.supState] || '?';
                 const yr = YIELD_REASONS[state.yieldReason] || '?';
+                const ctx0 = readContextMeta(0);
+                const ctxSt = ctx0 ? CTX_STATUSES[ctx0.status] || '?' : '?';
                 status.textContent =
-                    `${sup} | yield: ${yr} | pystack: ${state.vmDepth}B | frame ${state.frameCount}`;
+                    `${sup} | ctx0:${ctxSt} | ctxs:${activeCtxs} | yield:${yr} | pystack:${state.vmDepth}B`;
             } else {
                 status.textContent = `Running (frame ${frameCount})`;
             }
         }
         env.requestFrame(loop);
     }
-
-    // fwip — firmware package installer
-    //   From browser console: await fwip.install('neopixel')
-    //   From REPL: import fwip; fwip.install("neopixel")
-    const fwip = new Fwip(wasi, {
-        log: (msg) => { console.log(msg); appendSerial(msg + '\n'); },
-    });
-    sh.setFwip(fwip);
-    window.fwip = fwip;
 
     env.requestFrame(loop);
 }

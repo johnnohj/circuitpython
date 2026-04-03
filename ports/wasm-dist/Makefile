@@ -97,6 +97,8 @@ SRC_C += \
 	supervisor/supervisor.c \
 	supervisor/port.c \
 	supervisor/stubs.c \
+	supervisor/compile.c \
+	supervisor/context.c \
 	supervisor/vm_yield.c \
 	supervisor/serial.c \
 	supervisor/micropython.c \
@@ -108,7 +110,6 @@ SRC_C += \
 	wasi_mphal.c \
 	mpthreadport.c \
 	modringio.c \
-	modfwip.c \
 	shared-module/os/__init__.c \
 	supervisor/shared/translate/translate.c \
 	$(SRC_MOD) \

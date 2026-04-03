@@ -46,8 +46,12 @@
 #endif
 
 #include "supervisor/hal.h"
+#include "supervisor/compile.h"
+#include "supervisor/context.h"
 #include "supervisor/semihosting.h"
+#if CIRCUITPY_DISPLAYIO
 #include "wasm_framebuffer.h"
+#endif
 #if CIRCUITPY_STATUS_BAR
 #include "supervisor/shared/status_bar.h"
 #endif
@@ -61,8 +65,7 @@
 extern void vm_yield_set_frame_start(uint64_t ms);
 extern void vm_yield_set_budget(uint32_t ms);
 extern int mp_hal_delay_active(void);
-extern int vm_yield_start_file(const char *path);
-extern int vm_yield_start_expr(mp_obj_t module_fun);
+extern void vm_yield_start(mp_code_state_t *cs);
 extern int vm_yield_step(void);
 extern void vm_yield_stop(void);
 extern bool vm_yield_code_running(void);
@@ -78,24 +81,23 @@ extern void *mp_vm_yield_state;
 /* Supervisor state (declared early for supervisor_execution_status)    */
 /* ------------------------------------------------------------------ */
 
-typedef enum {
-    SUP_UNINITIALIZED = 0,
-    SUP_REPL,           /* waiting for input (browser: JS owns readline) */
-    SUP_EXPR_RUNNING,   /* REPL expression executing via vm_yield_step */
-    SUP_CODE_RUNNING,   /* code.py executing via vm_yield_step */
-    SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
-    SUP_FWIP_BUSY,      /* fwip install/remove in progress (JS async) */
-} sup_state_t;
+/* Supervisor states — exposed to JS via sh_export_state.
+ * These map to context statuses but provide the legacy numbering
+ * that test_browser.html expects in the status bar. */
+#define SUP_UNINITIALIZED 0
+#define SUP_REPL          1
+#define SUP_EXPR_RUNNING  2
+#define SUP_CODE_RUNNING  3
+#define SUP_CODE_FINISHED 4
 
-/* fwip request flag — set by modfwip.c, checked in cp_step() */
-volatile bool fwip_request_pending = false;
-
-static sup_state_t _state = SUP_UNINITIALIZED;
+static int _state = SUP_UNINITIALIZED;
+static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
 static uint32_t _frame_count = 0;
 static uint64_t _frame_start_ms = 0;
 
-/* fwip polling state — tracks last printed status to avoid repeats */
-static char _fwip_last_status[FWIP_STATUS_MAX] = {0};
+/* JS time source — written by cp_step(), read by mp_hal_ticks_ms().
+ * Eliminates clock_gettime syscall from the hot loop. */
+volatile uint64_t wasm_js_now_ms = 0;
 
 /* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
 bool wasm_cli_mode = false;
@@ -133,10 +135,6 @@ void supervisor_execution_status(void) {
 #define WASM_GC_HEAP_SIZE (512 * 1024)
 #endif
 
-#ifndef WASM_PYSTACK_SIZE
-#define WASM_PYSTACK_SIZE (8 * 1024)
-#endif
-
 /* Frame budget: how many ms the supervisor gets per cp_step() call. */
 #ifndef WASM_FRAME_BUDGET_MS
 #define WASM_FRAME_BUDGET_MS 13
@@ -147,10 +145,6 @@ void supervisor_execution_status(void) {
 /* ------------------------------------------------------------------ */
 
 static char heap[WASM_GC_HEAP_SIZE];
-
-#if MICROPY_ENABLE_PYSTACK
-static mp_obj_t pystack_buf[WASM_PYSTACK_SIZE / sizeof(mp_obj_t)];
-#endif
 
 /* Shared input buffer — JS writes source text here before calling
  * cp_exec() or cp_continue().  Exported via cp_input_buf_addr(). */
@@ -215,17 +209,15 @@ static void _core_init(void) {
     mp_cstack_init_with_sp_here(16 * 1024);
     gc_init(heap, heap + WASM_GC_HEAP_SIZE);
 
-    #if MICROPY_ENABLE_PYSTACK
-    mp_pystack_init(pystack_buf,
-                    pystack_buf + WASM_PYSTACK_SIZE / sizeof(mp_obj_t));
-    #endif
-
     /* Open /hal/ fd endpoints before mp_init() — hardware must be
      * available before Python starts. */
     hal_init();
     sh_init();
 
     mp_init();
+
+    /* Initialize the context system — sets up pystack for context 0. */
+    cp_context_init();
 
     #if MICROPY_VFS_POSIX
     {
@@ -356,7 +348,16 @@ int cp_init(void) {
      * If it exists and compiles, we enter SUP_CODE_RUNNING.
      * If not, we fall through to REPL. */
     #if MICROPY_VM_YIELD_ENABLED
-    if (vm_yield_start_file("/code.py") == 0) {
+    {
+        mp_code_state_t *cs = cp_compile_file("/code.py");
+        if (cs != NULL) {
+            vm_yield_start(cs);
+            cp_context_load(0, cs);
+            cp_context_set_status(0, CTX_RUNNABLE);
+        }
+    }
+    if (vm_yield_code_running()) {
+        _ctx0_is_code = true;
         _state = SUP_CODE_RUNNING;
         fprintf(stderr, "[sup] initialized → code.py (heap=%dK budget=%dms)\n",
                 WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
@@ -364,6 +365,7 @@ int cp_init(void) {
     #endif
     {
         _state = SUP_REPL;
+        cp_context_set_status(0, CTX_IDLE);
         #if MICROPY_REPL_EVENT_DRIVEN
         pyexec_event_repl_init();
         #endif
@@ -396,12 +398,13 @@ extern void hal_step(void);
 extern void hal_export_dirty(void);
 
 __attribute__((export_name("cp_step")))
-int cp_step(void) {
+int cp_step(uint32_t now_ms) {
     if (_state == SUP_UNINITIALIZED) {
         cp_init();
     }
 
-    _frame_start_ms = (uint64_t)mp_hal_ticks_ms();
+    wasm_js_now_ms = (uint64_t)now_ms;
+    _frame_start_ms = wasm_js_now_ms;
     _frame_count++;
 
     #if MICROPY_VM_YIELD_ENABLED
@@ -418,110 +421,63 @@ int cp_step(void) {
     RUN_BACKGROUND_TASKS;
 
     /* ── Phase 3: Python VM ── */
-    switch (_state) {
-
-    case SUP_REPL: {
-        if (wasm_cli_mode) {
-            #if MICROPY_REPL_EVENT_DRIVEN
-            /* CLI mode: feed queued keystrokes via pyexec. */
-            while (_rx_available() > 0) {
-                unsigned char c = _rx_buf[_rx_tail++];
-                if (_rx_tail >= _rx_head) {
-                    _rx_head = 0;
-                    _rx_tail = 0;
-                }
-                if (c == '\n') {
-                    c = '\r';
-                }
-                int ret = pyexec_event_repl_process_char(c);
-                if (ret & PYEXEC_FORCED_EXIT) {
-                    pyexec_event_repl_init();
-                }
-            }
-            #endif
-        }
-        /* Browser mode: SUP_REPL is idle — JS owns readline.
-         * JS calls cp_exec() when the user hits Enter, which
-         * transitions to SUP_EXPR_RUNNING.  Nothing to do here. */
-
-        /* Check if fwip.install() was called */
-        if (fwip_request_pending) {
-            fwip_request_pending = false;
-            _state = SUP_FWIP_BUSY;
-            _fwip_last_status[0] = '\0';
-            fprintf(stderr, "[sup] → fwip\n");
-        }
-        break;
-    }
-
-    case SUP_EXPR_RUNNING: {
-        /* REPL expression executing — same path as code.py.
-         * vm_yield_start_expr() was called by cp_exec(). */
-        #if MICROPY_VM_YIELD_ENABLED
-        int ret = vm_yield_step();
-        if (ret == 0 || ret == 2) {
-            /* 0 = normal completion, 2 = exception (already printed) */
-            _state = SUP_REPL;
-            fprintf(stderr, "[sup] expr done → REPL\n");
-        }
-        /* ret == 1: yielded, will resume next frame */
-        #endif
-        break;
-    }
-
-    case SUP_CODE_RUNNING: {
-        #if MICROPY_VM_YIELD_ENABLED
-        int ret = vm_yield_step();
-        if (ret == 0) {
-            _state = SUP_CODE_FINISHED;
-        } else if (ret == 2) {
-            _state = SUP_CODE_FINISHED;
-        }
-        /* ret == 1: yielded, will resume next frame */
-        #endif
-        break;
-    }
-
-    case SUP_CODE_FINISHED:
-        _state = SUP_REPL;
+    #if MICROPY_VM_YIELD_ENABLED
+    if (wasm_cli_mode) {
+        /* CLI mode: feed queued keystrokes via pyexec. */
         #if MICROPY_REPL_EVENT_DRIVEN
-        if (wasm_cli_mode) {
-            pyexec_event_repl_init();
+        while (_rx_available() > 0) {
+            unsigned char c = _rx_buf[_rx_tail++];
+            if (_rx_tail >= _rx_head) {
+                _rx_head = 0;
+                _rx_tail = 0;
+            }
+            if (c == '\n') {
+                c = '\r';
+            }
+            int ret = pyexec_event_repl_process_char(c);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                pyexec_event_repl_init();
+            }
         }
         #endif
-        fprintf(stderr, "[sup] code.py finished → REPL\n");
-        break;
+    } else {
+        /* Browser mode: scheduler-driven context dispatch.
+         * Pick the highest-priority runnable context and step it. */
+        int ctx_id = cp_scheduler_pick(_frame_start_ms);
 
-    case SUP_FWIP_BUSY: {
-        /* Pure C polling — no VM, no bytecode.  JS does the async
-         * fetch and updates the shared buffer.  We just print status
-         * and wait for DONE/ERROR. */
-        fwip_buf_t *buf = (fwip_buf_t *)sh_fwip_addr();
-        uint8_t st = buf->state;
-
-        /* Print new status messages as they arrive */
-        if (buf->status_len > 0 &&
-            strncmp(buf->status, _fwip_last_status, FWIP_STATUS_MAX) != 0) {
-            mp_printf(&mp_plat_print, "%s\n", buf->status);
-            strncpy(_fwip_last_status, buf->status, FWIP_STATUS_MAX - 1);
-            _fwip_last_status[FWIP_STATUS_MAX - 1] = '\0';
-        }
-
-        if (st == FWIP_STATE_DONE || st == FWIP_STATE_ERROR) {
-            if (st == FWIP_STATE_ERROR) {
-                mp_printf(&mp_plat_print, "Error: %s\n", buf->status);
+        if (ctx_id >= 0) {
+            int prev_id = cp_context_active();
+            if (ctx_id != prev_id) {
+                cp_context_save(prev_id);
+                cp_context_restore(ctx_id);
             }
-            buf->command = FWIP_CMD_NONE;
-            buf->state = FWIP_STATE_IDLE;
-            _state = SUP_REPL;
-            fprintf(stderr, "[sup] fwip done → REPL\n");
-        }
-        break;
-    }
 
-    default:
-        break;
+            cp_context_set_status(ctx_id, CTX_RUNNING);
+            int ret = vm_yield_step();
+
+            if (ret == 0 || ret == 2) {
+                /* Normal completion or exception — context is done */
+                cp_context_set_status(ctx_id, CTX_DONE);
+                fprintf(stderr, "[sup] ctx%d done\n", ctx_id);
+            } else {
+                /* Yielded — sleeping or budget exhausted.
+                 * mp_hal_delay_ms already set CTX_SLEEPING if applicable;
+                 * otherwise mark as yielded for next frame. */
+                if (cp_context_get_status(ctx_id) != CTX_SLEEPING) {
+                    cp_context_set_status(ctx_id, CTX_YIELDED);
+                }
+            }
+        }
+
+        /* Derive _state from context 0 for JS status bar compatibility */
+        uint8_t ctx0 = cp_context_get_status(0);
+        if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
+            _state = SUP_REPL;
+        } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
+            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+        }
     }
+    #endif
 
     /* ── Phase 4: Post-VM background callbacks ── */
     RUN_BACKGROUND_TASKS;
@@ -542,7 +498,9 @@ int cp_step(void) {
     }
 
     /* Update cursor info for JS-side rendering */
+    #if CIRCUITPY_DISPLAYIO
     wasm_cursor_info_update();
+    #endif
 
     return (int)_state;
 }
@@ -578,6 +536,20 @@ int cp_input_buf_size(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* cp_frozen_names — expose frozen module list to JS                    */
+/*                                                                     */
+/* mp_frozen_names is a null-separated string array with a double-null */
+/* terminator.  JS can parse it directly from linear memory.           */
+/* ------------------------------------------------------------------ */
+
+extern const char mp_frozen_names[];
+
+__attribute__((export_name("cp_frozen_names_addr")))
+uintptr_t cp_frozen_names_addr(void) {
+    return (uintptr_t)mp_frozen_names;
+}
+
+/* ------------------------------------------------------------------ */
 /* cp_exec — compile and execute a REPL expression (called by JS)      */
 /*                                                                     */
 /* JS writes source text into the shared input buffer, then calls      */
@@ -602,30 +574,75 @@ int cp_exec(int len) {
     _input_buf[len] = '\0';
 
     #if MICROPY_VM_YIELD_ENABLED
-    mp_obj_t module_fun = MP_OBJ_NULL;
-
-    nlr_buf_t nlr;
-    if (nlr_push(&nlr) == 0) {
-        mp_lexer_t *lex = mp_lexer_new_from_str_len(
-            MP_QSTR__lt_stdin_gt_, _input_buf, (size_t)len, 0);
-        qstr source_name = lex->source_name;
-        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_SINGLE_INPUT);
-        module_fun = mp_compile(&parse_tree, source_name, true);
-        nlr_pop();
-    } else {
-        mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+    mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
+        MP_PARSE_SINGLE_INPUT);
+    if (cs == NULL) {
         return 1;  /* compile error */
     }
 
-    if (vm_yield_start_expr(module_fun) != 0) {
-        return 1;
-    }
-
+    vm_yield_start(cs);
+    cp_context_load(0, cs);
+    cp_context_set_status(0, CTX_RUNNABLE);
+    _ctx0_is_code = false;
     _state = SUP_EXPR_RUNNING;
     fprintf(stderr, "[sup] cp_exec → SUP_EXPR_RUNNING\n");
     return 0;
     #else
     return 1;
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_context_exec — create a new context, compile code, start it      */
+/*                                                                     */
+/* JS writes source text into the shared input buffer, then calls      */
+/* cp_context_exec(len, priority).  A new context is created, the code */
+/* is compiled on its pystack, and it's marked runnable.  The scheduler */
+/* will pick it up on the next cp_step().                              */
+/*                                                                     */
+/* Returns context id (1–7) on success, -1 if no slots, -2 on compile  */
+/* error.                                                              */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_context_exec")))
+int cp_context_exec(int len, int priority) {
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return -2;
+    }
+    _input_buf[len] = '\0';
+
+    #if MICROPY_VM_YIELD_ENABLED
+    int id = cp_context_create((uint8_t)priority);
+    if (id < 0) {
+        return -1;  /* no free slots */
+    }
+
+    /* Temporarily switch to the new context's pystack so the
+     * compiled code_state lands in the right memory region. */
+    int prev_id = cp_context_active();
+    cp_context_save(prev_id);
+    cp_context_restore(id);
+
+    mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
+        MP_PARSE_FILE_INPUT);
+    if (cs == NULL) {
+        /* Compile failed — restore previous context, destroy this one */
+        cp_context_restore(prev_id);
+        cp_context_destroy(id);
+        return -2;
+    }
+
+    vm_yield_start(cs);
+    cp_context_set_status(id, CTX_RUNNABLE);
+
+    /* Switch back to the previous context */
+    cp_context_save(id);
+    cp_context_restore(prev_id);
+
+    fprintf(stderr, "[sup] cp_context_exec → ctx%d (pri=%d)\n", id, priority);
+    return id;
+    #else
+    return -2;
     #endif
 }
 
@@ -675,12 +692,20 @@ void cp_ctrl_d(void) {
         vm_yield_stop();
     }
     /* Try code.py, then fall back to REPL */
-    if (vm_yield_start_file("/code.py") == 0) {
-        _state = SUP_CODE_RUNNING;
-        fprintf(stderr, "[sup] Ctrl-D → code.py\n");
-    } else {
-        _state = SUP_REPL;
-        fprintf(stderr, "[sup] Ctrl-D → REPL\n");
+    {
+        mp_code_state_t *cs = cp_compile_file("/code.py");
+        if (cs != NULL) {
+            vm_yield_start(cs);
+            cp_context_load(0, cs);
+            cp_context_set_status(0, CTX_RUNNABLE);
+            _ctx0_is_code = true;
+            _state = SUP_CODE_RUNNING;
+            fprintf(stderr, "[sup] Ctrl-D → code.py\n");
+        } else {
+            _state = SUP_REPL;
+            cp_context_set_status(0, CTX_IDLE);
+            fprintf(stderr, "[sup] Ctrl-D → REPL\n");
+        }
     }
     #endif
 }
@@ -740,11 +765,16 @@ __attribute__((export_name("cp_run_file")))
 int cp_run_file(const char *path) {
     #if MICROPY_VM_YIELD_ENABLED
     fprintf(stderr, "[sup] run_file: %s\n", path);
-    int ret = vm_yield_start_file(path);
-    if (ret == 0) {
-        _state = SUP_CODE_RUNNING;
+    mp_code_state_t *cs = cp_compile_file(path);
+    if (cs == NULL) {
+        return -1;
     }
-    return ret;
+    vm_yield_start(cs);
+    cp_context_load(0, cs);
+    cp_context_set_status(0, CTX_RUNNABLE);
+    _ctx0_is_code = true;
+    _state = SUP_CODE_RUNNING;
+    return 0;
     #else
     (void)path;
     fprintf(stderr, "[sup] run_file: VM yield not enabled\n");

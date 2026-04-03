@@ -111,17 +111,19 @@ void mp_hal_stdio_mode_orig(void) {
 /* Timing — CLOCK_MONOTONIC via wasi-sdk                               */
 /* ------------------------------------------------------------------ */
 
+/* JS time source — written by cp_step() in supervisor.c each frame.
+ * Zero means CLI mode (cp_step not called), fall back to clock_gettime. */
+extern volatile uint64_t wasm_js_now_ms;
+
 #ifndef mp_hal_ticks_ms
 mp_uint_t mp_hal_ticks_ms(void) {
-    #if (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(_POSIX_MONOTONIC_CLOCK)
+    if (wasm_js_now_ms != 0) {
+        return (mp_uint_t)wasm_js_now_ms;
+    }
+    /* CLI mode fallback */
     struct timespec tv;
     clock_gettime(CLOCK_MONOTONIC, &tv);
     return tv.tv_sec * 1000 + tv.tv_nsec / 1000000;
-    #else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-    #endif
 }
 #endif
 

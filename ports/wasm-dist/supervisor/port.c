@@ -21,41 +21,19 @@
 #include "mpthreadport.h"
 
 /* ------------------------------------------------------------------ */
-/* Helpers                                                             */
+/* port_background_task — called by RUN_BACKGROUND_TASKS               */
+/*                                                                     */
+/* On a real board, a 1ms hardware timer ISR calls supervisor_tick().   */
+/* On WASM, JS calls cp_step() once per rAF (~60fps).  We call         */
+/* supervisor_tick() once per frame to queue background work.           */
+/* Time-dependent code reads CLOCK_MONOTONIC directly via              */
+/* port_get_raw_ticks() / supervisor_ticks_ms64().                     */
 /* ------------------------------------------------------------------ */
 
-static uint64_t _monotonic_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
-/* ------------------------------------------------------------------ */
-/* Tick tracking                                                       */
-/* ------------------------------------------------------------------ */
-
-static uint64_t _last_tick_ms = 0;
-static bool _ticks_enabled = false;
-
-/* supervisor_tick() is provided by supervisor/tick.c.
- * port_background_task() calls it once per elapsed millisecond. */
 extern void supervisor_tick(void);
 
-/* ------------------------------------------------------------------ */
-/* port_background_task — called frequently by RUN_BACKGROUND_TASKS    */
-/*                                                                     */
-/* Simulates hardware timer ISR: checks monotonic clock, calls         */
-/* supervisor_tick() for each elapsed millisecond.                     */
-/* ------------------------------------------------------------------ */
-
 void port_background_task(void) {
-    if (_ticks_enabled) {
-        uint64_t now = _monotonic_ms();
-        while (now > _last_tick_ms) {
-            _last_tick_ms++;
-            supervisor_tick();
-        }
-    }
+    supervisor_tick();
 }
 
 /* ------------------------------------------------------------------ */
@@ -75,12 +53,11 @@ uint64_t port_get_raw_ticks(uint8_t *subticks) {
 }
 
 void port_enable_tick(void) {
-    _ticks_enabled = true;
-    _last_tick_ms = _monotonic_ms();
+    /* No-op: background tick runs unconditionally once per frame. */
 }
 
 void port_disable_tick(void) {
-    _ticks_enabled = false;
+    /* No-op: background tick runs unconditionally once per frame. */
 }
 
 void port_interrupt_after_ticks(uint32_t ticks) {

@@ -72,14 +72,6 @@ long heap_size = 1024 * 1024 * (sizeof(mp_uint_t) / 4);
 #define MICROPY_GC_SPLIT_HEAP_N_HEAPS (1)
 #endif
 
-#if !MICROPY_PY_SYS_PATH
-#error "The unix port requires MICROPY_PY_SYS_PATH=1"
-#endif
-
-#if !MICROPY_PY_SYS_ARGV
-#error "The unix port requires MICROPY_PY_SYS_ARGV=1"
-#endif
-
 static void stderr_print_strn(void *env, const char *str, size_t len) {
     (void)env;
     ssize_t ret;

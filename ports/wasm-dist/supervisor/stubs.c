@@ -102,7 +102,7 @@ void stack_init(void) {}
 
 /* ------------------------------------------------------------------ */
 /* Serial stubs                                                        */
-/* pyexec.c calls mp_hal_set_interrupt_char which is in unix_mphal.c.  */
+/* pyexec.c calls mp_hal_set_interrupt_char which is in wasi_mphal.c.  */
 /* These are for functions not yet wired up.                           */
 /* ------------------------------------------------------------------ */
 
@@ -136,4 +136,3 @@ uint32_t common_hal_displayio_ondiskbitmap_get_pixel(displayio_ondiskbitmap_t *s
     return 0;
 }
 #endif
-
