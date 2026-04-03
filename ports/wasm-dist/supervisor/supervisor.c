@@ -448,6 +448,7 @@ int cp_step(uint32_t now_ms) {
         if (ctx_id >= 0) {
             int prev_id = cp_context_active();
             if (ctx_id != prev_id) {
+                fprintf(stderr, "[sup] switch ctx%d → ctx%d\n", prev_id, ctx_id);
                 cp_context_save(prev_id);
                 cp_context_restore(ctx_id);
             }
@@ -574,6 +575,16 @@ int cp_exec(int len) {
     _input_buf[len] = '\0';
 
     #if MICROPY_VM_YIELD_ENABLED
+    /* Ensure context 0 is active — REPL expressions always run on ctx 0.
+     * If the scheduler last ran a different context, switch back. */
+    {
+        int cur = cp_context_active();
+        if (cur != 0) {
+            cp_context_save(cur);
+            cp_context_restore(0);
+        }
+    }
+
     mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
         MP_PARSE_SINGLE_INPUT);
     if (cs == NULL) {
@@ -617,14 +628,24 @@ int cp_context_exec(int len, int priority) {
         return -1;  /* no free slots */
     }
 
-    /* Temporarily switch to the new context's pystack so the
-     * compiled code_state lands in the right memory region. */
+    /* Save current globals — new context inherits them for
+     * compilation (needs module dict to resolve imports). */
+    mp_obj_dict_t *caller_globals = mp_globals_get();
+    mp_obj_dict_t *caller_locals = mp_locals_get();
+
+    /* Switch to the new context's pystack so the compiled
+     * code_state lands in the right memory region. */
     int prev_id = cp_context_active();
     cp_context_save(prev_id);
     cp_context_restore(id);
 
+    /* Restore globals for compilation — cp_context_restore set them
+     * to the new context's (empty) saved values. */
+    mp_globals_set(caller_globals);
+    mp_locals_set(caller_locals);
+
     mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
-        MP_PARSE_FILE_INPUT);
+        MP_PARSE_SINGLE_INPUT);
     if (cs == NULL) {
         /* Compile failed — restore previous context, destroy this one */
         cp_context_restore(prev_id);
@@ -635,11 +656,58 @@ int cp_context_exec(int len, int priority) {
     vm_yield_start(cs);
     cp_context_set_status(id, CTX_RUNNABLE);
 
-    /* Switch back to the previous context */
+    /* Save new context state, switch back to caller */
     cp_context_save(id);
     cp_context_restore(prev_id);
 
     fprintf(stderr, "[sup] cp_context_exec → ctx%d (pri=%d)\n", id, priority);
+    return id;
+    #else
+    return -2;
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_context_exec_file — create context, compile file, start it       */
+/*                                                                     */
+/* Like cp_context_exec but compiles a .py file from the filesystem.   */
+/* Path is passed via the shared input buffer.                         */
+/*                                                                     */
+/* Returns context id on success, -1 if no slots, -2 on compile error. */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_context_exec_file")))
+int cp_context_exec_file(int path_len, int priority) {
+    if (path_len <= 0 || path_len >= INPUT_BUF_SIZE) {
+        return -2;
+    }
+    _input_buf[path_len] = '\0';
+
+    #if MICROPY_VM_YIELD_ENABLED
+    int id = cp_context_create((uint8_t)priority);
+    if (id < 0) {
+        return -1;
+    }
+
+    int prev_id = cp_context_active();
+    cp_context_save(prev_id);
+    cp_context_restore(id);
+
+    mp_code_state_t *cs = cp_compile_file(_input_buf);
+    if (cs == NULL) {
+        cp_context_restore(prev_id);
+        cp_context_destroy(id);
+        return -2;
+    }
+
+    vm_yield_start(cs);
+    cp_context_set_status(id, CTX_RUNNABLE);
+
+    cp_context_save(id);
+    cp_context_restore(prev_id);
+
+    fprintf(stderr, "[sup] cp_context_exec_file(%s) → ctx%d (pri=%d)\n",
+            _input_buf, id, priority);
     return id;
     #else
     return -2;

@@ -75,6 +75,14 @@ async function main() {
         codePy: 'print("Hello from CircuitPython WASM!")\n',
     });
 
+    // Seed test scripts for ctx run
+    const enc = new TextEncoder();
+    if (!wasi.files.has('/CIRCUITPY/ticker.py')) {
+        wasi.writeFile('/CIRCUITPY/ticker.py', enc.encode(
+            'import time\nwhile True:\n    time.sleep(2)\n    print("tick")\n'
+        ));
+    }
+
     status.textContent = 'Compiling...';
 
     const response = await fetch('build-browser/circuitpython.wasm');
@@ -182,6 +190,26 @@ async function main() {
                 return true;
             }
 
+            if (sub === 'file') {
+                const path = parts[2];
+                if (!path) {
+                    termWrite('Usage: ctx file <path>\r\n');
+                    showPrompt();
+                    return true;
+                }
+                const len = writeInputBuf(path);
+                const id = exports.cp_context_exec_file(len, 200);
+                if (id >= 0) {
+                    termWrite(`[ctx] started context ${id} from ${path}\r\n`);
+                } else if (id === -1) {
+                    termWrite('[ctx] error: no free context slots\r\n');
+                } else {
+                    termWrite(`[ctx] error: compile failed for ${path}\r\n`);
+                }
+                showPrompt();
+                return true;
+            }
+
             if (sub === 'list') {
                 let found = false;
                 for (let i = 0; i < ctxMax; i++) {
@@ -211,6 +239,7 @@ async function main() {
             // help
             termWrite('ctx — execution context manager\r\n');
             termWrite('  ctx run <code>       run code in background context\r\n');
+            termWrite('  ctx file <path>      run .py file in background context\r\n');
             termWrite('  ctx list             list active contexts\r\n');
             termWrite('  ctx kill <id>        destroy a context\r\n');
             showPrompt();
