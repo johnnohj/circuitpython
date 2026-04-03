@@ -66,18 +66,81 @@ export class Fwip {
      * @param {string} [options.cpMajor]    — CircuitPython major version (default '10')
      * @param {string} [options.libPrefix]  — MEMFS lib path (default '/CIRCUITPY/lib')
      * @param {function} [options.log]      — logging callback (default console.log)
+     * @param {object} [options.exports]   — WASM instance exports (for frozen module detection)
      */
     constructor(memfs, options = {}) {
         this.memfs = memfs;
         this.cpMajor = options.cpMajor || CP_MAJOR;
         this.libPrefix = options.libPrefix || LIB_PREFIX;
         this.log = options.log || console.log;
+        this.exports = options.exports || null;
 
         // Track installed packages: pypiName → { version, path, files }
         this.installed = new Map();
 
         // Prevent circular dependency loops
         this._installing = new Set();
+
+        // Frozen modules (parsed once from WASM linear memory)
+        this._frozenModules = null;
+    }
+
+    /**
+     * Parse mp_frozen_names from WASM linear memory.
+     * Returns a Set of module names (e.g. 'neopixel', 'adafruit_bus_device').
+     * Names are stored as "neopixel.py\0adafruit_bus_device/__init__.py\0\0".
+     */
+    _getFrozenModules() {
+        if (this._frozenModules) return this._frozenModules;
+        this._frozenModules = new Set();
+
+        if (!this.exports?.cp_frozen_names_addr) return this._frozenModules;
+
+        const addr = this.exports.cp_frozen_names_addr();
+        const mem = new Uint8Array(this.exports.memory.buffer);
+        let pos = addr;
+
+        while (mem[pos] !== 0) {
+            // Find end of this null-terminated entry
+            let end = pos;
+            while (mem[end] !== 0) end++;
+            const entry = new TextDecoder().decode(mem.subarray(pos, end));
+
+            // "neopixel.py" → "neopixel"
+            // "adafruit_bus_device/__init__.py" → "adafruit_bus_device"
+            let modName = entry;
+            if (modName.endsWith('.py')) modName = modName.slice(0, -3);
+            if (modName.endsWith('/__init__')) modName = modName.slice(0, -9);
+            // Only top-level modules (skip submodules like "asyncio/funcs")
+            if (!modName.includes('/')) {
+                this._frozenModules.add(modName);
+            }
+
+            pos = end + 1; // skip null
+        }
+
+        return this._frozenModules;
+    }
+
+    /**
+     * Check if a module name is frozen into the firmware.
+     * @param {string} pypiName — pypi-style name
+     * @returns {boolean}
+     */
+    isFrozen(pypiName) {
+        const frozen = this._getFrozenModules();
+        if (frozen.size === 0) return false;
+
+        // pypi name → import name: "adafruit-circuitpython-neopixel" → "neopixel"
+        // or "adafruit-circuitpython-bus-device" → "adafruit_bus_device"
+        let importName = pypiName;
+        if (importName.startsWith('adafruit-circuitpython-')) {
+            const core = importName.slice('adafruit-circuitpython-'.length);
+            // Some modules have the adafruit_ prefix in their import name
+            importName = core.replace(/-/g, '_');
+            if (frozen.has(`adafruit_${importName}`)) return true;
+        }
+        return frozen.has(importName);
     }
 
     /**
@@ -85,11 +148,19 @@ export class Fwip {
      * @param {string} name — module name, pypi name, or partial name
      * @param {object} [options]
      * @param {boolean} [options.deps] — install dependencies (default true)
+     * @param {boolean} [options.py]   — install .py source instead of .mpy (default false)
      * @returns {Promise<{name: string, version: string, files: string[]}>}
      */
     async install(name, options = {}) {
         const installDeps = options.deps !== false;
+        const usePy = options.py === true;
         const pypiName = toPypiName(name);
+
+        // Frozen into firmware — no install needed
+        if (this.isFrozen(pypiName)) {
+            this.log(`[fwip] ${pypiName} is frozen in firmware, skipping`);
+            return { name: pypiName, module: name, version: 'frozen', files: [] };
+        }
 
         // Already installed?
         if (this.installed.has(pypiName)) {
@@ -123,11 +194,14 @@ export class Fwip {
             const moduleName = Object.keys(metaObj)[0];
             const meta = metaObj[moduleName];
 
-            // 3. Fetch the .mpy ZIP
-            const zipName = `${pypiName}-${this.cpMajor}.x-mpy-${tag}.zip`;
+            // 3. Fetch the ZIP (.py source or .mpy compiled)
+            const zipName = usePy
+                ? `${pypiName}-py-${tag}.zip`
+                : `${pypiName}-${this.cpMajor}.x-mpy-${tag}.zip`;
             const zipUrl = this._findAsset(release, zipName);
             if (!zipUrl) {
-                throw new Error(`No ${this.cpMajor}.x mpy bundle found for ${pypiName} ${tag}`);
+                const kind = usePy ? 'py source' : `${this.cpMajor}.x mpy`;
+                throw new Error(`No ${kind} bundle found for ${pypiName} ${tag}`);
             }
 
             const zipData = await this._fetchBinary(zipUrl);
@@ -140,10 +214,10 @@ export class Fwip {
             this.installed.set(pypiName, info);
             this.log(`[fwip] installed ${pypiName}@${tag} (${files.length} file${files.length === 1 ? '' : 's'})`);
 
-            // 6. Install dependencies
+            // 6. Install dependencies (propagate --py flag)
             if (installDeps && meta.external_dependencies) {
                 for (const dep of meta.external_dependencies) {
-                    await this.install(dep);
+                    await this.install(dep, { py: usePy });
                 }
             }
 
@@ -161,6 +235,48 @@ export class Fwip {
         return [...this.installed.values()].map(
             ({ name, module, version }) => ({ name, module, version })
         );
+    }
+
+    /**
+     * Write requirements.txt to CIRCUITPY from installed packages.
+     * Mirrors circup's `freeze -r` behavior.
+     */
+    freeze() {
+        const lines = [...this.installed.values()]
+            .map(({ name, version }) => `${name}==${version}`)
+            .sort();
+        const content = lines.join('\n') + (lines.length ? '\n' : '');
+        const enc = new TextEncoder();
+        this.memfs.writeFile('/CIRCUITPY/requirements.txt', enc.encode(content));
+        this.log(`[fwip] wrote requirements.txt (${lines.length} package${lines.length === 1 ? '' : 's'})`);
+        return lines;
+    }
+
+    /**
+     * Install packages from CIRCUITPY/requirements.txt.
+     * Mirrors circup's `install -r requirements.txt` behavior.
+     * @param {object} [options]
+     * @param {boolean} [options.py] — install .py source instead of .mpy
+     * @returns {Promise<number>} number of packages installed
+     */
+    async installRequirements(options = {}) {
+        const data = this.memfs.readFile('/CIRCUITPY/requirements.txt');
+        if (!data) {
+            throw new Error('No requirements.txt found on CIRCUITPY');
+        }
+        const text = new TextDecoder().decode(data);
+        const names = text.split('\n')
+            .map(line => line.replace(/#.*/, '').trim())    // strip comments
+            .filter(line => line.length > 0)
+            .map(line => line.replace(/[=<>!]=.*/, ''));     // strip version specifiers
+
+        let count = 0;
+        for (const name of names) {
+            const info = await this.install(name, { py: options.py });
+            if (info) count++;
+        }
+        this.log(`[fwip] installed ${count} package${count === 1 ? '' : 's'} from requirements.txt`);
+        return count;
     }
 
     /**

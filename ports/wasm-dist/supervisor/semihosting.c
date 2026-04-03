@@ -226,17 +226,6 @@ void sh_drain_event_ring(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* fwip shared buffer — linear memory, no WASI fds                     */
-/* ------------------------------------------------------------------ */
-
-static fwip_buf_t _fwip_buf;
-
-__attribute__((export_name("sh_fwip_addr")))
-uintptr_t sh_fwip_addr(void) {
-    return (uintptr_t)&_fwip_buf;
-}
-
-/* ------------------------------------------------------------------ */
 /* sh_export_state — write VM state to linear memory                   */
 /*                                                                     */
 /* JS never needs to call a WASM export to know the VM state.          */

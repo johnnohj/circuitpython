@@ -205,9 +205,6 @@ typedef struct {
 /* Init: open /sys/ fd endpoints */
 void sh_init(void);
 
-/* fwip shared buffer address (linear memory, no WASI fds) */
-uintptr_t sh_fwip_addr(void);
-
 /* Issue a semihosting call.  Writes to /sys/call, returns immediately.
  * Caller must then yield (YIELD_IO_WAIT) and check sh_poll() on
  * the next cp_step(). */
@@ -252,47 +249,5 @@ void sh_drain_event_ring(void);
 void sh_export_state(uint32_t sup_state, uint32_t yield_reason,
                      uint32_t yield_arg, uint32_t frame_count,
                      uint32_t vm_depth);
-
-/* ------------------------------------------------------------------ */
-/* fwip — firmware package installer (linear-memory shared buffer)     */
-/*                                                                     */
-/* Python writes a package name + command to _fwip_buf.                */
-/* JS reads it via sh_fwip_addr(), does the fetch, writes status back. */
-/* Python polls _fwip_buf.state each yield until DONE or ERROR.        */
-/*                                                                     */
-/* Layout:                                                             */
-/*   [command:u8] [state:u8] [reserved:u16]                            */
-/*   [installed_count:u16] [status_len:u16]                            */
-/*   [name: 128 bytes, NUL-terminated]                                 */
-/*   [status: 128 bytes, NUL-terminated]                               */
-/*   = 264 bytes total                                                 */
-/* ------------------------------------------------------------------ */
-
-#define FWIP_BUF_SIZE     264
-#define FWIP_NAME_MAX     128
-#define FWIP_STATUS_MAX   128
-
-/* Commands (Python → JS) */
-#define FWIP_CMD_NONE     0
-#define FWIP_CMD_INSTALL  1
-#define FWIP_CMD_REMOVE   2
-#define FWIP_CMD_LIST     3
-
-/* States (JS → Python) */
-#define FWIP_STATE_IDLE       0
-#define FWIP_STATE_PENDING    1   /* JS acknowledged, working */
-#define FWIP_STATE_PROGRESS   2   /* status string updated */
-#define FWIP_STATE_DONE       3
-#define FWIP_STATE_ERROR      4
-
-typedef struct {
-    uint8_t  command;                   /* FWIP_CMD_* */
-    uint8_t  state;                     /* FWIP_STATE_* */
-    uint16_t reserved;
-    uint16_t installed_count;           /* number of packages installed */
-    uint16_t status_len;                /* length of status string */
-    char     name[FWIP_NAME_MAX];       /* package name (Python writes) */
-    char     status[FWIP_STATUS_MAX];   /* status message (JS writes) */
-} fwip_buf_t;
 
 #endif /* WASM_SEMIHOSTING_H */
