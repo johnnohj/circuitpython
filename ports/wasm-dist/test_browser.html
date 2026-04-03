@@ -104,26 +104,181 @@ async function main() {
 
     status.textContent = `Running (${fbWidth}x${fbHeight} display)`;
 
-    // Keyboard → semihosting events via /sys/events
-    document.addEventListener('keydown', (e) => {
-        let c = 0;
-        if (e.key.length === 1) {
-            c = e.key.charCodeAt(0);
-        } else switch (e.key) {
-            case 'Enter': c = 13; break;
-            case 'Backspace': c = 8; break;
-            case 'Tab': c = 9; break;
-            case 'Escape': c = 27; break;
-            case 'ArrowUp':    sh.pushKey(27); sh.pushKey(91); c = 65; break;
-            case 'ArrowDown':  sh.pushKey(27); sh.pushKey(91); c = 66; break;
-            case 'ArrowRight': sh.pushKey(27); sh.pushKey(91); c = 67; break;
-            case 'ArrowLeft':  sh.pushKey(27); sh.pushKey(91); c = 68; break;
+    // ── JS-side readline ──
+    // JS owns input accumulation.  When Enter is pressed, the
+    // complete expression is written to the shared input buffer
+    // and cp_exec(len) is called.  No pyexec, no rx_buf.
+    const inputBufAddr = exports.cp_input_buf_addr();
+    const inputBufSize = exports.cp_input_buf_size();
+    let inputLine = '';
+    let inputLines = '';   // accumulated multi-line input
+    let inputHistory = [];
+    let historyIdx = -1;
+    let waitingForResult = true;   // true after cp_exec or at boot, cleared on prompt
+    const PS1 = '>>> ';
+    const PS2 = '... ';
+
+    function writeInputBuf(text) {
+        const enc = new TextEncoder();
+        const bytes = enc.encode(text);
+        const len = Math.min(bytes.length, inputBufSize - 1);
+        new Uint8Array(exports.memory.buffer, inputBufAddr, len).set(bytes.subarray(0, len));
+        return len;
+    }
+
+    // Write text through C's mp_hal_stdout so it appears on both
+    // the serial div (via onStdout) and the displayio canvas.
+    function termWrite(text) {
+        const len = writeInputBuf(text);
+        if (len > 0) {
+            exports.cp_print(len);
         }
-        if (c) {
-            if (e.ctrlKey && e.key === 'c') { c = 3; }
-            if (e.ctrlKey && e.key === 'd') { c = 4; }
-            sh.pushKey(c);
+    }
+
+    function showPrompt() {
+        const prompt = inputLines ? PS2 : PS1;
+        termWrite(prompt);
+    }
+
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+C — interrupt running expression
+        if (e.ctrlKey && e.key === 'c') {
             e.preventDefault();
+            exports.cp_ctrl_c();
+            if (inputLine || inputLines) {
+                termWrite('^C\r\n');
+                inputLine = '';
+                inputLines = '';
+                showPrompt();
+            }
+            return;
+        }
+
+        // Ctrl+D — soft reboot
+        if (e.ctrlKey && e.key === 'd') {
+            e.preventDefault();
+            if (!inputLine && !inputLines) {
+                exports.cp_ctrl_d();
+                termWrite('\r\n');
+            }
+            return;
+        }
+
+        // Enter — submit line or continue multi-line
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            termWrite('\r\n');
+
+            const fullInput = inputLines ? inputLines + inputLine + '\n' : inputLine;
+
+            if (inputLine === '' && inputLines) {
+                // Empty line in multi-line → execute compound statement
+                const len = writeInputBuf(fullInput);
+                const ret = exports.cp_exec(len);
+                if (ret === 0) {
+                    waitingForResult = true;
+                    if (fullInput.trim()) {
+                        inputHistory.unshift(fullInput.trimEnd());
+                    }
+                } else {
+                    showPrompt();
+                }
+                inputLine = '';
+                inputLines = '';
+                historyIdx = -1;
+                return;
+            }
+
+            // Check if we need more input (compound statement)
+            const len = writeInputBuf(fullInput);
+            if (exports.cp_continue(len)) {
+                inputLines = fullInput + '\n';
+                inputLine = '';
+                showPrompt();
+                return;
+            }
+
+            // Complete expression — execute
+            const ret = exports.cp_exec(len);
+            if (ret === 0) {
+                waitingForResult = true;
+                if (fullInput.trim()) {
+                    inputHistory.unshift(fullInput.trimEnd());
+                }
+            } else {
+                // Compile error — already printed, show prompt
+                showPrompt();
+            }
+            inputLine = '';
+            inputLines = '';
+            historyIdx = -1;
+            return;
+        }
+
+        // Backspace
+        if (e.key === 'Backspace') {
+            e.preventDefault();
+            if (inputLine.length > 0) {
+                inputLine = inputLine.slice(0, -1);
+                termWrite('\b \b');
+            }
+            return;
+        }
+
+        // Tab — autocomplete
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const full = (inputLines || '') + inputLine;
+            const len = writeInputBuf(full);
+            const complLen = exports.cp_complete(len);
+            if (complLen > 0) {
+                // Read completed text back from buffer
+                const bytes = new Uint8Array(exports.memory.buffer, inputBufAddr, len + complLen);
+                const completed = new TextDecoder().decode(bytes);
+                const added = completed.slice(full.length);
+                inputLine += added;
+                termWrite(added);
+            }
+            return;
+        }
+
+        // Arrow up/down — history
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (historyIdx < inputHistory.length - 1) {
+                // Erase current line
+                while (inputLine.length > 0) {
+                    termWrite('\b \b');
+                    inputLine = inputLine.slice(0, -1);
+                }
+                historyIdx++;
+                inputLine = inputHistory[historyIdx];
+                termWrite(inputLine);
+            }
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            while (inputLine.length > 0) {
+                termWrite('\b \b');
+                inputLine = inputLine.slice(0, -1);
+            }
+            if (historyIdx > 0) {
+                historyIdx--;
+                inputLine = inputHistory[historyIdx];
+                termWrite(inputLine);
+            } else {
+                historyIdx = -1;
+                inputLine = '';
+            }
+            return;
+        }
+
+        // Printable character
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            inputLine += e.key;
+            termWrite(e.key);
         }
     });
 
@@ -197,15 +352,22 @@ async function main() {
 
     // Main loop — read VM state directly from linear memory
     let frameCount = 0;
-    const SUP_STATES = ['INIT', 'REPL', 'CODE', 'DONE'];
+    const SUP_REPL = 1;
+    const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'FWIP'];
     const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 
     function loop() {
         sh.pollFwip();
-        exports.cp_step();
+        const supState = exports.cp_step();
         paintFramebuffer();
         drawCursor();
         frameCount++;
+
+        // When expression finishes and supervisor returns to REPL, show prompt
+        if (supState === SUP_REPL && waitingForResult) {
+            waitingForResult = false;
+            showPrompt();
+        }
 
         if (frameCount % 60 === 0) {
             const state = sh.readState();

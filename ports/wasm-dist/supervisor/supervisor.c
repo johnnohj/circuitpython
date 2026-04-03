@@ -30,6 +30,7 @@
 #include "py/runtime.h"
 #include "py/gc.h"
 #include "py/cstack.h"
+#include "py/bc.h"
 #include "py/mphal.h"
 #include "py/repl.h"
 #include "shared/runtime/pyexec.h"
@@ -61,12 +62,14 @@ extern void vm_yield_set_frame_start(uint64_t ms);
 extern void vm_yield_set_budget(uint32_t ms);
 extern int mp_hal_delay_active(void);
 extern int vm_yield_start_file(const char *path);
+extern int vm_yield_start_expr(mp_obj_t module_fun);
 extern int vm_yield_step(void);
 extern void vm_yield_stop(void);
 extern bool vm_yield_code_running(void);
 extern void mp_vm_request_yield(int reason, uint32_t arg);
 extern volatile int mp_vm_yield_reason;
 extern volatile uint32_t mp_vm_yield_arg;
+extern void *mp_vm_yield_state;
 #endif
 
 /* mp_stderr_print is in wasi_mphal.c */
@@ -77,8 +80,9 @@ extern volatile uint32_t mp_vm_yield_arg;
 
 typedef enum {
     SUP_UNINITIALIZED = 0,
-    SUP_REPL,           /* REPL active (blocking in CLI, yielding in browser) */
-    SUP_CODE_RUNNING,   /* code.py executing */
+    SUP_REPL,           /* waiting for input (browser: JS owns readline) */
+    SUP_EXPR_RUNNING,   /* REPL expression executing via vm_yield_step */
+    SUP_CODE_RUNNING,   /* code.py executing via vm_yield_step */
     SUP_CODE_FINISHED,  /* code.py done, switching to REPL */
     SUP_FWIP_BUSY,      /* fwip install/remove in progress (JS async) */
 } sup_state_t;
@@ -147,6 +151,11 @@ static char heap[WASM_GC_HEAP_SIZE];
 #if MICROPY_ENABLE_PYSTACK
 static mp_obj_t pystack_buf[WASM_PYSTACK_SIZE / sizeof(mp_obj_t)];
 #endif
+
+/* Shared input buffer — JS writes source text here before calling
+ * cp_exec() or cp_continue().  Exported via cp_input_buf_addr(). */
+#define INPUT_BUF_SIZE 4096
+static char _input_buf[INPUT_BUF_SIZE];
 
 /* ------------------------------------------------------------------ */
 /* Keyboard input buffer                                               */
@@ -412,45 +421,50 @@ int cp_step(void) {
     switch (_state) {
 
     case SUP_REPL: {
-        #if MICROPY_REPL_EVENT_DRIVEN
-        /* Event-driven REPL: feed queued keystrokes one at a time.
-         * pyexec_event_repl_process_char is a pure state machine —
-         * no blocking.  When the user hits Enter, it compiles and
-         * executes inline.  If execution triggers VM yield (budget
-         * expired), it returns and we resume next frame. */
-        while (_rx_available() > 0) {
-            unsigned char c = _rx_buf[_rx_tail++];
-            if (_rx_tail >= _rx_head) {
-                _rx_head = 0;
-                _rx_tail = 0;
-            }
-            if (c == '\n') {
-                c = '\r';
-            }
-            int ret = pyexec_event_repl_process_char(c);
-            if (ret & PYEXEC_FORCED_EXIT) {
-                /* Ctrl-D: restart cycle — try code.py, then REPL.
-                 * This matches real board behavior: soft-reboot. */
-                #if MICROPY_VM_YIELD_ENABLED
-                if (vm_yield_start_file("/code.py") == 0) {
-                    _state = SUP_CODE_RUNNING;
-                    fprintf(stderr, "[sup] Ctrl-D → code.py\n");
-                    break;
+        if (wasm_cli_mode) {
+            #if MICROPY_REPL_EVENT_DRIVEN
+            /* CLI mode: feed queued keystrokes via pyexec. */
+            while (_rx_available() > 0) {
+                unsigned char c = _rx_buf[_rx_tail++];
+                if (_rx_tail >= _rx_head) {
+                    _rx_head = 0;
+                    _rx_tail = 0;
                 }
-                #endif
-                /* No code.py — just restart the REPL */
-                pyexec_event_repl_init();
-                fprintf(stderr, "[sup] Ctrl-D → REPL\n");
+                if (c == '\n') {
+                    c = '\r';
+                }
+                int ret = pyexec_event_repl_process_char(c);
+                if (ret & PYEXEC_FORCED_EXIT) {
+                    pyexec_event_repl_init();
+                }
             }
+            #endif
         }
-        /* Check if fwip.install() was called — transition after
-         * the REPL expression returns so pystack is clean. */
+        /* Browser mode: SUP_REPL is idle — JS owns readline.
+         * JS calls cp_exec() when the user hits Enter, which
+         * transitions to SUP_EXPR_RUNNING.  Nothing to do here. */
+
+        /* Check if fwip.install() was called */
         if (fwip_request_pending) {
             fwip_request_pending = false;
             _state = SUP_FWIP_BUSY;
             _fwip_last_status[0] = '\0';
             fprintf(stderr, "[sup] → fwip\n");
         }
+        break;
+    }
+
+    case SUP_EXPR_RUNNING: {
+        /* REPL expression executing — same path as code.py.
+         * vm_yield_start_expr() was called by cp_exec(). */
+        #if MICROPY_VM_YIELD_ENABLED
+        int ret = vm_yield_step();
+        if (ret == 0 || ret == 2) {
+            /* 0 = normal completion, 2 = exception (already printed) */
+            _state = SUP_REPL;
+            fprintf(stderr, "[sup] expr done → REPL\n");
+        }
+        /* ret == 1: yielded, will resume next frame */
         #endif
         break;
     }
@@ -471,7 +485,9 @@ int cp_step(void) {
     case SUP_CODE_FINISHED:
         _state = SUP_REPL;
         #if MICROPY_REPL_EVENT_DRIVEN
-        pyexec_event_repl_init();
+        if (wasm_cli_mode) {
+            pyexec_event_repl_init();
+        }
         #endif
         fprintf(stderr, "[sup] code.py finished → REPL\n");
         break;
@@ -498,9 +514,6 @@ int cp_step(void) {
             buf->command = FWIP_CMD_NONE;
             buf->state = FWIP_STATE_IDLE;
             _state = SUP_REPL;
-            #if MICROPY_REPL_EVENT_DRIVEN
-            pyexec_event_repl_init();
-            #endif
             fprintf(stderr, "[sup] fwip done → REPL\n");
         }
         break;
@@ -532,6 +545,161 @@ int cp_step(void) {
     wasm_cursor_info_update();
 
     return (int)_state;
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_print — write text through mp_hal stdout (displayio terminal)    */
+/*                                                                     */
+/* JS calls this to echo typed characters and prompts so they appear   */
+/* on the displayio canvas, not just the serial div.                   */
+/* Text is read from the shared input buffer.                          */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_print")))
+void cp_print(int len) {
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return;
+    }
+    mp_hal_stdout_tx_strn(_input_buf, (size_t)len);
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_input_buf — shared buffer for JS → C string passing              */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_input_buf_addr")))
+uintptr_t cp_input_buf_addr(void) {
+    return (uintptr_t)_input_buf;
+}
+
+__attribute__((export_name("cp_input_buf_size")))
+int cp_input_buf_size(void) {
+    return INPUT_BUF_SIZE;
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_exec — compile and execute a REPL expression (called by JS)      */
+/*                                                                     */
+/* JS writes source text into the shared input buffer, then calls      */
+/* cp_exec(len).  We compile it, hand the module_fun to                */
+/* vm_yield_start_expr, and transition to SUP_EXPR_RUNNING.            */
+/* vm_yield_step() handles yield/resume from there.                    */
+/*                                                                     */
+/* Returns:                                                            */
+/*   0  — started ok (will run in SUP_EXPR_RUNNING)                    */
+/*   1  — compile error (already printed to stderr)                    */
+/*   2  — busy (expression or code.py already running)                 */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_exec")))
+int cp_exec(int len) {
+    if (_state != SUP_REPL) {
+        return 2;  /* busy */
+    }
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return 1;
+    }
+    _input_buf[len] = '\0';
+
+    #if MICROPY_VM_YIELD_ENABLED
+    mp_obj_t module_fun = MP_OBJ_NULL;
+
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        mp_lexer_t *lex = mp_lexer_new_from_str_len(
+            MP_QSTR__lt_stdin_gt_, _input_buf, (size_t)len, 0);
+        qstr source_name = lex->source_name;
+        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_SINGLE_INPUT);
+        module_fun = mp_compile(&parse_tree, source_name, true);
+        nlr_pop();
+    } else {
+        mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+        return 1;  /* compile error */
+    }
+
+    if (vm_yield_start_expr(module_fun) != 0) {
+        return 1;
+    }
+
+    _state = SUP_EXPR_RUNNING;
+    fprintf(stderr, "[sup] cp_exec → SUP_EXPR_RUNNING\n");
+    return 0;
+    #else
+    return 1;
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_complete — tab completion for REPL (called by JS on Tab)         */
+/*                                                                     */
+/* Takes the current input line, returns completion info via a shared   */
+/* buffer.  JS reads the buffer after calling.                         */
+/*                                                                     */
+/* Returns the number of characters of common completion prefix, or    */
+/* 0 if no completion.  The completions themselves are printed to       */
+/* stdout (same as real CircuitPython REPL behavior).                  */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_complete")))
+int cp_complete(int len) {
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return 0;
+    }
+    _input_buf[len] = '\0';
+    const char *compl_str;
+    size_t compl_len = mp_repl_autocomplete(_input_buf, (size_t)len,
+        &mp_plat_print, &compl_str);
+    (void)compl_str;  /* completions are printed to stdout */
+    return (int)compl_len;
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_ctrl_c — interrupt running expression (called by JS on Ctrl-C)   */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_ctrl_c")))
+void cp_ctrl_c(void) {
+    if (_state == SUP_EXPR_RUNNING || _state == SUP_CODE_RUNNING) {
+        mp_sched_keyboard_interrupt();
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_ctrl_d — soft reboot (called by JS on Ctrl-D)                    */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_ctrl_d")))
+void cp_ctrl_d(void) {
+    #if MICROPY_VM_YIELD_ENABLED
+    if (_state == SUP_EXPR_RUNNING) {
+        vm_yield_stop();
+    }
+    /* Try code.py, then fall back to REPL */
+    if (vm_yield_start_file("/code.py") == 0) {
+        _state = SUP_CODE_RUNNING;
+        fprintf(stderr, "[sup] Ctrl-D → code.py\n");
+    } else {
+        _state = SUP_REPL;
+        fprintf(stderr, "[sup] Ctrl-D → REPL\n");
+    }
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_continue — check if input needs more lines (called by JS)        */
+/*                                                                     */
+/* JS calls this after each Enter to decide whether to send the input  */
+/* to cp_exec() or wait for more lines (compound statements).          */
+/* Returns 1 if more input is needed, 0 if the expression is complete. */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_continue")))
+int cp_continue(int len) {
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return 0;
+    }
+    _input_buf[len] = '\0';
+    return mp_repl_continue_with_input(_input_buf) ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */

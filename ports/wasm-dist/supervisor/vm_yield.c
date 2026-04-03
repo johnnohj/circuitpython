@@ -27,9 +27,24 @@
 #include "py/runtime.h"
 #include "py/gc.h"
 #include "py/mphal.h"
+#include "py/objexcept.h"
 #include "extmod/vfs.h"
 
 #include "mpthreadport.h"
+
+/* ------------------------------------------------------------------ */
+/* Yield exception sentinel                                            */
+/*                                                                     */
+/* When fun_bc_call gets MP_VM_RETURN_YIELD, it nlr_raises this        */
+/* static exception to unwind the C stack without freeing pystack.     */
+/* parse_compile_execute catches it and returns PYEXEC_VM_YIELD.       */
+/* ------------------------------------------------------------------ */
+
+mp_obj_exception_t mp_vm_yield_exception = {
+    .base = { &mp_type_SystemExit },  /* reuse SystemExit type for nlr compat */
+    .args = (mp_obj_tuple_t *)&mp_const_empty_tuple_obj,
+    .traceback = NULL,
+};
 
 /* ------------------------------------------------------------------ */
 /* Yield reasons                                                       */
@@ -177,6 +192,32 @@ int vm_yield_start_file(const char *path) {
         _vm_module_fun, 0, 0, NULL);
     if (_vm_code_state == NULL) {
         fprintf(stderr, "[vm_yield] cannot create code state\n");
+        return -1;
+    }
+    _vm_code_state->prev = NULL;
+    _vm_started = true;
+    _vm_first_entry = true;
+    mp_vm_yield_state = NULL;
+
+    return 0;
+}
+
+/*
+ * Start stepping a pre-compiled module function (e.g. from REPL).
+ * The caller has already compiled the source — we just prepare the
+ * code_state and mark it ready for vm_yield_step().
+ * Returns 0 on success, -1 on error.
+ */
+int vm_yield_start_expr(mp_obj_t module_fun) {
+    _vm_code_state = NULL;
+    _vm_module_fun = module_fun;
+    _vm_started = false;
+    _delay_until = 0;
+
+    _vm_code_state = mp_obj_fun_bc_prepare_codestate(
+        module_fun, 0, 0, NULL);
+    if (_vm_code_state == NULL) {
+        fprintf(stderr, "[vm_yield] cannot create code state for expr\n");
         return -1;
     }
     _vm_code_state->prev = NULL;

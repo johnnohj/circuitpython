@@ -334,6 +334,16 @@ static mp_obj_t PLACE_IN_ITCM(fun_bc_call)(mp_obj_t self_in, size_t n_args, size
     if (vm_return_kind == MP_VM_RETURN_NORMAL) {
         // return value is in *sp
         result = *code_state->sp;
+    #if MICROPY_VM_YIELD_ENABLED
+    } else if (vm_return_kind == MP_VM_RETURN_YIELD) {
+        // VM yielded (budget/sleep).  Code state is saved in
+        // mp_vm_yield_state by MICROPY_VM_YIELD_SAVE_STATE.
+        // Don't free pystack — the supervisor will resume via
+        // mp_execute_bytecode(mp_vm_yield_state).  Propagate
+        // as a special exception so nlr unwinds the C stack.
+        extern mp_obj_exception_t mp_vm_yield_exception;
+        nlr_raise(MP_OBJ_FROM_PTR(&mp_vm_yield_exception));
+    #endif
     } else {
         // must be an exception because normal functions can't yield
         assert(vm_return_kind == MP_VM_RETURN_EXCEPTION);
