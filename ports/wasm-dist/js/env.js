@@ -22,16 +22,19 @@ const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'u
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 const isWorker = typeof self !== 'undefined' && typeof WorkerGlobalScope !== 'undefined';
 
+/** Frame interval for Node.js (ms).  ~60fps to match browser rAF. */
+const NODE_FRAME_MS = 16;
+
 /**
  * Schedule a callback for the next frame.
  * Browser: requestAnimationFrame (~60fps, synced to display).
- * Node: setTimeout(cb, 0) — runs on next tick.
+ * Node: setTimeout at ~60fps.
  */
 function requestFrame(cb) {
     if (typeof requestAnimationFrame === 'function') {
         return requestAnimationFrame(cb);
     }
-    return setTimeout(cb, 0);
+    return setTimeout(cb, NODE_FRAME_MS);
 }
 
 function cancelFrame(handle) {
@@ -47,6 +50,24 @@ function cancelFrame(handle) {
  */
 function now() {
     return performance.now();
+}
+
+/**
+ * Load a file as an ArrayBuffer.
+ * Browser: fetch().  Node: fs.readFile().
+ *
+ * @param {string} urlOrPath — URL (browser) or file path (Node)
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function loadFile(urlOrPath) {
+    if (typeof fetch === 'function' && !isNode) {
+        const resp = await fetch(urlOrPath);
+        return resp.arrayBuffer();
+    }
+    // Node.js: dynamic import to avoid bundler issues
+    const { readFile } = await import('node:fs/promises');
+    const buf = await readFile(urlOrPath);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 }
 
 export const env = Object.freeze({
@@ -69,4 +90,5 @@ export const env = Object.freeze({
     requestFrame,
     cancelFrame,
     now,
+    loadFile,
 });

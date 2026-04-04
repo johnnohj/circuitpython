@@ -29,6 +29,10 @@
 #define CTX_SLEEPING  5   /* time.sleep() — waiting for deadline */
 #define CTX_DONE      6   /* execution completed */
 
+/* Sentinel for "no yield state saved".  Offset 0 is valid (first
+ * code_state in a pystack region), so we use UINT32_MAX instead. */
+#define CTX_NO_YIELD_STATE UINT32_MAX
+
 /* Context metadata — exported to JS via cp_context_meta_addr().
  * JS reads this directly from linear memory. */
 typedef struct {
@@ -36,7 +40,7 @@ typedef struct {
     uint8_t  priority;        /* 0 = highest, 255 = lowest */
     uint16_t reserved;
     uint32_t pystack_cur_off; /* offset of pystack_cur from region base */
-    uint32_t yield_state_off; /* offset of yield_state from region base (0 = none) */
+    uint32_t yield_state_off; /* offset of yield_state from region base (CTX_NO_YIELD_STATE = none) */
     uint32_t delay_until_lo;  /* sleep deadline (low 32 bits) */
     uint32_t delay_until_hi;  /* sleep deadline (high 32 bits) */
     uint32_t globals_ptr;     /* saved dict_globals */

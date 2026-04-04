@@ -237,7 +237,9 @@ static void _core_init(void) {
 
     #if MICROPY_PY_SYS_PATH
     {
-        mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_path), 0);
+        /* MICROPY_PY_SYS_PATH_ARGV_DEFAULTS is 0, so mp_init() doesn't
+         * create the list.  We must allocate it before appending. */
+        mp_sys_path = mp_obj_new_list(0, NULL);
         mp_obj_list_append(mp_sys_path,
                            MP_OBJ_NEW_QSTR(qstr_from_str(".frozen")));
         mp_obj_list_append(mp_sys_path,
@@ -448,7 +450,6 @@ int cp_step(uint32_t now_ms) {
         if (ctx_id >= 0) {
             int prev_id = cp_context_active();
             if (ctx_id != prev_id) {
-                fprintf(stderr, "[sup] switch ctx%d → ctx%d\n", prev_id, ctx_id);
                 cp_context_save(prev_id);
                 cp_context_restore(ctx_id);
             }

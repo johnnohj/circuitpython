@@ -154,6 +154,14 @@ void mp_hal_delay_ms(mp_uint_t ms) {
     if (ms == 0) {
         return;
     }
+    if (wasm_cli_mode) {
+        /* CLI mode: busy-wait (no scheduler to resume a yielded context). */
+        uint64_t start = (uint64_t)mp_hal_ticks_ms();
+        while ((uint64_t)mp_hal_ticks_ms() - start < ms) {
+            mp_event_wait_ms(1);
+        }
+        return;
+    }
     uint64_t deadline = (uint64_t)mp_hal_ticks_ms() + ms;
     int id = cp_context_active();
     cp_context_set_delay(id, deadline);

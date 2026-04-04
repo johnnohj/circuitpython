@@ -59,6 +59,7 @@ void cp_context_init(void) {
     memset(_vm, 0, sizeof(_vm));
     for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
         _meta[i].status = CTX_FREE;
+        _meta[i].yield_state_off = CTX_NO_YIELD_STATE;
     }
 
     /* Create context 0 (main) and make it active. */
@@ -76,6 +77,7 @@ int cp_context_create(uint8_t priority) {
             memset(&_meta[i], 0, sizeof(cp_context_meta_t));
             _meta[i].status = CTX_IDLE;
             _meta[i].priority = priority;
+            _meta[i].yield_state_off = CTX_NO_YIELD_STATE;
             return i;
         }
     }
@@ -85,7 +87,12 @@ int cp_context_create(uint8_t priority) {
 void cp_context_destroy(int id) {
     if (id < 0 || id >= CP_MAX_CONTEXTS) return;
     if (id == _active_id) return;  /* can't destroy active context */
+
+    /* Clear all metadata so GC never scans stale roots from a
+     * previous lifecycle, even if a bug bypasses the CTX_FREE check. */
+    memset(&_meta[id], 0, sizeof(cp_context_meta_t));
     _meta[id].status = CTX_FREE;
+    _meta[id].yield_state_off = CTX_NO_YIELD_STATE;
     memset(&_vm[id], 0, sizeof(cp_context_vm_t));
 }
 
@@ -138,12 +145,12 @@ void cp_context_save(int id) {
     _meta[id].pystack_cur_off =
         (uint32_t)(MP_STATE_THREAD(pystack_cur) - base);
 
-    /* Save yield_state as offset from base (0 = none). */
+    /* Save yield_state as offset from base. */
     if (mp_vm_yield_state != NULL) {
         _meta[id].yield_state_off =
             (uint32_t)((uint8_t *)mp_vm_yield_state - base);
     } else {
-        _meta[id].yield_state_off = 0;
+        _meta[id].yield_state_off = CTX_NO_YIELD_STATE;
     }
 
     /* Save globals/locals. */
@@ -162,7 +169,7 @@ void cp_context_restore(int id) {
     MP_STATE_THREAD(pystack_end)   = _pystack_end(id);
 
     /* Restore yield_state. */
-    if (_meta[id].yield_state_off != 0) {
+    if (_meta[id].yield_state_off != CTX_NO_YIELD_STATE) {
         mp_vm_yield_state = base + _meta[id].yield_state_off;
     } else {
         mp_vm_yield_state = NULL;
@@ -265,6 +272,11 @@ void cp_context_gc_collect(void) {
             used = (uint32_t)(MP_STATE_THREAD(pystack_cur) - base);
         } else {
             used = _meta[i].pystack_cur_off;
+        }
+
+        /* Clamp to pystack region size — defense against corruption. */
+        if (used > CP_CTX_PYSTACK_SIZE) {
+            used = CP_CTX_PYSTACK_SIZE;
         }
 
         if (used > 0) {

@@ -47,6 +47,7 @@ export class CircuitPython {
      * @param {string} [options.codePy] — seed code.py content
      * @param {boolean} [options.persist] — enable IndexedDB persistence
      * @param {object} [options.files] — additional files to seed: { path: content }
+     * @param {function} [options.onCodeDone] — called when code.py finishes (before REPL)
      * @returns {Promise<CircuitPython>}
      */
     static async create(options = {}) {
@@ -73,6 +74,9 @@ export class CircuitPython {
         this._ctxMetaSize = 0;
         this._visibilityHandler = null;
         this._keyHandler = null;
+        this._stdinHandler = null;
+        this._onCodeDone = null;
+        this._codeDoneFired = false;
     }
 
     // ── Public API ──
@@ -130,11 +134,18 @@ export class CircuitPython {
     /** Clean up all resources. */
     destroy() {
         this.pause();
-        if (this._visibilityHandler) {
-            document.removeEventListener('visibilitychange', this._visibilityHandler);
+        if (env.hasDOM) {
+            if (this._visibilityHandler) {
+                document.removeEventListener('visibilitychange', this._visibilityHandler);
+            }
+            if (this._keyHandler) {
+                document.removeEventListener('keydown', this._keyHandler);
+            }
         }
-        if (this._keyHandler) {
-            document.removeEventListener('keydown', this._keyHandler);
+        if (this._stdinHandler) {
+            process.stdin.removeListener('data', this._stdinHandler);
+            if (process.stdin.isTTY) process.stdin.setRawMode(false);
+            this._stdinHandler = null;
         }
     }
 
@@ -154,10 +165,17 @@ export class CircuitPython {
     // ── Internal ──
 
     async _init(options) {
-        this._onStdout = options.onStdout || null;
-        this._onStderr = options.onStderr || null;
+        // Default stdout/stderr for Node.js: write to process streams
+        if (env.isNode) {
+            this._onStdout = options.onStdout || ((text) => process.stdout.write(text));
+            this._onStderr = options.onStderr || ((text) => process.stderr.write(text));
+        } else {
+            this._onStdout = options.onStdout || null;
+            this._onStderr = options.onStderr || null;
+        }
         this._statusEl = options.statusEl || null;
         this._serialEl = options.serialEl || null;
+        this._onCodeDone = options.onCodeDone || null;
 
         if (this._statusEl) this._statusEl.textContent = 'Loading...';
 
@@ -216,8 +234,7 @@ export class CircuitPython {
         // Compile + instantiate WASM
         if (this._statusEl) this._statusEl.textContent = 'Compiling...';
 
-        const response = await fetch(options.wasmUrl);
-        const bytes = await response.arrayBuffer();
+        const bytes = await env.loadFile(options.wasmUrl);
         const module = await WebAssembly.compile(bytes);
         const instance = await WebAssembly.instantiate(module, this._wasi.getImports());
         this._wasi.setInstance(instance);
@@ -257,7 +274,7 @@ export class CircuitPython {
         });
 
         // DOM event listeners (browser only)
-        if (env.isBrowser) {
+        if (env.hasDOM) {
             this._keyHandler = (e) => {
                 if (this._readline.handleKey(e.key, e.ctrlKey, e.metaKey)) {
                     e.preventDefault();
@@ -273,14 +290,53 @@ export class CircuitPython {
             document.addEventListener('visibilitychange', this._visibilityHandler);
         }
 
+        // Node.js stdin (TTY raw mode for interactive REPL)
+        if (env.isNode && process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+            process.stdin.resume();
+            this._stdinHandler = (data) => {
+                for (const byte of data) {
+                    if (byte === 3) {         // Ctrl-C
+                        this.ctrlC();
+                    } else if (byte === 4) {  // Ctrl-D
+                        if (!this._readline._line && !this._readline._lines) {
+                            this.destroy();
+                            process.exit(0);
+                        }
+                        this.ctrlD();
+                    } else if (byte === 13) { // Enter
+                        this._readline.handleKey('Enter', false, false);
+                    } else if (byte === 127 || byte === 8) { // Backspace
+                        this._readline.handleKey('Backspace', false, false);
+                    } else if (byte === 9) {  // Tab
+                        this._readline.handleKey('Tab', false, false);
+                    } else if (byte === 27) { // Escape sequence start
+                        // Arrow keys come as \x1b[A/B/C/D — handled below
+                    } else if (byte >= 32 && byte < 127) {
+                        this._readline.handleKey(String.fromCharCode(byte), false, false);
+                    }
+                }
+                // Handle escape sequences (arrow keys)
+                if (data.length === 3 && data[0] === 27 && data[1] === 91) {
+                    const arrows = { 65: 'ArrowUp', 66: 'ArrowDown', 67: 'ArrowRight', 68: 'ArrowLeft' };
+                    const key = arrows[data[2]];
+                    if (key) this._readline.handleKey(key, false, false);
+                }
+            };
+            process.stdin.on('data', this._stdinHandler);
+        }
+
         // Start frame loop
         this._raf = env.requestFrame(() => this._loop());
     }
 
     _handleStdout(text) {
-        const clean = text.replace(ANSI_RE, '');
-        if (this._onStdout) this._onStdout(clean);
+        if (this._onStdout) {
+            // Node terminals handle ANSI natively; only strip for DOM
+            this._onStdout(this._serialEl ? text.replace(ANSI_RE, '') : text);
+        }
         if (this._serialEl) {
+            const clean = text.replace(ANSI_RE, '');
             this._serialText += clean;
             this._serialEl.textContent = this._serialText;
             this._serialEl.scrollTop = this._serialEl.scrollHeight;
@@ -313,6 +369,12 @@ export class CircuitPython {
         // When expression finishes → show prompt
         if (supState === SUP_REPL && this._readline.waitingForResult) {
             this._readline.onResult();
+
+            // Fire onCodeDone once when code.py finishes (transitions to REPL)
+            if (this._onCodeDone && !this._codeDoneFired) {
+                this._codeDoneFired = true;
+                this._onCodeDone();
+            }
         }
 
         // Status bar update (every ~1 second)
