@@ -310,6 +310,50 @@ test('module: binascii', async () => {
     assertContains(r.stdout, '010203');
 });
 
+// ── Newly enabled modules ──
+
+test('module: warnings', async () => {
+    const r = await runRepl('import warnings\nprint(type(warnings.warn))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'function');
+});
+
+test('module: getpass', async () => {
+    const r = await runRepl('import getpass\nprint(type(getpass))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'module');
+});
+
+test('module: aesio', async () => {
+    const r = await runRepl('import aesio\nprint(type(aesio.AES))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'type');
+});
+
+test('module: locale', async () => {
+    const r = await runRepl('import locale\nprint(type(locale))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'module');
+});
+
+test('module: adafruit_pixelbuf', async () => {
+    const r = await runRepl('import adafruit_pixelbuf\nprint(type(adafruit_pixelbuf.PixelBuf))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'type');
+});
+
+test('board: vectorio', async () => {
+    const r = await runBoard('import vectorio\nprint(type(vectorio.Circle))');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'type');
+});
+
+test('board: bitmaptools', async () => {
+    const r = await runBoard('import bitmaptools\nprint(type(bitmaptools))');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'module');
+});
+
 // ── Error handling ──
 
 test('error: NameError', async () => {

@@ -73,7 +73,6 @@
 #define CIRCUITPY_FREQUENCYIO       (0)
 #define CIRCUITPY_I2CTARGET         (0)
 #define CIRCUITPY_KEYPAD            (0)
-#define CIRCUITPY_PIXELBUF          (0)
 #define CIRCUITPY_PULSEIO           (0)
 #define CIRCUITPY_ROTARYIO          (0)
 #define CIRCUITPY_SDCARDIO          (0)
@@ -142,6 +141,26 @@
 #define CIRCUITPY_BINASCII          (1)
 #define CIRCUITPY_ERRNO             (1)
 #define CIRCUITPY_STRUCT            (1)
+
+// Pure-software modules from FULL_BUILD defaults.
+// These need no common-hal — only shared-bindings + shared-module.
+#define CIRCUITPY_ATEXIT            (0) // needs pyexec_exit_handler include fix
+#define CIRCUITPY_WARNINGS          (1)
+#define CIRCUITPY_GETPASS           (1)
+#define CIRCUITPY_MSGPACK           (0) // static read/write clash with POSIX
+#define CIRCUITPY_AESIO             (1)
+#define CIRCUITPY_LOCALE            (1)
+
+// pixelbuf — enables adafruit_neopixel and adafruit_dotstar libraries
+#define CIRCUITPY_PIXELBUF          (1)
+
+// Display utilities — pure shared-module, no common-hal needed
+#ifndef CIRCUITPY_VECTORIO
+#define CIRCUITPY_VECTORIO          (0)
+#endif
+#ifndef CIRCUITPY_BITMAPTOOLS
+#define CIRCUITPY_BITMAPTOOLS       (0)
+#endif
 
 // zlib requires uzlib library sources — enable later
 #define CIRCUITPY_ZLIB              (0)
