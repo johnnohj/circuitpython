@@ -110,21 +110,21 @@ mp_obj_t supervisor_ticks_ms(void) {
 /* ------------------------------------------------------------------ */
 
 void supervisor_enable_tick(void) {
-    mp_thread_unix_begin_atomic_section();
+    mp_thread_begin_atomic_section();
     if (tick_enable_count == 0) {
         port_enable_tick();
     }
     tick_enable_count++;
-    mp_thread_unix_end_atomic_section();
+    mp_thread_end_atomic_section();
 }
 
 void supervisor_disable_tick(void) {
-    mp_thread_unix_begin_atomic_section();
+    mp_thread_begin_atomic_section();
     if (tick_enable_count > 0) {
         tick_enable_count--;
     }
     if (tick_enable_count == 0) {
         port_disable_tick();
     }
-    mp_thread_unix_end_atomic_section();
+    mp_thread_end_atomic_section();
 }

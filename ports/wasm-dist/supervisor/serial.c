@@ -5,15 +5,17 @@
  * Same interface (serial.h), different wiring:
  *
  *   serial_write_substring()
- *     ├── display path: supervisor terminal (future: displayio framebuffer)
- *     ├── console path: /hal/serial/tx fd (future: wasi-memfs.js → xterm.js)
- *     └── CLI path: write(STDOUT_FILENO) for wasmtime/node testing
+ *     ├── display path: supervisor terminal (displayio framebuffer)
+ *     └── console path: write(STDOUT_FILENO) → WASI stdout
+ *         (CLI: real terminal; browser: wasi-memfs.js → onStdout)
  *
  *   serial_read()
- *     ├── rx ring buffer (browser: JS pushes via /sys/events)
+ *     ├── rx ring buffer (browser: JS pushes via event ring)
  *     └── read(STDIN_FILENO) (CLI fallback)
  *
- * We own the entire I/O path — no USB, BLE, UART, or WebSocket deps.
+ * Owns the rx buffer.  supervisor.c pushes bytes via serial_push_byte()
+ * (from sh_on_event) and checks for Ctrl-C via serial_check_interrupt()
+ * (from wasm_background_tasks).
  */
 
 #include <stdbool.h>
@@ -22,6 +24,7 @@
 #include <unistd.h>
 
 #include "py/mpconfig.h"
+#include "py/runtime.h"
 #include "supervisor/shared/serial.h"
 
 #if CIRCUITPY_TERMINALIO
@@ -39,11 +42,49 @@ static bool _display_write_disabled = false;
 /* Runtime mode — set by main() in supervisor.c */
 extern bool wasm_cli_mode;
 
-/* rx buffer — owned by supervisor.c */
-extern uint8_t _rx_buf[];
-extern int _rx_head;
-extern int _rx_tail;
-extern int _rx_available(void);
+/* ------------------------------------------------------------------ */
+/* Rx buffer — keyboard input from JS event ring or CLI stdin          */
+/*                                                                     */
+/* sh_on_event(KEY_DOWN) pushes bytes via serial_push_byte().          */
+/* serial_read() consumes.  serial_check_interrupt() scans for Ctrl-C. */
+/* ------------------------------------------------------------------ */
+
+#define RX_BUF_SIZE 256
+static uint8_t _rx_buf[RX_BUF_SIZE];
+static int _rx_head = 0;
+static int _rx_tail = 0;
+
+static int _rx_available(void) {
+    return _rx_head - _rx_tail;
+}
+
+void serial_push_byte(uint8_t c) {
+    if (_rx_head < RX_BUF_SIZE) {
+        _rx_buf[_rx_head++] = c;
+    }
+}
+
+void serial_check_interrupt(void) {
+    for (int i = _rx_tail; i < _rx_head; i++) {
+        if (_rx_buf[i] == 3) {
+            mp_sched_keyboard_interrupt();
+            break;
+        }
+    }
+}
+
+static char _consume_byte(void) {
+    unsigned char c = _rx_buf[_rx_tail++];
+    /* Reset buffer when fully consumed */
+    if (_rx_tail >= _rx_head) {
+        _rx_head = 0;
+        _rx_tail = 0;
+    }
+    if (c == '\n') {
+        c = '\r';
+    }
+    return (char)c;
+}
 
 /* ------------------------------------------------------------------ */
 /* Init                                                                */
@@ -68,7 +109,6 @@ bool serial_connected(void) {
 /* Output                                                              */
 /* ------------------------------------------------------------------ */
 
-
 uint32_t serial_write_substring(const char *text, uint32_t length) {
     if (length == 0) {
         return 0;
@@ -76,9 +116,7 @@ uint32_t serial_write_substring(const char *text, uint32_t length) {
 
     uint32_t length_sent = length;
 
-    /* Display path: render to supervisor terminal (displayio framebuffer).
-     * Erase cursor first (standard terminal emulator behavior), then
-     * write characters.  The cursor is redrawn by _cursor_tick. */
+    /* Display path: render to supervisor terminal (displayio framebuffer). */
     #if CIRCUITPY_TERMINALIO
     if (!_display_write_disabled) {
         int errcode;
@@ -112,26 +150,13 @@ void serial_write(const char *text) {
 /* ------------------------------------------------------------------ */
 
 uint32_t serial_bytes_available(void) {
-    uint32_t count = _rx_available();
-
-    /* Future: also check /hal/serial/rx fd */
-
-    return count;
+    return (uint32_t)_rx_available();
 }
 
 char serial_read(void) {
-    /* Check rx buffer first (browser: JS pushed keys via /sys/events) */
+    /* Check rx buffer first (browser: JS pushed keys via event ring) */
     if (_rx_available() > 0) {
-        unsigned char c = _rx_buf[_rx_tail++];
-        /* Reset buffer when fully consumed */
-        if (_rx_tail >= _rx_head) {
-            _rx_head = 0;
-            _rx_tail = 0;
-        }
-        if (c == '\n') {
-            c = '\r';
-        }
-        return (char)c;
+        return _consume_byte();
     }
 
     /* CLI fallback: blocking read from WASI stdin */
@@ -164,33 +189,6 @@ bool serial_display_write_disable(bool disabled) {
     bool prev = _display_write_disabled;
     _display_write_disabled = disabled;
     return prev;
-}
-
-/* ------------------------------------------------------------------ */
-/* port_serial_* — CIRCUITPY_PORT_SERIAL interface                     */
-/*                                                                     */
-/* These are called by supervisor/shared/serial.c when                 */
-/* CIRCUITPY_PORT_SERIAL=1.  Since we provide our own serial.c,        */
-/* these also serve as the backing implementation for our channels.     */
-/* ------------------------------------------------------------------ */
-
-void port_serial_early_init(void) {}
-void port_serial_init(void) {}
-
-bool port_serial_connected(void) {
-    return true;
-}
-
-char port_serial_read(void) {
-    return serial_read();
-}
-
-uint32_t port_serial_bytes_available(void) {
-    return serial_bytes_available();
-}
-
-void port_serial_write_substring(const char *text, uint32_t length) {
-    serial_write_substring(text, length);
 }
 
 /* ------------------------------------------------------------------ */

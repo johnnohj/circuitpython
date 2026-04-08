@@ -27,11 +27,11 @@
 // The supervisor's mp_vm_should_yield() should check this.
 static volatile int _atomic_depth = 0;
 
-void mp_thread_unix_begin_atomic_section(void) {
+void mp_thread_begin_atomic_section(void) {
     _atomic_depth++;
 }
 
-void mp_thread_unix_end_atomic_section(void) {
+void mp_thread_end_atomic_section(void) {
     if (_atomic_depth > 0) {
         _atomic_depth--;
     }

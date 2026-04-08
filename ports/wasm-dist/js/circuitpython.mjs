@@ -21,6 +21,7 @@
 
 import { WasiMemfs, IdbBackend, seedDrive } from './wasi-memfs.js';
 import { Semihosting } from './semihosting.js';
+import { getJsffiImports, jsffi_init } from './jsffi.js';
 import { env } from './env.js';
 import { Fwip } from './fwip.js';
 import { Display } from './display.mjs';
@@ -179,12 +180,8 @@ export class CircuitPython {
 
         if (this._statusEl) this._statusEl.textContent = 'Loading...';
 
-        // Semihosting handler
+        // Semihosting (shared-memory FFI: event ring + state export)
         this._sh = new Semihosting();
-        this._sh.onDebugLog = (level, msg) => {
-            const fn = [console.log, console.warn, console.error][level] || console.log;
-            fn(`[cp] ${msg}`);
-        };
 
         // IndexedDB persistence
         const idb = options.persist ? new IdbBackend() : null;
@@ -203,10 +200,7 @@ export class CircuitPython {
                     console.log('[hal write]', path, data.length, 'bytes');
                 }
             },
-            onSyscall: (callBuf) => this._sh.handleCall(callBuf),
         });
-
-        this._sh.setMemfs(this._wasi);
 
         // Restore persisted files
         if (idb) {
@@ -236,9 +230,15 @@ export class CircuitPython {
 
         const bytes = await env.loadFile(options.wasmUrl);
         const module = await WebAssembly.compile(bytes);
-        const instance = await WebAssembly.instantiate(module, this._wasi.getImports());
+
+        // Merge WASI + jsffi imports
+        const imports = this._wasi.getImports();
+        imports.jsffi = getJsffiImports();
+
+        const instance = await WebAssembly.instantiate(module, imports);
         this._wasi.setInstance(instance);
         this._sh.setInstance(instance);
+        jsffi_init(instance);
         this._exports = instance.exports;
 
         if (this._statusEl) this._statusEl.textContent = 'Initializing...';

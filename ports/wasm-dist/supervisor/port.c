@@ -117,11 +117,11 @@ void port_gc_collect(void) {
 /* ------------------------------------------------------------------ */
 
 void common_hal_mcu_disable_interrupts(void) {
-    mp_thread_unix_begin_atomic_section();
+    mp_thread_begin_atomic_section();
 }
 
 void common_hal_mcu_enable_interrupts(void) {
-    mp_thread_unix_end_atomic_section();
+    mp_thread_end_atomic_section();
 }
 
 void common_hal_mcu_delay_us(uint32_t us) {

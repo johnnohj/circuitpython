@@ -61,7 +61,6 @@ export class WasiMemfs {
         this.onHardwareWrite = options.onHardwareWrite || null;
         this.onHardwareRead = options.onHardwareRead || null;
         this.onHardwareCommand = options.onHardwareCommand || null;
-        this.onSyscall = options.onSyscall || null;
 
         // IndexedDB persistence backend (optional)
         this.idb = options.idb || null;
@@ -168,11 +167,6 @@ export class WasiMemfs {
                     // Intercept /hal/ writes → notify hardware listeners
                     if (entry.path.startsWith('/hal/') && self.onHardwareWrite) {
                         self.onHardwareWrite(entry.path, buf);
-                    }
-
-                    // Intercept /sys/call writes → semihosting dispatch
-                    if (entry.path === '/sys/call' && self.onSyscall) {
-                        self.onSyscall(buf);
                     }
 
                     self._view().setUint32(nwritten, data.length, true);

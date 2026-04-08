@@ -27,8 +27,8 @@ void mp_thread_gc_others(void);
 // Atomic sections — these track nesting depth so the supervisor
 // knows not to yield while inside one.  On real boards this disables
 // interrupts; on WASM it prevents the frame-budget yield.
-void mp_thread_unix_begin_atomic_section(void);
-void mp_thread_unix_end_atomic_section(void);
+void mp_thread_begin_atomic_section(void);
+void mp_thread_end_atomic_section(void);
 
 // Query whether we're inside an atomic section (yield-prevention).
 // The supervisor's budget check should call this before triggering yield.

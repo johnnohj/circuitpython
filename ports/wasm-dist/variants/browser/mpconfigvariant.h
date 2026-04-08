@@ -44,5 +44,10 @@
 // ── Status bar (rendered in terminal top row) ──
 #define CIRCUITPY_STATUS_BAR        (1)
 
+// ── jsffi (JavaScript FFI via WASM imports) ──
+// Enables `import jsffi` — Python can access JS objects via JsProxy.
+#undef MICROPY_PY_JSFFI
+#define MICROPY_PY_JSFFI            (1)
+
 // ── Board ──
 // CIRCUITPY_BOARD set via -D in mpconfigvariant.mk

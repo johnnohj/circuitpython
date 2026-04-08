@@ -4,7 +4,7 @@ ifdef VARIANT_DIR
 # the path as the variant name.
 VARIANT ?= $(notdir $(VARIANT_DIR:/=))
 else
-# Default variant is standard (minimal, for wasmtime CLI testing).
+# Default variant is standard (minimal, for Node.js WASI testing).
 VARIANT ?= standard
 VARIANT_DIR ?= variants/$(VARIANT)
 endif
@@ -78,6 +78,7 @@ LDFLAGS += -mllvm -wasm-enable-sjlj -fwasm-exceptions
 LDFLAGS += -lsetjmp -lwasi-emulated-process-clocks
 LDFLAGS += -Wl,--initial-memory=4194304
 LDFLAGS += -Wl,-z,stack-size=524288
+LDFLAGS += -Wl,--export=malloc -Wl,--export=free
 LDFLAGS += $(LDFLAGS_MOD) $(LDFLAGS_EXTRA)
 
 # ── Optional module conditionals ──
@@ -110,6 +111,9 @@ SRC_C += \
 	wasi_mphal.c \
 	mpthreadport.c \
 	modringio.c \
+	proxy_c.c \
+	objjsproxy.c \
+	modjsffi.c \
 	shared-module/os/__init__.c \
 	supervisor/shared/translate/translate.c \
 	$(SRC_MOD) \
@@ -155,10 +159,12 @@ CXXFLAGS += $(filter-out -Wmissing-prototypes -Wold-style-definition -std=gnu99,
 
 include $(TOP)/py/mkrules.mk
 
-.PHONY: test clean
+.PHONY: test test-all
+
+NODE ?= $(shell which node)
 
 test: $(BUILD)/$(PROG)
-	wasmtime $(BUILD)/$(PROG)
+	$(NODE) --experimental-wasi-unstable-preview1 test_node.mjs < /dev/null
 
-clean:
-	$(RM) -rf $(BUILD)
+test-all: build-standard/circuitpython.wasm build-browser/circuitpython.wasm
+	$(NODE) test_standard.mjs

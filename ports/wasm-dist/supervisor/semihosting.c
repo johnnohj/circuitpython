@@ -1,193 +1,47 @@
 /*
- * supervisor/semihosting.c — WASM semihosting via MEMFS.
+ * supervisor/semihosting.c — WASM ↔ JS shared-memory FFI.
  *
- * The "trap" mechanism: instead of BKPT/EBREAK, C writes a binary
- * request record to /sys/call (a WASI fd backed by wasi-memfs.js).
- * JS sees the write via onSyscall callback, fulfills the request,
- * writes the response to /sys/result.
+ * Two mechanisms, both using WASM linear memory (no WASI fds):
  *
- * Two modes:
- *   - Synchronous: sh_call_sync() — write + read in one go.
- *     For fast host operations (clock, errno) that the MEMFS
- *     callback handles inline before fd_write returns.
+ *   Event ring (JS → C):
+ *     JS writes sh_event_t entries directly into _event_ring via
+ *     sh_event_ring_addr() and advances write_idx.  The supervisor
+ *     drains them in hal_step() via sh_drain_event_ring(), calling
+ *     sh_on_event() for each.  Keyboard input, timer fires, and
+ *     hardware changes all arrive through this single channel.
  *
- *   - Asynchronous: sh_call() + yield(YIELD_IO_WAIT) + sh_poll().
- *     For operations that need real async work (fetch, timer, I2C).
- *     C writes the request, yields to JS.  JS fulfills at its
- *     leisure, writes /sys/result.  Next cp_step(), supervisor
- *     calls sh_poll() → SH_FULFILLED → sh_read_result().
+ *   State export (C → JS):
+ *     The supervisor writes an sh_state_t to _export_buf at the end
+ *     of each cp_step().  JS reads it via sh_state_addr() — just a
+ *     DataView over linear memory, no WASM export call needed.
  *
- * Event injection: JS appends sh_event_t records to /sys/events.
- * Supervisor drains them in hal_step() (phase 1 of cp_step).
- * This replaces cp_push_key() — keyboard input becomes
- * SH_EVT_KEY_DOWN events through the same channel as timers,
- * fetch completions, and hardware changes.
- *
- * VM state export: supervisor writes sh_state_t to /sys/state
- * at the end of each cp_step().  JS can read this without calling
- * any WASM export — just read from its in-memory Map.  This lets
- * JS make scheduling decisions: skip cp_step() during long sleeps,
- * batch hardware updates, show VM state in devtools.
+ * Why linear memory instead of WASI fds?  WASI fd_write during
+ * cp_step() corrupts memory (likely memory.buffer detach after
+ * GC triggers memory.grow).  Direct memory access is safe and fast.
  */
-
-#include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/stat.h>
 
 #include "supervisor/semihosting.h"
 
 /* ------------------------------------------------------------------ */
-/* File descriptors for /sys/ endpoints                                */
-/* ------------------------------------------------------------------ */
-
-static int _call_fd   = -1;   /* /sys/call   — C writes, JS reads    */
-static int _result_fd = -1;   /* /sys/result — JS writes, C reads    */
-static int _events_fd = -1;   /* /sys/events — JS appends, C drains  */
-static int _state_fd  = -1;   /* /sys/state  — C writes, JS reads    */
-
-/* ------------------------------------------------------------------ */
-/* sh_init — open /sys/ fd endpoints                                   */
+/* sh_init                                                             */
 /* ------------------------------------------------------------------ */
 
 void sh_init(void) {
-    mkdir("/sys", 0755);
-
-    /* Per-frame data (state, events) uses direct linear memory —
-     * NOT WASI fds.  See pitfall_wasi_fd_write_corruption.md.
-     * Static globals (_export_buf, _event_ring) are zero-initialized.
-     *
-     * The /sys/call and /sys/result fds are for low-frequency
-     * semihosting requests (fetch, timer, persist).  They'll be
-     * opened lazily when a semihosting call is actually issued. */
+    /* Event ring and state export use linear memory — static globals
+     * are zero-initialized, nothing to open.  Kept as a lifecycle
+     * hook for future FFI init (e.g., jsffi proxy tables). */
 }
 
 /* ------------------------------------------------------------------ */
-/* sh_call — issue async semihosting request                           */
-/* ------------------------------------------------------------------ */
-
-void sh_call(uint32_t call_nr, uint32_t arg0, uint32_t arg1,
-             uint32_t arg2, uint32_t arg3,
-             const void *payload, uint32_t payload_len) {
-
-    sh_call_t req = {
-        .call_nr = call_nr,
-        .status  = SH_PENDING,
-        .arg0    = arg0,
-        .arg1    = arg1,
-        .arg2    = arg2,
-        .arg3    = arg3,
-    };
-
-    if (payload && payload_len > 0) {
-        uint32_t n = payload_len < SH_PAYLOAD_MAX ? payload_len : SH_PAYLOAD_MAX;
-        memcpy(req.payload, payload, n);
-    }
-
-    lseek(_call_fd, 0, SEEK_SET);
-    write(_call_fd, &req, sizeof(req));
-
-    /* Caller should now yield with YIELD_IO_WAIT. */
-}
-
-/* ------------------------------------------------------------------ */
-/* sh_call_sync — issue + read in one step (for fast host ops)         */
+/* Event dispatch — weak default                                       */
 /*                                                                     */
-/* The MEMFS onSyscall callback can handle some calls inline:          */
-/* it sees the fd_write to /sys/call, fulfills immediately, writes     */
-/* /sys/result before fd_write returns.  C can then read the result    */
-/* without yielding.                                                   */
+/* supervisor.c overrides this to route events:                        */
+/*   KEY_DOWN → _rx_buf, Ctrl-C → mp_sched_keyboard_interrupt, etc.   */
 /* ------------------------------------------------------------------ */
 
-int sh_call_sync(uint32_t call_nr, uint32_t arg0, uint32_t arg1,
-                 uint32_t arg2, uint32_t arg3) {
-
-    sh_call(call_nr, arg0, arg1, arg2, arg3, NULL, 0);
-
-    /* Read result immediately — host handled inline */
-    sh_result_t res;
-    lseek(_result_fd, 0, SEEK_SET);
-    ssize_t n = read(_result_fd, &res, sizeof(res));
-
-    if (n < (ssize_t)sizeof(res) || res.status != SH_FULFILLED) {
-        return -1;
-    }
-
-    /* Clear pending state */
-    sh_call_t idle = { .call_nr = 0, .status = SH_IDLE };
-    lseek(_call_fd, 0, SEEK_SET);
-    write(_call_fd, &idle, sizeof(idle));
-
-    return (int)res.ret0;
-}
-
-/* ------------------------------------------------------------------ */
-/* sh_poll — check if async call is fulfilled                          */
-/* ------------------------------------------------------------------ */
-
-int sh_poll(void) {
-    sh_result_t res;
-    lseek(_result_fd, 0, SEEK_SET);
-    ssize_t n = read(_result_fd, &res, sizeof(res));
-
-    if (n < (ssize_t)sizeof(uint32_t) * 2) {
-        return SH_IDLE;
-    }
-
-    return (int)res.status;
-}
-
-/* ------------------------------------------------------------------ */
-/* sh_read_result — consume fulfilled result, reset to idle            */
-/* ------------------------------------------------------------------ */
-
-void sh_read_result(sh_result_t *out) {
-    lseek(_result_fd, 0, SEEK_SET);
-    read(_result_fd, out, sizeof(*out));
-
-    /* Reset call record to idle */
-    sh_call_t idle = { .call_nr = 0, .status = SH_IDLE };
-    lseek(_call_fd, 0, SEEK_SET);
-    write(_call_fd, &idle, sizeof(idle));
-}
-
-/* ------------------------------------------------------------------ */
-/* sh_drain_events — process JS→Python event queue                     */
-/*                                                                     */
-/* Called during hal_step() (phase 1 of cp_step).  Reads all pending  */
-/* events from /sys/events, dispatches each, then truncates.           */
-/* ------------------------------------------------------------------ */
-
-/* Weak — supervisor or board code can override to handle events */
 __attribute__((weak))
 void sh_on_event(const sh_event_t *evt) {
     (void)evt;
-}
-
-void sh_drain_events(void) {
-    sh_event_t events[SH_EVENT_MAX];
-
-    lseek(_events_fd, 0, SEEK_SET);
-    ssize_t n = read(_events_fd, events, sizeof(events));
-
-    if (n <= 0) {
-        return;
-    }
-
-    int count = n / SH_EVENT_SIZE;
-    for (int i = 0; i < count; i++) {
-        if (events[i].event_type == SH_EVT_NONE) {
-            continue;
-        }
-        sh_on_event(&events[i]);
-    }
-
-    /* Clear by writing an empty buffer at offset 0.
-     * We avoid ftruncate() since wasi-memfs doesn't implement
-     * fd_filestat_set_size.  Instead, just reset the fd offset
-     * so the next read sees nothing new — JS overwrites the
-     * entire file content on each pushEvent() batch anyway. */
-    lseek(_events_fd, 0, SEEK_SET);
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,16 +82,12 @@ void sh_drain_event_ring(void) {
 /* ------------------------------------------------------------------ */
 /* sh_export_state — write VM state to linear memory                   */
 /*                                                                     */
-/* JS never needs to call a WASM export to know the VM state.          */
-/* It reads /sys/state from its in-memory Map directly.                */
+/* JS reads state directly from linear memory via sh_state_addr().     */
+/* No WASI fd_write — safe to call every frame.                        */
 /* ------------------------------------------------------------------ */
 
 static sh_state_t _export_buf;
 
-/* JS can read state directly from linear memory via this pointer.
- * We avoid WASI fd_write during cp_step — it corrupts memory when
- * called every frame (likely a memory.buffer detach issue in the
- * WASI fd_write path after GC triggers memory.grow). */
 __attribute__((export_name("sh_state_addr")))
 uintptr_t sh_state_addr(void) {
     return (uintptr_t)&_export_buf;

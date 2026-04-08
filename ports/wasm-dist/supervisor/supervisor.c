@@ -93,7 +93,6 @@ extern void *mp_vm_yield_state;
 static int _state = SUP_UNINITIALIZED;
 static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
 static uint32_t _frame_count = 0;
-static uint64_t _frame_start_ms = 0;
 
 /* JS time source — written by cp_step(), read by mp_hal_ticks_ms().
  * Eliminates clock_gettime syscall from the hot loop. */
@@ -152,53 +151,19 @@ static char heap[WASM_GC_HEAP_SIZE];
 static char _input_buf[INPUT_BUF_SIZE];
 
 /* ------------------------------------------------------------------ */
-/* Keyboard input buffer                                               */
-/*                                                                     */
-/* sh_on_event(KEY_DOWN) pushes bytes here.  serial_read() reads       */
-/* from here.  In CLI mode, serial_read() falls back to WASI stdin.   */
-/* ------------------------------------------------------------------ */
-
-#define RX_BUF_SIZE 256
-uint8_t _rx_buf[RX_BUF_SIZE];
-int _rx_head = 0;
-int _rx_tail = 0;
-
-int _rx_available(void) {
-    return _rx_head - _rx_tail;
-}
-
-/* ------------------------------------------------------------------ */
 /* Background tasks — called from MICROPY_VM_HOOK_LOOP (vm_yield.c)    */
 /*                                                                     */
 /* "Things Python needs the platform to do to keep going."             */
 /* ------------------------------------------------------------------ */
 
+/* serial.c owns the rx buffer and provides these */
+extern void serial_push_byte(uint8_t c);
+extern void serial_check_interrupt(void);
+
 void wasm_background_tasks(void) {
-    /* Check for Ctrl-C in rx buffer */
-    for (int i = _rx_tail; i < _rx_head; i++) {
-        if (_rx_buf[i] == 3) {
-            mp_sched_keyboard_interrupt();
-            break;
-        }
-    }
+    serial_check_interrupt();
 
     /* Future: check MEMFS hw endpoints, cursor blink, display dirty */
-}
-
-/* ------------------------------------------------------------------ */
-/* Frame budget                                                        */
-/* ------------------------------------------------------------------ */
-
-bool wasm_budget_exhausted(void) {
-    if (mp_thread_in_atomic_section()) {
-        return false;
-    }
-    uint64_t now = (uint64_t)mp_hal_ticks_ms();
-    return (now - _frame_start_ms) >= WASM_FRAME_BUDGET_MS;
-}
-
-uint64_t wasm_frame_start_ms(void) {
-    return _frame_start_ms;
 }
 
 /* ------------------------------------------------------------------ */
@@ -215,6 +180,14 @@ static void _core_init(void) {
     sh_init();
 
     mp_init();
+
+    /* Initialize jsffi proxy tables (must come after mp_init for GC). */
+    #if MICROPY_PY_JSFFI
+    {
+        extern void proxy_c_init(void);
+        proxy_c_init();
+    }
+    #endif
 
     /* Initialize the context system — sets up pystack for context 0. */
     cp_context_init();
@@ -406,11 +379,10 @@ int cp_step(uint32_t now_ms) {
     }
 
     wasm_js_now_ms = (uint64_t)now_ms;
-    _frame_start_ms = wasm_js_now_ms;
     _frame_count++;
 
     #if MICROPY_VM_YIELD_ENABLED
-    vm_yield_set_frame_start(_frame_start_ms);
+    vm_yield_set_frame_start(wasm_js_now_ms);
     #endif
 
     /* ── Phase 1: HAL step ── */
@@ -427,15 +399,8 @@ int cp_step(uint32_t now_ms) {
     if (wasm_cli_mode) {
         /* CLI mode: feed queued keystrokes via pyexec. */
         #if MICROPY_REPL_EVENT_DRIVEN
-        while (_rx_available() > 0) {
-            unsigned char c = _rx_buf[_rx_tail++];
-            if (_rx_tail >= _rx_head) {
-                _rx_head = 0;
-                _rx_tail = 0;
-            }
-            if (c == '\n') {
-                c = '\r';
-            }
+        while (serial_bytes_available() > 0) {
+            char c = serial_read();
             int ret = pyexec_event_repl_process_char(c);
             if (ret & PYEXEC_FORCED_EXIT) {
                 pyexec_event_repl_init();
@@ -445,7 +410,7 @@ int cp_step(uint32_t now_ms) {
     } else {
         /* Browser mode: scheduler-driven context dispatch.
          * Pick the highest-priority runnable context and step it. */
-        int ctx_id = cp_scheduler_pick(_frame_start_ms);
+        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
 
         if (ctx_id >= 0) {
             int prev_id = cp_context_active();
@@ -471,7 +436,10 @@ int cp_step(uint32_t now_ms) {
             }
         }
 
-        /* Derive _state from context 0 for JS status bar compatibility */
+        /* Update _state from context 0.  JS-triggered transitions
+         * (cp_exec, cp_ctrl_d, cp_run_file) set the initial _state;
+         * this block handles ongoing transitions (e.g. expression
+         * finishes → CTX_DONE → SUP_REPL). */
         uint8_t ctx0 = cp_context_get_status(0);
         if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
             _state = SUP_REPL;
@@ -799,7 +767,7 @@ int cp_continue(int len) {
 /* ------------------------------------------------------------------ */
 /* Semihosting event handler                                           */
 /*                                                                     */
-/* Called by sh_drain_events() (in hal_step, phase 1) for each event   */
+/* Called by sh_drain_event_ring() (in hal_step, phase 1) for each     */
 /* JS appended to /sys/events.  Routes events to the appropriate       */
 /* subsystem — keyboard input to _rx_buf, timers to scheduler, etc.    */
 /*                                                                     */
@@ -816,9 +784,7 @@ void sh_on_event(const sh_event_t *evt) {
              * waiting for background_tasks to scan the buffer. */
             mp_sched_keyboard_interrupt();
         }
-        if (_rx_head < RX_BUF_SIZE) {
-            _rx_buf[_rx_head++] = c;
-        }
+        serial_push_byte(c);
         break;
     }
     default:

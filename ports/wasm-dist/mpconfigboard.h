@@ -146,6 +146,12 @@
 // zlib requires uzlib library sources — enable later
 #define CIRCUITPY_ZLIB              (0)
 
+// ---- jsffi (JavaScript FFI via WASM imports) ----
+// Off by default — browser variant enables it.
+#ifndef MICROPY_PY_JSFFI
+#define MICROPY_PY_JSFFI            (0)
+#endif
+
 // Skip GCC version check (we use clang via wasi-sdk)
 #define CIRCUITPY_MIN_GCC_VERSION   (0)
 

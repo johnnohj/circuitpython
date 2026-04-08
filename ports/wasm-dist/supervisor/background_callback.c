@@ -21,8 +21,8 @@
 /* Critical sections — use mpthreadport atomic sections                */
 /* ------------------------------------------------------------------ */
 
-#define CALLBACK_CRITICAL_BEGIN mp_thread_unix_begin_atomic_section()
-#define CALLBACK_CRITICAL_END   mp_thread_unix_end_atomic_section()
+#define CALLBACK_CRITICAL_BEGIN mp_thread_begin_atomic_section()
+#define CALLBACK_CRITICAL_END   mp_thread_end_atomic_section()
 
 /* ------------------------------------------------------------------ */
 /* Callback queue                                                      */
