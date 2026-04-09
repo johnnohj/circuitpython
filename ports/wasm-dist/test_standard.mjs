@@ -336,6 +336,12 @@ test('module: locale', async () => {
     assertContains(r.stdout, 'module');
 });
 
+test('module: storage.getmount', async () => {
+    const r = await runRepl('import storage\nprint(type(storage.getmount("/")))\n');
+    assertNoTimeout(r);
+    assertContains(r.stdout, 'VfsPosix');
+});
+
 test('module: adafruit_pixelbuf', async () => {
     const r = await runRepl('import adafruit_pixelbuf\nprint(type(adafruit_pixelbuf.PixelBuf))\n');
     assertNoTimeout(r);

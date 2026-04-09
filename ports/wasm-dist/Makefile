@@ -63,6 +63,7 @@ CFLAGS += -DCIRCUITPY_GETPASS=1
 CFLAGS += -DCIRCUITPY_AESIO=1
 CFLAGS += -DCIRCUITPY_LOCALE=1
 CFLAGS += -DCIRCUITPY_PIXELBUF=1
+CFLAGS += -DCIRCUITPY_STORAGE=1
 
 # WASM exception handling for NLR (setjmp/longjmp)
 CFLAGS += -mllvm -wasm-enable-sjlj
@@ -150,7 +151,9 @@ SRC_C += \
 	shared-bindings/adafruit_pixelbuf/__init__.c \
 	shared-bindings/adafruit_pixelbuf/PixelBuf.c \
 	shared-module/adafruit_pixelbuf/__init__.c \
-	shared-module/adafruit_pixelbuf/PixelBuf.c
+	shared-module/adafruit_pixelbuf/PixelBuf.c \
+	shared-bindings/storage/__init__.c \
+	common-hal/storage/__init__.c
 
 # Display utility modules — browser variant only (require displayio types).
 ifeq ($(VARIANT),browser)

@@ -162,6 +162,9 @@
 #define CIRCUITPY_BITMAPTOOLS       (0)
 #endif
 
+// storage — CIRCUITPY drive access (mount/getmount/remount)
+#define CIRCUITPY_STORAGE            (1)
+
 // zlib requires uzlib library sources — enable later
 #define CIRCUITPY_ZLIB              (0)
 

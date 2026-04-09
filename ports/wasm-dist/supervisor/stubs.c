@@ -136,3 +136,19 @@ uint32_t common_hal_displayio_ondiskbitmap_get_pixel(displayio_ondiskbitmap_t *s
     return 0;
 }
 #endif
+
+/* ------------------------------------------------------------------ */
+/* VfsFat stub — storage module references mp_fat_vfs_type             */
+/* We use VfsPosix, not FatFS. Provide the type so storage.VfsFat      */
+/* exists (as a placeholder) and mount() type validation can be        */
+/* relaxed.                                                            */
+/* ------------------------------------------------------------------ */
+
+#if CIRCUITPY_STORAGE
+#include "py/obj.h"
+
+const mp_obj_type_t mp_fat_vfs_type = {
+    .base = { .type = &mp_type_type },
+    .name = MP_QSTR_VfsFat,
+};
+#endif
