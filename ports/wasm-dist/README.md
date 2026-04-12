@@ -1,12 +1,11 @@
 CircuitPython WASM port
 =====================
 
-The "wasm" or "wasi" port runs in standard browser environments, like Chrome, Firefox, and Safari, as well as Node.js runtimes.
+The "wasm" (or "wasi") port runs in standard browser environments, like Chrome, Firefox, and Safari, as well as Node.js runtimes. This port is offered for rapid prototyping, general testing, and experimentation with the primary intention to allow users to see whether some code 'works' even when they happen not to have the hardware at hand.
 
-The x86 and x64 architectures are supported (i.e. x86 32- and 64-bit), as well
-as ARM and MIPS. Extending the unix port to another architecture requires
-writing some assembly code for the exception handling and garbage collection.
-Alternatively, a fallback implementation based on setjmp/longjmp can be used.
+The goal of the wasm port is to provide a faithful simulation of a generic CircuitPython board in the browser; users should be able to run code using both this port and real hardware without needing to make edits. Differences between browsers, user hardware, and this port's reliance upon a JavaScript runtime mean there is no guarantee execution will match exactly the behavior found on real hardware.
+
+For a fuller discussion of features and project goals, please see `DEV_NOTES.md`
 
 Building
 --------
@@ -46,7 +45,7 @@ the top-level CircuitPython directory:
 
 The `mpy-cross` step builds the [MicroPython
 cross-compiler](https://github.com/micropython/micropython/?tab=readme-ov-file#the-micropython-cross-compiler-mpy-cross).
-The `make submodules` step can be skipped if you didn't clone the MicroPython
+The `make submodules` step can be skipped if you didn't clone the CircuitPython
 source from git.
 
 Next, to build the actual executable (still in the `ports/wasm-dist` directory):
@@ -55,7 +54,7 @@ Next, to build the actual executable (still in the `ports/wasm-dist` directory):
 
 Then to give it a try:
 
-    $ node run ./build-standard/micropython
+    $ node run ./build-standard/circuitpython
     >>> list(5 * x + y for x in range(10) for y in [4, 2, 1])
 
 Use `CTRL-D` (i.e. EOF) to exit the shell.
@@ -63,7 +62,7 @@ Use `CTRL-D` (i.e. EOF) to exit the shell.
 Learn about command-line options (in particular, how to increase heap size
 which may be needed for larger applications):
 
-    $ node run ./build-standard/micropython -h
+    $ node run ./build-standard/circuitpython -h
 
 To run the complete testsuite, use:
 
@@ -71,57 +70,27 @@ To run the complete testsuite, use:
 
 The wasm port comes with a built-in package manager called `fwip`, e.g.:
 
-    $ node run ./build-standard/micropython -m mip install hmac
+    $ node run ./build-standard/circuitpython -m fwip install hmac
 
 or
 
-    $ node run ./build-standard/micropython
+    $ node run ./build-standard/circuitpython
     >>> import fwip
     >>> fwip.install("hmac")
 
-`fwip` uses `fetch()` to import libraries from the bundle repo into the virtual board's `CIRCUITPY/lib` directory. In web browsers, this is persistent Virtual Filesystem storage backed by an Indexed Database Browse available modules at
+`fwip` uses `fetch()` to import libraries from the bundle repo into the virtual board's `CIRCUITPY/lib` directory. In web browsers, this is persistent Virtual Filesystem storage backed by an Indexed Database. In Node.js, the board's directory is created within the same parent directory of the binary itself. Browse available modules at
 [Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle).
 
-### Minimal Variant
+### Browser Variant
 
-The "standard" variant of CircuitPython is the default. It enables most features,
-including external modules interfaced using `libffi`. To instead build the
-"minimal" variant, which disables almost all optional features and modules:
+The "standard" variant of CircuitPython is the default. It enables most features and is intended largely for testing in a Node.js runtime. To instead build the
+"browser" variant, which adds several modules and features for use in a browser environment:
 
-    $ cd ports/unix
+    $ cd ports/wasm
     $ make submodules
-    $ make VARIANT=minimal
+    $ make VARIANT=browser
 
-The executable will be built at `build-minimal/micropython`.
-
-Additional variants can be found in the `variants` sub-directory of the port,
-although these are mostly of interest to MicroPython maintainers.
-
-### Standalone build
-
-By default, the "standard" variant uses `pkg-config` to link to the system's
-shared `libffi` library.
-
-It is possible to instead build a standalone MicroPython where `libffi` is built
-from source and linked statically into the `micropython` executable. This is
-mostly useful for embedded or cross-compiled applications.
-
-Building standalone requires `autoconf` and `libtool` to also be installed.
-
-To build standalone:
-
-    $ export MICROPY_STANDALONE=1
-    $ make submodules                # fetches libffi submodule
-    $ make deplibs                   # build just the external libraries
-    $ make                           # build MicroPython itself
-
-`make deplibs` causes all supported external libraries (currently only `libffi`)
-to be built inside the build directory, so it needs to run again only after
-`make clean`.
-
-If you intend to build MicroPython with additional options (like
-cross-compiling), the same set of options should be passed to both `make
-deplibs` and `make`.
+The binary will be built at `build-browser/circuitpython`.
 
 ### Other dependencies
 
@@ -134,7 +103,7 @@ set to 1.
 
 By default, builds are stripped of symbols and debug information to save size.
 
-To build a debuggable version of the Unix port, there are two options:
+To build a debuggable version of the port, there are two options:
 
 1. Run `make [other arguments] DEBUG=1`. Note setting `DEBUG` also reduces the
    optimisation level and enables assertions, so it's not a good option for

@@ -216,3 +216,4 @@ test: $(BUILD)/$(PROG)
 
 test-all: build-standard/circuitpython.wasm build-browser/circuitpython.wasm
 	$(NODE) test_standard.mjs
+	$(NODE) test_browser.mjs

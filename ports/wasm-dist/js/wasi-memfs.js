@@ -484,6 +484,8 @@ export class IdbBackend {
         this.storeName = options.storeName || 'files';
         this.prefix = options.prefix || '/CIRCUITPY/';
         this._db = null;
+        /** @type {Map<string, number>} path → mtime (ms since epoch) */
+        this.mtimes = new Map();
     }
 
     /** Open (or create) the IndexedDB database. */
@@ -515,8 +517,16 @@ export class IdbBackend {
                 const cursor = req.result;
                 if (cursor) {
                     const path = cursor.key;
-                    const data = cursor.value;
-                    memfs.writeFile(path, new Uint8Array(data));
+                    const value = cursor.value;
+                    // Handle both legacy (raw ArrayBuffer) and new ({ data, mtime }) formats
+                    if (value instanceof ArrayBuffer) {
+                        memfs.writeFile(path, new Uint8Array(value));
+                    } else {
+                        memfs.writeFile(path, new Uint8Array(value.data));
+                        if (value.mtime) {
+                            this.mtimes.set(path, value.mtime);
+                        }
+                    }
                     count++;
                     cursor.continue();
                 } else {
@@ -532,13 +542,17 @@ export class IdbBackend {
         return path.startsWith(this.prefix);
     }
 
-    /** Save a single file to IndexedDB. */
+    /** Save a single file to IndexedDB (with mtime metadata). */
     save(path, data) {
         if (!this._db) return;
         const tx = this._db.transaction(this.storeName, 'readwrite');
         const store = tx.objectStore(this.storeName);
-        // Store as ArrayBuffer (structured-cloneable)
-        store.put(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), path);
+        // Store as { data: ArrayBuffer, mtime: number } for metadata support.
+        // Legacy entries are raw ArrayBuffer — handled in load().
+        store.put({
+            data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+            mtime: Date.now(),
+        }, path);
     }
 
     /** Delete a file from IndexedDB. */
@@ -579,6 +593,14 @@ export class IdbBackend {
  *
  * Call after loading from the persistence backend but before cp_init().
  */
+const DEFAULT_CODE_PY = `\
+# SPDX-FileCopyrightText: 2026 Adafruit Industries
+# Welcome to CircuitPython in the browser!
+# Edit this file to get started.
+print("Hello from CircuitPython!")
+print("Edit code.py to write your own program.")
+`;
+
 export function seedDrive(memfs, options = {}) {
     const prefix = '/CIRCUITPY';
 
@@ -588,8 +610,10 @@ export function seedDrive(memfs, options = {}) {
     if (options.bootPy != null && !memfs.readFile(prefix + '/boot.py')) {
         memfs.writeFile(prefix + '/boot.py', options.bootPy);
     }
-    if (options.codePy != null && !memfs.readFile(prefix + '/code.py')) {
-        memfs.writeFile(prefix + '/code.py', options.codePy);
+    // Seed code.py: use provided content, or fall back to default welcome.
+    if (!memfs.readFile(prefix + '/code.py')) {
+        const content = options.codePy != null ? options.codePy : DEFAULT_CODE_PY;
+        memfs.writeFile(prefix + '/code.py', content);
     }
     if (options.settingsToml != null && !memfs.readFile(prefix + '/settings.toml')) {
         memfs.writeFile(prefix + '/settings.toml', options.settingsToml);
