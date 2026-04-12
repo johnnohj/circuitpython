@@ -28,6 +28,8 @@
 
 #include "py/compile.h"
 #include "py/runtime.h"
+#include "py/mpprint.h"
+#include "genhdr/mpversion.h"
 #include "py/gc.h"
 #include "py/cstack.h"
 #include "py/bc.h"
@@ -84,14 +86,16 @@ extern void *mp_vm_yield_state;
 /* Supervisor states — exposed to JS via sh_export_state.
  * These map to context statuses but provide the legacy numbering
  * that test_browser.html expects in the status bar. */
-#define SUP_UNINITIALIZED 0
-#define SUP_REPL          1
-#define SUP_EXPR_RUNNING  2
-#define SUP_CODE_RUNNING  3
-#define SUP_CODE_FINISHED 4
+#define SUP_UNINITIALIZED    0
+#define SUP_REPL             1
+#define SUP_EXPR_RUNNING     2
+#define SUP_CODE_RUNNING     3
+#define SUP_CODE_FINISHED    4
+#define SUP_WAITING_FOR_KEY  5
 
 static int _state = SUP_UNINITIALIZED;
 static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
+static bool _code_header_printed = false;  /* deferred so JS can inject "last edited" */
 static uint32_t _frame_count = 0;
 
 /* JS time source — written by cp_step(), read by mp_hal_ticks_ms().
@@ -117,6 +121,7 @@ void supervisor_execution_status(void) {
             serial_write("code.py");
             break;
         case SUP_CODE_FINISHED:
+        case SUP_WAITING_FOR_KEY:
             serial_write("Done");
             break;
         default:
@@ -138,6 +143,52 @@ void supervisor_execution_status(void) {
 #ifndef WASM_FRAME_BUDGET_MS
 #define WASM_FRAME_BUDGET_MS 13
 #endif
+
+/* ------------------------------------------------------------------ */
+/* Supervisor debug logging                                            */
+/*                                                                     */
+/* In browser mode, debug output goes to stderr (→ console.log via JS).*/
+/* Gated by a runtime flag so settings.toml or boot.py can silence it. */
+/* ------------------------------------------------------------------ */
+
+static bool _debug_enabled = true;  /* default on; JS or boot.py can turn off */
+
+#define SUP_DEBUG(fmt, ...) do { \
+    if (_debug_enabled) fprintf(stderr, "[sup] " fmt "\n", ##__VA_ARGS__); \
+} while (0)
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle messages — printed to stdout (serial/displayio terminal)   */
+/*                                                                     */
+/* These match real CircuitPython board messages where applicable.      */
+/* ------------------------------------------------------------------ */
+
+static void _print_banner(void) {
+    mp_printf(&mp_plat_print, "%s running on wasm-browser\n",
+              MICROPY_BANNER_NAME_AND_VERSION);
+}
+
+static void _print_auto_reload_status(void) {
+    mp_hal_stdout_tx_str(
+        "Auto-reload is on. Simply save files over USB to run them or enter REPL to disable.\r\n");
+}
+
+static void _print_code_py_header(const char *filename) {
+    mp_hal_stdout_tx_str(filename);
+    mp_hal_stdout_tx_str(" output:\r\n");
+}
+
+static void _print_code_done(void) {
+    mp_hal_stdout_tx_str("\r\nCode done running.\r\n");
+}
+
+static void _print_press_any_key(void) {
+    mp_hal_stdout_tx_str("\r\nPress any key to enter the REPL. Use CTRL-D to reload.\r\n");
+}
+
+static void _print_soft_reboot(void) {
+    mp_hal_stdout_tx_str("\r\nsoft reboot\r\n");
+}
 
 /* ------------------------------------------------------------------ */
 /* Static buffers                                                      */
@@ -262,8 +313,7 @@ int main(int argc, char **argv) {
 
     _state = SUP_REPL;
 
-    fprintf(stderr, "[sup] CircuitPython WASM (heap=%dK)\n",
-            WASM_GC_HEAP_SIZE / 1024);
+    SUP_DEBUG("CircuitPython WASM (heap=%dK)", WASM_GC_HEAP_SIZE / 1024);
 
     /* Board lifecycle loop: run code.py (if exists) then REPL,
      * restart on Ctrl+D.  For now, just REPL. */
@@ -307,21 +357,25 @@ int cp_init(void) {
     #endif
 
     /* ── Boot sequence ──
-     * 1. Run boot.py if present (board setup, pin aliases, etc.)
-     * 2. Try to run code.py — if it exists, start yield-stepping it
-     * 3. If no code.py, drop straight into REPL
-     *
-     * This matches real CircuitPython board behavior:
-     *   boot.py → code.py → REPL (when code.py finishes)
+     * Matches real CircuitPython board behavior:
+     *   banner → boot.py → auto-reload msg → code.py header → code.py → REPL
      * settings.toml is read on demand by os.getenv(). */
+
+    /* 1. Print banner (version + board ID) */
+    _print_banner();
+
+    /* 2. Run boot.py if present (board setup, pin aliases, etc.) */
     {
         pyexec_result_t result;
         pyexec_file_if_exists("/boot.py", &result);
     }
 
-    /* Try to start code.py via the yield-stepping machinery.
-     * If it exists and compiles, we enter SUP_CODE_RUNNING.
-     * If not, we fall through to REPL. */
+    /* 3. Print auto-reload status */
+    _print_auto_reload_status();
+
+    /* 4. Try to start code.py via the yield-stepping machinery.
+     *    If it exists and compiles, we enter SUP_CODE_RUNNING.
+     *    If not, we fall through to REPL. */
     #if MICROPY_VM_YIELD_ENABLED
     {
         mp_code_state_t *cs = cp_compile_file("/code.py");
@@ -333,9 +387,10 @@ int cp_init(void) {
     }
     if (vm_yield_code_running()) {
         _ctx0_is_code = true;
+        _code_header_printed = false;  /* JS injects "last edited" first */
         _state = SUP_CODE_RUNNING;
-        fprintf(stderr, "[sup] initialized → code.py (heap=%dK budget=%dms)\n",
-                WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+        SUP_DEBUG("initialized → code.py (heap=%dK budget=%dms)",
+                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     } else
     #endif
     {
@@ -344,8 +399,8 @@ int cp_init(void) {
         #if MICROPY_REPL_EVENT_DRIVEN
         pyexec_event_repl_init();
         #endif
-        fprintf(stderr, "[sup] initialized → REPL (heap=%dK budget=%dms)\n",
-                WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+        SUP_DEBUG("initialized → REPL (heap=%dK budget=%dms)",
+                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     }
 
     return 0;
@@ -408,6 +463,13 @@ int cp_step(uint32_t now_ms) {
         }
         #endif
     } else {
+        /* Print deferred "code.py output:" header on first frame.
+         * Deferred so JS can inject "last edited" line after cp_init. */
+        if (_ctx0_is_code && !_code_header_printed) {
+            _print_code_py_header("code.py");
+            _code_header_printed = true;
+        }
+
         /* Browser mode: scheduler-driven context dispatch.
          * Pick the highest-priority runnable context and step it. */
         int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
@@ -425,7 +487,13 @@ int cp_step(uint32_t now_ms) {
             if (ret == 0 || ret == 2) {
                 /* Normal completion or exception — context is done */
                 cp_context_set_status(ctx_id, CTX_DONE);
-                fprintf(stderr, "[sup] ctx%d done\n", ctx_id);
+                SUP_DEBUG("ctx%d done", ctx_id);
+
+                /* If context 0 was running code.py, print lifecycle msgs */
+                if (ctx_id == 0 && _ctx0_is_code) {
+                    _print_code_done();
+                    _print_press_any_key();
+                }
             } else {
                 /* Yielded — sleeping or budget exhausted.
                  * mp_hal_delay_ms already set CTX_SLEEPING if applicable;
@@ -442,7 +510,13 @@ int cp_step(uint32_t now_ms) {
          * finishes → CTX_DONE → SUP_REPL). */
         uint8_t ctx0 = cp_context_get_status(0);
         if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
-            _state = SUP_REPL;
+            if (_ctx0_is_code && _state == SUP_CODE_RUNNING) {
+                /* code.py just finished → wait for keypress before REPL */
+                _state = SUP_WAITING_FOR_KEY;
+            } else if (_state != SUP_WAITING_FOR_KEY) {
+                /* REPL expression finished, or already transitioned */
+                _state = SUP_REPL;
+            }
         } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
             _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
         }
@@ -565,7 +639,7 @@ int cp_exec(int len) {
     cp_context_set_status(0, CTX_RUNNABLE);
     _ctx0_is_code = false;
     _state = SUP_EXPR_RUNNING;
-    fprintf(stderr, "[sup] cp_exec → SUP_EXPR_RUNNING\n");
+    SUP_DEBUG("cp_exec → SUP_EXPR_RUNNING");
     return 0;
     #else
     return 1;
@@ -629,7 +703,7 @@ int cp_context_exec(int len, int priority) {
     cp_context_save(id);
     cp_context_restore(prev_id);
 
-    fprintf(stderr, "[sup] cp_context_exec → ctx%d (pri=%d)\n", id, priority);
+    SUP_DEBUG("cp_context_exec → ctx%d (pri=%d)", id, priority);
     return id;
     #else
     return -2;
@@ -675,7 +749,7 @@ int cp_context_exec_file(int path_len, int priority) {
     cp_context_save(id);
     cp_context_restore(prev_id);
 
-    fprintf(stderr, "[sup] cp_context_exec_file(%s) → ctx%d (pri=%d)\n",
+    SUP_DEBUG("cp_context_exec_file(%s) → ctx%d (pri=%d)",
             _input_buf, id, priority);
     return id;
     #else
@@ -728,6 +802,18 @@ void cp_ctrl_d(void) {
     if (_state == SUP_EXPR_RUNNING) {
         vm_yield_stop();
     }
+
+    /* Print soft reboot message (matches real board) */
+    _print_soft_reboot();
+
+    /* Re-run boot sequence: banner → boot.py → auto-reload → code.py */
+    _print_banner();
+    {
+        pyexec_result_t result;
+        pyexec_file_if_exists("/boot.py", &result);
+    }
+    _print_auto_reload_status();
+
     /* Try code.py, then fall back to REPL */
     {
         mp_code_state_t *cs = cp_compile_file("/code.py");
@@ -736,15 +822,35 @@ void cp_ctrl_d(void) {
             cp_context_load(0, cs);
             cp_context_set_status(0, CTX_RUNNABLE);
             _ctx0_is_code = true;
+            _code_header_printed = false;  /* JS injects "last edited" first */
             _state = SUP_CODE_RUNNING;
-            fprintf(stderr, "[sup] Ctrl-D → code.py\n");
+            SUP_DEBUG("Ctrl-D → code.py");
         } else {
             _state = SUP_REPL;
             cp_context_set_status(0, CTX_IDLE);
-            fprintf(stderr, "[sup] Ctrl-D → REPL\n");
+            SUP_DEBUG("Ctrl-D → REPL");
         }
     }
     #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_press_any_key — transition from WAITING_FOR_KEY to REPL          */
+/*                                                                     */
+/* Called by JS when the user presses any key while in the             */
+/* SUP_WAITING_FOR_KEY state (after code.py finishes).  Prints the     */
+/* REPL banner and shows the >>> prompt.                               */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_press_any_key")))
+void cp_press_any_key(void) {
+    if (_state != SUP_WAITING_FOR_KEY) return;
+
+    _ctx0_is_code = false;
+    _state = SUP_REPL;
+    cp_context_set_status(0, CTX_IDLE);
+    mp_hal_stdout_tx_str("\r\n");
+    SUP_DEBUG("press any key → REPL");
 }
 
 /* ------------------------------------------------------------------ */
@@ -799,7 +905,7 @@ void sh_on_event(const sh_event_t *evt) {
 __attribute__((export_name("cp_run_file")))
 int cp_run_file(const char *path) {
     #if MICROPY_VM_YIELD_ENABLED
-    fprintf(stderr, "[sup] run_file: %s\n", path);
+    SUP_DEBUG("run_file: %s", path);
     mp_code_state_t *cs = cp_compile_file(path);
     if (cs == NULL) {
         return -1;
@@ -812,7 +918,7 @@ int cp_run_file(const char *path) {
     return 0;
     #else
     (void)path;
-    fprintf(stderr, "[sup] run_file: VM yield not enabled\n");
+    SUP_DEBUG("run_file: VM yield not enabled");
     return -1;
     #endif
 }
@@ -826,6 +932,11 @@ int cp_run_file(const char *path) {
 __attribute__((export_name("cp_get_state")))
 int cp_get_state(void) {
     return (int)_state;
+}
+
+__attribute__((export_name("cp_set_debug")))
+void cp_set_debug(int enabled) {
+    _debug_enabled = (enabled != 0);
 }
 
 __attribute__((export_name("cp_get_frame_count")))

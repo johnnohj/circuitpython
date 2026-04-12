@@ -26,11 +26,13 @@ import { env } from './env.js';
 import { Fwip } from './fwip.js';
 import { Display } from './display.mjs';
 import { Readline } from './readline.mjs';
+import { HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
 const SUP_REPL = 1;
-const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE'];
+const SUP_WAITING_FOR_KEY = 5;
+const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'WAIT_KEY'];
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
@@ -78,6 +80,9 @@ export class CircuitPython {
         this._stdinHandler = null;
         this._onCodeDone = null;
         this._codeDoneFired = false;
+        this._waitingForKey = false;
+        this._hw = new HardwareRouter();
+        this._ctxCallbacks = new Map();  // context id → onDone callback
     }
 
     // ── Public API ──
@@ -105,9 +110,10 @@ export class CircuitPython {
 
     /** Send Ctrl-D: soft reboot. */
     ctrlD() {
+        this._waitingForKey = false;
+        this._codeDoneFired = false;
         this._exports.cp_ctrl_d();
         if (this._readline) {
-            this._readline.termWrite('\r\n');
             this._readline._waitingForResult = true;
         }
     }
@@ -152,6 +158,7 @@ export class CircuitPython {
 
     get state() {
         if (!this._exports) return 'loading';
+        if (this._waitingForKey) return 'waiting';
         // Read context 0 status
         const m = this._readContextMeta(0);
         if (!m || m.status <= 1 || m.status === 6) return 'repl';
@@ -162,6 +169,113 @@ export class CircuitPython {
     get canvas() { return this._display?._canvas; }
     get displayWidth() { return this._display?.width || 0; }
     get displayHeight() { return this._display?.height || 0; }
+
+    /**
+     * Register a hardware module.  Modules get preStep/postStep hooks
+     * and receive routed /hal/ write/read callbacks.
+     * @param {HardwareModule} mod
+     */
+    registerHardware(mod) { this._hw.register(mod); }
+
+    /**
+     * Get a registered hardware module by name.
+     * @param {string} name — e.g., 'gpio', 'neopixel'
+     * @returns {HardwareModule|null}
+     */
+    hardware(name) { return this._hw.get(name); }
+
+    // ── Multi-context API ──
+
+    /**
+     * Run Python code in a background context.
+     * The code runs concurrently with the REPL / code.py, scheduled by
+     * priority (lower number = higher priority).
+     *
+     * @param {string} code — Python source code
+     * @param {object} [options]
+     * @param {number} [options.priority=200] — scheduling priority (0=highest)
+     * @param {function} [options.onDone] — called when context finishes (id, error?)
+     * @returns {number} context id (1–7), or -1 (no slots), or -2 (compile error)
+     */
+    runCode(code, options = {}) {
+        const { priority = 200, onDone = null } = options;
+        const len = this._readline.writeInputBuf(code);
+        const id = this._exports.cp_context_exec(len, priority);
+        if (id >= 0 && onDone) {
+            this._ctxCallbacks.set(id, onDone);
+        }
+        return id;
+    }
+
+    /**
+     * Run a .py file in a background context.
+     * The file must exist in the CIRCUITPY drive (MEMFS).
+     *
+     * @param {string} path — file path (e.g., '/sensors.py')
+     * @param {object} [options]
+     * @param {number} [options.priority=200] — scheduling priority
+     * @param {function} [options.onDone] — called when context finishes
+     * @returns {number} context id, -1 (no slots), or -2 (compile error)
+     */
+    runFile(path, options = {}) {
+        const { priority = 200, onDone = null } = options;
+        const len = this._readline.writeInputBuf(path);
+        const id = this._exports.cp_context_exec_file(len, priority);
+        if (id >= 0 && onDone) {
+            this._ctxCallbacks.set(id, onDone);
+        }
+        return id;
+    }
+
+    /**
+     * List all active contexts with their status.
+     * @returns {Array<{id, status, statusName, priority}>}
+     */
+    listContexts() {
+        const result = [];
+        for (let i = 0; i < this._ctxMax; i++) {
+            const m = this._readContextMeta(i);
+            if (m && m.status > 0) {
+                result.push({
+                    id: i,
+                    status: m.status,
+                    statusName: CTX_STATUSES[m.status] || '?',
+                    priority: m.priority,
+                });
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Kill a background context.  Cannot kill context 0 (main).
+     * @param {number} id — context id (1–7)
+     * @returns {boolean} true if killed
+     */
+    killContext(id) {
+        if (id <= 0 || id >= this._ctxMax) return false;
+        const m = this._readContextMeta(id);
+        if (!m || m.status === 0) return false;
+        // Ensure we're not destroying the active context
+        const active = this._exports.cp_context_active();
+        if (active === id) {
+            this._exports.cp_context_save(id);
+            this._exports.cp_context_restore(0);
+        }
+        this._exports.cp_context_destroy(id);
+        this._ctxCallbacks.delete(id);
+        return true;
+    }
+
+    /** Number of active (non-free) contexts. */
+    get activeContextCount() {
+        let count = 0;
+        for (let i = 0; i < this._ctxMax; i++) {
+            const m = this._readContextMeta(i);
+            if (m && m.status > 0) count++;
+        }
+        return count;
+    }
 
     // ── Internal ──
 
@@ -186,7 +300,14 @@ export class CircuitPython {
         // IndexedDB persistence
         const idb = options.persist ? new IdbBackend() : null;
 
-        // WASI runtime
+        // Register default hardware modules
+        this._hw.register(new GpioModule());
+        this._hw.register(new NeoPixelModule());
+        this._hw.register(new AnalogModule());
+        this._hw.register(new PwmModule());
+        this._hw.register(new I2cModule());
+
+        // WASI runtime — route /hal/ callbacks through hardware router
         this._wasi = new WasiMemfs({
             args: ['circuitpython'],
             idb,
@@ -196,9 +317,10 @@ export class CircuitPython {
                 else console.log('[stderr]', text);
             },
             onHardwareWrite: (path, data) => {
-                if (!path.startsWith('/hal/serial')) {
-                    console.log('[hal write]', path, data.length, 'bytes');
-                }
+                this._hw.onWrite(path, data);
+            },
+            onHardwareRead: (path, offset) => {
+                return this._hw.onRead(path, offset);
             },
         });
 
@@ -210,8 +332,9 @@ export class CircuitPython {
         }
 
         // Seed CIRCUITPY drive
+        // Pass codePy as-is — seedDrive uses DEFAULT_CODE_PY when undefined/null
         seedDrive(this._wasi, {
-            codePy: options.codePy || '',
+            codePy: options.codePy,
         });
 
         // Seed additional files
@@ -243,8 +366,30 @@ export class CircuitPython {
 
         if (this._statusEl) this._statusEl.textContent = 'Initializing...';
 
-        // Initialize the supervisor
+        // Configure debug output before cp_init so init messages respect it.
+        // Explicit option takes priority; otherwise check settings.toml.
+        if (options.debug !== undefined) {
+            this._exports.cp_set_debug(options.debug ? 1 : 0);
+        } else {
+            const settings = this._wasi.readFile('/CIRCUITPY/settings.toml');
+            if (settings) {
+                const text = new TextDecoder().decode(settings);
+                const m = text.match(/^\s*CIRCUITPY_DEBUG\s*=\s*(\S+)/m);
+                if (m) {
+                    const val = m[1].toLowerCase();
+                    this._exports.cp_set_debug(
+                        val === '0' || val === 'false' || val === 'no' ? 0 : 1
+                    );
+                }
+            }
+        }
+
+        // Initialize the supervisor (prints banner + auto-reload message)
         this._exports.cp_init();
+
+        // Inject "code.py last edited" line before the deferred "code.py output:" header.
+        // cp_init defers the header to the first cp_step so we can inject here.
+        this._printCodePyLastEdited(idb);
 
         // Display (browser only)
         this._display = options.canvas
@@ -276,6 +421,12 @@ export class CircuitPython {
         // DOM event listeners (browser only)
         if (env.hasDOM) {
             this._keyHandler = (e) => {
+                // Intercept any key during WAITING_FOR_KEY → enter REPL
+                if (this._waitingForKey) {
+                    this._enterRepl();
+                    e.preventDefault();
+                    return;
+                }
                 if (this._readline.handleKey(e.key, e.ctrlKey, e.metaKey)) {
                     e.preventDefault();
                 }
@@ -295,6 +446,11 @@ export class CircuitPython {
             process.stdin.setRawMode(true);
             process.stdin.resume();
             this._stdinHandler = (data) => {
+                // Intercept any key during WAITING_FOR_KEY → enter REPL
+                if (this._waitingForKey) {
+                    this._enterRepl();
+                    return;
+                }
                 for (const byte of data) {
                     if (byte === 3) {         // Ctrl-C
                         this.ctrlC();
@@ -330,6 +486,40 @@ export class CircuitPython {
         this._raf = env.requestFrame(() => this._loop());
     }
 
+    /** Print "code.py last edited: ..." line via cp_print. */
+    _printCodePyLastEdited(idb) {
+        const codePyPath = '/CIRCUITPY/code.py';
+        let line;
+        if (idb && idb.mtimes.has(codePyPath)) {
+            const mtime = idb.mtimes.get(codePyPath);
+            const dt = new Date(mtime);
+            const stamp = dt.toLocaleString(undefined, {
+                dateStyle: 'medium', timeStyle: 'short',
+            });
+            line = `code.py last edited: ${stamp}\r\n`;
+        } else if (this._wasi.files.has(codePyPath)) {
+            line = `code.py last edited: Never\r\n`;
+        } else {
+            return;  // no code.py at all
+        }
+        // Write via cp_print so it appears on displayio + serial.
+        // Readline isn't created yet, so use the export directly.
+        const enc = new TextEncoder();
+        const bytes = enc.encode(line);
+        const addr = this._exports.cp_input_buf_addr();
+        new Uint8Array(this._exports.memory.buffer, addr, bytes.length).set(bytes);
+        this._exports.cp_print(bytes.length);
+    }
+
+    /** Transition from WAITING_FOR_KEY to REPL. */
+    _enterRepl() {
+        this._waitingForKey = false;
+        this._exports.cp_press_any_key();
+        // Show the REPL prompt
+        this._readline._waitingForResult = false;
+        this._readline.showPrompt();
+    }
+
     _handleStdout(text) {
         if (this._onStdout) {
             // Node terminals handle ANSI natively; only strip for DOM
@@ -357,7 +547,15 @@ export class CircuitPython {
     }
 
     _loop() {
-        const supState = this._exports.cp_step(performance.now() | 0);
+        const nowMs = performance.now() | 0;
+
+        // Pre-step: let hardware modules inject fresh data
+        this._hw.preStep(this._wasi, nowMs);
+
+        const supState = this._exports.cp_step(nowMs);
+
+        // Post-step: let hardware modules read output state
+        this._hw.postStep(this._wasi, nowMs);
 
         if (this._display) {
             this._display.paint();
@@ -366,15 +564,42 @@ export class CircuitPython {
 
         this._frameCount++;
 
-        // When expression finishes → show prompt
-        if (supState === SUP_REPL && this._readline.waitingForResult) {
-            this._readline.onResult();
+        // When code.py finishes → enter WAITING_FOR_KEY state
+        if (supState === SUP_WAITING_FOR_KEY && !this._waitingForKey) {
+            this._waitingForKey = true;
 
-            // Fire onCodeDone once when code.py finishes (transitions to REPL)
+            // Fire onCodeDone callback (e.g. for --exit mode)
             if (this._onCodeDone && !this._codeDoneFired) {
                 this._codeDoneFired = true;
                 this._onCodeDone();
             }
+        }
+
+        // When expression finishes → show prompt
+        if (supState === SUP_REPL && this._readline.waitingForResult) {
+            this._readline.onResult();
+        }
+
+        // Background context lifecycle: detect done contexts, fire callbacks, auto-cleanup.
+        // cp_context_destroy requires the target not be the active context,
+        // so save/restore around it if needed.
+        for (let i = 1; i < this._ctxMax; i++) {
+            const m = this._readContextMeta(i);
+            if (!m || m.status !== 6) continue;  // only DONE contexts
+
+            const cb = this._ctxCallbacks.get(i);
+            if (cb) {
+                this._ctxCallbacks.delete(i);
+                cb(i, null);
+            }
+
+            // Ensure we're not destroying the active context
+            const active = this._exports.cp_context_active();
+            if (active === i) {
+                this._exports.cp_context_save(i);
+                this._exports.cp_context_restore(0);
+            }
+            this._exports.cp_context_destroy(i);
         }
 
         // Status bar update (every ~1 second)
@@ -400,3 +625,6 @@ export class CircuitPython {
         this._raf = env.requestFrame(() => this._loop());
     }
 }
+
+// Re-export hardware module classes for external use
+export { HardwareModule, HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
