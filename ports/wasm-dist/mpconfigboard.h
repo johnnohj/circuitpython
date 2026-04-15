@@ -147,7 +147,7 @@
 #define CIRCUITPY_ATEXIT            (0) // needs pyexec_exit_handler include fix
 #define CIRCUITPY_WARNINGS          (1)
 #define CIRCUITPY_GETPASS           (1)
-#define CIRCUITPY_MSGPACK           (0) // static read/write clash with POSIX
+#define CIRCUITPY_MSGPACK           (1)
 #define CIRCUITPY_AESIO             (1)
 #define CIRCUITPY_LOCALE            (1)
 

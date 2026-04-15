@@ -262,6 +262,25 @@ int vm_yield_step(void) {
 
         case MP_VM_RETURN_EXCEPTION: {
             mp_obj_t exc = MP_OBJ_FROM_PTR(vm->code_state->state[0]);
+
+            /* Check for the yield sentinel FIRST.  When a yield happens
+             * inside a nested function call (e.g. during import), the
+             * NLR unwind propagates mp_vm_yield_exception up through
+             * all C frames.  If the outermost mp_execute_bytecode
+             * catches it as an exception (not a yield), we land here.
+             * The mp_vm_yield_state was already saved by the VM, so
+             * we can just return 1 (yielded) to resume next frame.
+             *
+             * Note: the import machinery's NLR callbacks may have
+             * already fired (unregistering the module from sys.modules).
+             * This is handled by the MICROPY_VM_YIELD_GUARD_IMPORTS
+             * mechanism below — the atomic section prevents the yield
+             * from firing during import in the first place. */
+            if (MP_OBJ_TO_PTR(exc) == &mp_vm_yield_exception) {
+                /* This is our yield sentinel, not a real SystemExit. */
+                return 1;
+            }
+
             if (mp_obj_is_subclass_fast(
                     MP_OBJ_FROM_PTR(((mp_obj_base_t *)MP_OBJ_TO_PTR(exc))->type),
                     MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {

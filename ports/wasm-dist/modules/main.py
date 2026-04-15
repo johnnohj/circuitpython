@@ -1,16 +1,12 @@
-# main.py — CircuitPython WASM browser supervisor
+# main.py — CircuitPython WASM browser supervisor (frozen module)
 #
 # Owns the full board lifecycle: boot.py → code.py → REPL → soft reboot.
-# Runs as a long-lived program pumped by cp_step() each frame.
-# The VM hook loop yields at backwards branches, keeping the frame loop
-# responsive without needing asyncio (Phase 1).
-#
-# Later phases add asyncio for scheduling and jsffi hardware modules.
+# Runs as a long-lived asyncio program pumped by cp_step() each frame.
 
 import sys
+import asyncio
 import time
 
-# jsffi for JS communication (browser variant only)
 try:
     import jsffi
     _hal = jsffi.globalThis.hal if hasattr(jsffi.globalThis, 'hal') else None
@@ -42,7 +38,6 @@ def _read_file(path):
         return None
 
 def _run_file(path):
-    """Execute a .py file. Returns True if ran, False if not found."""
     source = _read_file(path)
     if source is None:
         return False
@@ -60,29 +55,24 @@ def _run_file(path):
 
 # ── Lifecycle ──
 
-def _wait_for_key():
-    """Spin until a key is available. The VM hook yields each iteration."""
+async def _wait_for_key():
     while True:
         if _has_key():
-            _get_key()  # consume
+            _get_key()
             return
-        time.sleep(0)  # yield one frame
+        await asyncio.sleep(0)
 
-
-def _repl_loop():
-    """Minimal REPL (Phase 1 placeholder)."""
+async def _repl_loop():
     buf = ''
     print('>>> ', end='')
     while True:
         if not _has_key():
-            time.sleep(0)
+            await asyncio.sleep(0)
             continue
-
         key = _get_key()
-
         if key == 'ctrl-d':
             if not buf:
-                return  # soft reboot
+                return
             continue
         elif key == 'ctrl-c':
             print()
@@ -102,7 +92,7 @@ def _repl_loop():
                         code = compile(buf, '<stdin>', 'exec')
                         exec(code)
                 except Exception as e:
-                    sys.print_exception(e)
+                    print(type(e).__name__ + ':', e)
             buf = ''
             print('>>> ', end='')
         elif key == 'Backspace':
@@ -113,22 +103,13 @@ def _repl_loop():
             buf += key
             print(key, end='')
 
-
-def _lifecycle():
-    """Main lifecycle: boot → code.py → wait → REPL → soft reboot."""
+async def _lifecycle():
     while True:
-        # Banner
         ver = getattr(sys, 'version', 'CircuitPython')
         print(ver, 'running on wasm-browser')
-
-        # boot.py
         _set_state('booting')
         _run_file('/boot.py')
-
-        # Auto-reload message
         print('Auto-reload is on. Simply save files over USB to run them or enter REPL to disable.')
-
-        # code.py
         _set_state('running')
         if _read_file('/code.py') is not None:
             print('code.py output:')
@@ -136,18 +117,12 @@ def _lifecycle():
             print('\r\nCode done running.')
             print('\r\nPress any key to enter the REPL. Use CTRL-D to reload.')
             _set_state('waiting')
-            _wait_for_key()
-
-        # REPL
+            await _wait_for_key()
         _set_state('repl')
-        _repl_loop()
-
-        # Ctrl-D → soft reboot
+        await _repl_loop()
         print('\r\nsoft reboot')
 
-
-# ── Entry ──
 try:
-    _lifecycle()
+    asyncio.run(_lifecycle())
 except Exception as e:
     print('main.py crash:', type(e).__name__ + ':', e)

@@ -431,9 +431,10 @@ int cp_init(void) {
      *
      * Two paths:
      *   A. Python supervisor (_python_supervisor=true):
-     *      main.py owns the lifecycle.  C just compiles "import main"
-     *      and steps it each frame.  main.py handles boot.py, code.py,
-     *      REPL, soft reboot — all in Python via asyncio + jsffi.
+     *      main.py owns the lifecycle.  C compiles "import main" (frozen)
+     *      and steps it each frame.  Yields during import are handled by
+     *      the sentinel check in vm_yield_step (returns 1 instead of
+     *      misinterpreting the yield as SystemExit).
      *
      *   B. C supervisor (default):
      *      The existing C lifecycle: banner → boot.py → code.py → REPL.
@@ -443,7 +444,8 @@ int cp_init(void) {
     #if MICROPY_VM_YIELD_ENABLED
     if (_python_supervisor) {
         /* ── Path A: Python supervisor ── */
-        mp_code_state_t *cs = cp_compile_file("/main.py");
+        mp_code_state_t *cs = cp_compile_str("import main", 11,
+            MP_PARSE_FILE_INPUT);
         if (cs != NULL) {
             vm_yield_start(cs);
             cp_context_load(0, cs);

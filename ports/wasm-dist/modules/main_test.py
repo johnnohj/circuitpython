@@ -1,33 +1,14 @@
-print("T1")
+print("T1: before imports")
 import sys
-print("T2")
-try:
-    import asyncio
-    print("T3: asyncio imported")
-except Exception as e:
-    print("T3: asyncio FAILED:", e)
-    sys.print_exception(e)
+import asyncio
+import time
+print("T2: imports done")
 
-print("T4")
+async def _test():
+    print("T3: async coroutine running")
+    await asyncio.sleep(0)
+    print("T4: after await")
 
-def read_file(path):
-    try:
-        f = open(path)
-        data = f.read()
-        f.close()
-        return data
-    except:
-        return None
-
-src = read_file('/code.py')
-if src:
-    print("T5: executing code.py")
-    try:
-        exec(compile(src, 'code.py', 'exec'), {'__name__': '__main__'})
-    except Exception as e:
-        print("T5: error:", e)
-    print("T6: code.py done")
-else:
-    print("T5: no code.py")
-
-print("T7: all done")
+print("T5: calling asyncio.run")
+asyncio.run(_test())
+print("T6: asyncio.run returned")

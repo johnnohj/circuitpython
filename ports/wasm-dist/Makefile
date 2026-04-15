@@ -59,11 +59,14 @@ CFLAGS += -D_WASI_EMULATED_PROCESS_CLOCKS
 # doesn't include that file, so we define them explicitly.
 CFLAGS += -DCIRCUITPY_WARNINGS=1
 CFLAGS += -DCIRCUITPY_GETPASS=1
-# CIRCUITPY_MSGPACK disabled — static read/write clash with POSIX
+CFLAGS += -DCIRCUITPY_MSGPACK=1
 CFLAGS += -DCIRCUITPY_AESIO=1
 CFLAGS += -DCIRCUITPY_LOCALE=1
 CFLAGS += -DCIRCUITPY_PIXELBUF=1
 CFLAGS += -DCIRCUITPY_STORAGE=1
+
+# msgpack: wrap upstream source to rename static read/write (POSIX name clash)
+$(BUILD)/shared-module/msgpack/__init__.o: CFLAGS += -include supervisor/msgpack_fixup.h
 
 # WASM exception handling for NLR (setjmp/longjmp)
 CFLAGS += -mllvm -wasm-enable-sjlj
@@ -153,7 +156,10 @@ SRC_C += \
 	shared-module/adafruit_pixelbuf/__init__.c \
 	shared-module/adafruit_pixelbuf/PixelBuf.c \
 	shared-bindings/storage/__init__.c \
-	common-hal/storage/__init__.c
+	common-hal/storage/__init__.c \
+	shared-bindings/msgpack/__init__.c \
+	shared-bindings/msgpack/ExtType.c \
+	shared-module/msgpack/__init__.c
 
 # Display utility modules — browser variant only (require displayio types).
 ifeq ($(VARIANT),browser)
