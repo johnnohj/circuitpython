@@ -156,6 +156,7 @@ void supervisor_execution_status(void) {
 /* ------------------------------------------------------------------ */
 
 static bool _debug_enabled = true;  /* default on; JS or boot.py can turn off */
+static bool _python_supervisor = false;  /* when true, main.py owns the lifecycle */
 
 #define SUP_DEBUG(fmt, ...) do { \
     if (_debug_enabled) fprintf(stderr, "[sup] " fmt "\n", ##__VA_ARGS__); \
@@ -427,29 +428,51 @@ int cp_init(void) {
     #endif
 
     /* ── Boot sequence ──
-     * Matches real CircuitPython board behavior:
-     *   banner → boot.py → auto-reload msg → code.py header → code.py → REPL
-     * settings.toml is read on demand by os.getenv().
      *
-     * boot.py and code.py both run via yield-stepping so the frame loop
-     * stays responsive.  The supervisor chains: boot.py done → code.py,
-     * code.py done → WAITING_FOR_KEY → REPL.  See cp_step(). */
+     * Two paths:
+     *   A. Python supervisor (_python_supervisor=true):
+     *      main.py owns the lifecycle.  C just compiles "import main"
+     *      and steps it each frame.  main.py handles boot.py, code.py,
+     *      REPL, soft reboot — all in Python via asyncio + jsffi.
+     *
+     *   B. C supervisor (default):
+     *      The existing C lifecycle: banner → boot.py → code.py → REPL.
+     *      boot.py and code.py run via yield-stepping.  See cp_step().
+     */
 
-    /* 1. Print banner (version + board ID) */
-    _print_banner();
-
-    /* 2. Start boot.py via yield-stepping (or skip to code.py) */
     #if MICROPY_VM_YIELD_ENABLED
-    if (_start_boot_py()) {
-        _state = SUP_BOOT_RUNNING;
-        SUP_DEBUG("initialized → boot.py (heap=%dK budget=%dms)",
-                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
-    } else {
-        /* No boot.py → skip to code.py / REPL */
-        _boot_to_code();
-        SUP_DEBUG("initialized → %s (heap=%dK budget=%dms)",
-                  _state == SUP_CODE_RUNNING ? "code.py" : "REPL",
-                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+    if (_python_supervisor) {
+        /* ── Path A: Python supervisor ── */
+        mp_code_state_t *cs = cp_compile_file("/main.py");
+        if (cs != NULL) {
+            vm_yield_start(cs);
+            cp_context_load(0, cs);
+            cp_context_set_status(0, CTX_RUNNABLE);
+            _ctx0_is_code = true;
+            _state = SUP_CODE_RUNNING;
+            SUP_DEBUG("initialized → main.py (heap=%dK budget=%dms)",
+                      WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+        } else {
+            SUP_DEBUG("FATAL: could not start main.py — falling back to C supervisor");
+            _python_supervisor = false;
+            /* Fall through to C path below */
+        }
+    }
+
+    if (!_python_supervisor) {
+        /* ── Path B: C supervisor ── */
+        _print_banner();
+
+        if (_start_boot_py()) {
+            _state = SUP_BOOT_RUNNING;
+            SUP_DEBUG("initialized → boot.py (heap=%dK budget=%dms)",
+                      WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+        } else {
+            _boot_to_code();
+            SUP_DEBUG("initialized → %s (heap=%dK budget=%dms)",
+                      _state == SUP_CODE_RUNNING ? "code.py" : "REPL",
+                      WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+        }
     }
     #else
     {
@@ -993,6 +1016,11 @@ int cp_get_state(void) {
 __attribute__((export_name("cp_set_debug")))
 void cp_set_debug(int enabled) {
     _debug_enabled = (enabled != 0);
+}
+
+__attribute__((export_name("cp_set_python_supervisor")))
+void cp_set_python_supervisor(int enabled) {
+    _python_supervisor = (enabled != 0);
 }
 
 __attribute__((export_name("cp_get_frame_count")))

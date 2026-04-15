@@ -23,6 +23,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include <time.h>
+
 #include "py/bc.h"
 #include "py/compile.h"
 #include "py/runtime.h"
@@ -77,8 +79,17 @@ static uint32_t _frame_budget_ms = 13;
 /* Yield flag — set by budget check or explicit request. */
 static volatile bool _yield_requested = false;
 
+/* Real wall clock for budget checks — clock_gettime advances during
+ * execution, unlike wasm_js_now_ms which is set once per frame. */
+static uint64_t _wall_clock_ms(void) {
+    struct timespec tv;
+    clock_gettime(CLOCK_MONOTONIC, &tv);
+    return (uint64_t)tv.tv_sec * 1000 + tv.tv_nsec / 1000000;
+}
+
 void vm_yield_set_frame_start(uint64_t ms) {
-    _frame_start_ms = ms;
+    _frame_start_ms = _wall_clock_ms();
+    (void)ms;
     _yield_requested = false;
     mp_vm_yield_reason = YIELD_BUDGET;
 }
@@ -122,7 +133,7 @@ void wasm_vm_hook_loop(void) {
      *    CLI mode uses blocking I/O — no frame budget, no yield.
      *    Browser mode yields when the frame budget is exhausted. */
     if (!wasm_cli_mode && !_yield_requested && !mp_thread_in_atomic_section()) {
-        uint64_t now = wasm_js_now_ms ? wasm_js_now_ms : (uint64_t)mp_hal_ticks_ms();
+        uint64_t now = _wall_clock_ms();
         if (now - _frame_start_ms >= _frame_budget_ms) {
             mp_vm_request_yield(YIELD_BUDGET, 0);
         }

@@ -31,6 +31,127 @@ import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targ
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
+// Python supervisor source — written to /CIRCUITPY/main.py when pythonSupervisor is enabled.
+// Loaded via cp_compile_file (the proven yield-step path) rather than frozen import.
+const MAIN_PY_SOURCE = `\
+import sys
+import time
+try:
+    import jsffi
+    _hal = jsffi.globalThis.hal if hasattr(jsffi.globalThis, 'hal') else None
+except ImportError:
+    _hal = None
+
+def _set_state(s):
+    if _hal and hasattr(_hal, 'set_state'):
+        _hal.set_state(s)
+
+def _has_key():
+    if _hal and hasattr(_hal, 'has_key'):
+        return bool(_hal.has_key())
+    return False
+
+def _get_key():
+    if _hal and hasattr(_hal, 'get_key'):
+        return str(_hal.get_key())
+    return ''
+
+def _read_file(path):
+    try:
+        with open(path, 'r') as f:
+            return f.read()
+    except OSError:
+        return None
+
+def _run_file(path):
+    source = _read_file(path)
+    if source is None:
+        return False
+    try:
+        code = compile(source, path, 'exec')
+        exec(code, {'__name__': '__main__'})
+    except SystemExit:
+        pass
+    except KeyboardInterrupt:
+        print()
+    except Exception as e:
+        print(type(e).__name__ + ':', e)
+    return True
+
+def _wait_for_key():
+    while True:
+        if _has_key():
+            _get_key()
+            return
+        time.sleep(0)
+
+def _repl_loop():
+    buf = ''
+    print('>>> ', end='')
+    while True:
+        if not _has_key():
+            time.sleep(0)
+            continue
+        key = _get_key()
+        if key == 'ctrl-d':
+            if not buf:
+                return
+            continue
+        elif key == 'ctrl-c':
+            print()
+            buf = ''
+            print('>>> ', end='')
+            continue
+        elif key == 'Enter':
+            print()
+            if buf.strip():
+                try:
+                    try:
+                        code = compile(buf, '<stdin>', 'eval')
+                        result = eval(code)
+                        if result is not None:
+                            print(repr(result))
+                    except SyntaxError:
+                        code = compile(buf, '<stdin>', 'exec')
+                        exec(code)
+                except Exception as e:
+                    print(type(e).__name__ + ':', e)
+            buf = ''
+            print('>>> ', end='')
+        elif key == 'Backspace':
+            if buf:
+                buf = buf[:-1]
+                print('\\b \\b', end='')
+        elif len(key) == 1 and ord(key) >= 32:
+            buf += key
+            print(key, end='')
+
+def _lifecycle():
+    while True:
+        ver = getattr(sys, 'version', 'CircuitPython')
+        print(ver, 'running on wasm-browser')
+        _set_state('booting')
+        _run_file('/boot.py')
+        print('Auto-reload is on. Simply save files over USB to run them or enter REPL to disable.')
+        _set_state('running')
+        if _read_file('/code.py') is not None:
+            print('code.py output:')
+            _run_file('/code.py')
+            print('\\r\\nCode done running.')
+            print('\\r\\nPress any key to enter the REPL. Use CTRL-D to reload.')
+            _set_state('waiting')
+            _wait_for_key()
+        _set_state('repl')
+        _repl_loop()
+        print('\\r\\nsoft reboot')
+
+try:
+    _lifecycle()
+except Exception as e:
+    print('main.py crash:', e)
+    sys.print_exception(e)
+`;
+
 const SUP_REPL = 1;
 const SUP_WAITING_FOR_KEY = 5;
 const SUP_BOOT_RUNNING = 6;
@@ -423,6 +544,17 @@ export class CircuitPython {
 
         if (this._statusEl) this._statusEl.textContent = 'Initializing...';
 
+        // Python supervisor mode: main.py owns the lifecycle instead of C.
+        // Write main.py to the filesystem so cp_compile_file("/main.py") finds it.
+        // (Not frozen — the NLR yield mechanism doesn't resume cleanly through
+        //  the import C code, so we use the proven cp_compile_file path instead.)
+        if (options.pythonSupervisor) {
+            this._exports.cp_set_python_supervisor(1);
+            if (!this._wasi.files.has('/CIRCUITPY/main.py')) {
+                this._wasi.writeFile('/CIRCUITPY/main.py', MAIN_PY_SOURCE);
+            }
+        }
+
         // Configure debug output before cp_init so init messages respect it.
         // Explicit option takes priority; otherwise check settings.toml.
         if (options.debug !== undefined) {
@@ -440,6 +572,25 @@ export class CircuitPython {
                 }
             }
         }
+
+        // Set up globalThis.hal for Python supervisor (main.py) access via jsffi.
+        // Phase 1: minimal interface — state notification + key input.
+        // Later phases add gpio_*, neopixel_*, etc.
+        const self = this;
+        globalThis.hal = {
+            set_state(state) {
+                // Python supervisor notifies JS of lifecycle state changes
+                if (self._statusEl) self._statusEl.textContent = state;
+            },
+            has_key() {
+                // Check if a key is available in the input buffer
+                return self._readline ? self._readline.hasKey() : false;
+            },
+            get_key() {
+                // Consume one key from the input buffer
+                return self._readline ? self._readline.getKey() : '';
+            },
+        };
 
         // Initialize the supervisor (prints banner, starts boot.py or code.py)
         this._exports.cp_init();

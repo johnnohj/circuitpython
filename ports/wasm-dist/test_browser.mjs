@@ -795,6 +795,76 @@ test('multicontext: activeContextCount', async () => {
     board.destroy();
 });
 
+// ── Python supervisor (main.py) tests ──
+
+/**
+ * Run a board with the Python supervisor (main.py owns lifecycle).
+ * Waits for a specified string to appear in stdout, or times out.
+ */
+function runPySup(codePy, { waitFor, timeoutMs = 8000, files } = {}) {
+    return new Promise(async (resolve) => {
+        let stdout = '';
+        let stderr = '';
+        let timer;
+
+        const board = await CircuitPython.create({
+            wasmUrl: 'build-browser/circuitpython.wasm',
+            codePy,
+            files,
+            pythonSupervisor: true,
+            debug: false,
+            onStdout: (text) => {
+                stdout += text;
+                if (waitFor && stdout.includes(waitFor)) {
+                    clearTimeout(timer);
+                    setTimeout(() => {
+                        board.destroy();
+                        resolve({ stdout, stderr });
+                    }, 100);
+                }
+            },
+            onStderr: (text) => { stderr += text; },
+        });
+
+        timer = setTimeout(() => {
+            board.destroy();
+            resolve({ stdout, stderr, timeout: true });
+        }, timeoutMs);
+    });
+}
+
+test('pysup: main.py prints banner and runs code.py', async () => {
+    const r = await runPySup('print("from-pysup")', { waitFor: 'from-pysup' });
+    assertContains(r.stdout, 'CircuitPython');
+    assertContains(r.stdout, 'from-pysup');
+});
+
+test('pysup: main.py shows Code done running', async () => {
+    const r = await runPySup('print("done-test")', { waitFor: 'Code done running' });
+    assertContains(r.stdout, 'Code done running');
+});
+
+test('pysup: main.py runs boot.py before code.py', async () => {
+    const r = await runPySup('print("code-out")', {
+        files: { '/CIRCUITPY/boot.py': 'print("boot-out")' },
+        waitFor: 'code-out',
+    });
+    assertContains(r.stdout, 'boot-out');
+    assertContains(r.stdout, 'code-out');
+    assertOrder(r.stdout, 'boot-out', 'code-out');
+});
+
+test('pysup: main.py handles code.py errors gracefully', async () => {
+    const r = await runPySup('raise ValueError("oops")', { waitFor: 'Code done running' });
+    assertContains(r.stdout, 'ValueError');
+    assertContains(r.stdout, 'Code done running');
+});
+
+test('pysup: main.py shows auto-reload message', async () => {
+    const r = await runPySup('print("ok")', { waitFor: 'Auto-reload' });
+    assertContains(r.stdout, 'Auto-reload is on');
+});
+
 // ── hardware target tests ──
 
 import { HardwareTarget, TeeTarget } from './js/targets.mjs';

@@ -3,3 +3,5 @@
 # Runtime library installation is handled by fwip (JS-side).
 require("argparse")
 package("asyncio", base_path="$(PORT_DIR)/modules")
+module("main.py", base_path="$(PORT_DIR)/modules")
+module("main_test.py", base_path="$(PORT_DIR)/modules")
