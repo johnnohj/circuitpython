@@ -6,3 +6,4 @@ CIRCUITPY/
 
 # WASI runtime artifacts
 sys/
+hal/

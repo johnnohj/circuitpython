@@ -92,6 +92,7 @@ extern void *mp_vm_yield_state;
 #define SUP_CODE_RUNNING     3
 #define SUP_CODE_FINISHED    4
 #define SUP_WAITING_FOR_KEY  5
+#define SUP_BOOT_RUNNING     6
 
 static int _state = SUP_UNINITIALIZED;
 static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
@@ -116,6 +117,9 @@ void supervisor_execution_status(void) {
     switch (_state) {
         case SUP_REPL:
             serial_write("REPL");
+            break;
+        case SUP_BOOT_RUNNING:
+            serial_write("boot.py");
             break;
         case SUP_CODE_RUNNING:
             serial_write("code.py");
@@ -189,6 +193,72 @@ static void _print_press_any_key(void) {
 static void _print_soft_reboot(void) {
     mp_hal_stdout_tx_str("\r\nsoft reboot\r\n");
 }
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle helpers — start boot.py / code.py via yield-stepping      */
+/* ------------------------------------------------------------------ */
+
+#if MICROPY_VM_YIELD_ENABLED
+
+/* Try to compile and start boot.py on context 0 via yield-stepping.
+ * Returns true if boot.py exists and compiled successfully. */
+static bool _start_boot_py(void) {
+    mp_code_state_t *cs = cp_compile_file("/boot.py");
+    if (cs == NULL) return false;
+    vm_yield_start(cs);
+    cp_context_load(0, cs);
+    cp_context_set_status(0, CTX_RUNNABLE);
+    return true;
+}
+
+/* Try to compile and start code.py on context 0 via yield-stepping.
+ * Returns true if code.py exists and compiled successfully. */
+static bool _start_code_py(void) {
+    mp_code_state_t *cs = cp_compile_file("/code.py");
+    if (cs == NULL) return false;
+    vm_yield_start(cs);
+    cp_context_load(0, cs);
+    cp_context_set_status(0, CTX_RUNNABLE);
+    return true;
+}
+
+/* Transition from boot.py done → code.py (or REPL if no code.py).
+ * Called when boot.py finishes in cp_step, or when boot.py doesn't exist. */
+static void _boot_to_code(void) {
+    _print_auto_reload_status();
+    if (_start_code_py()) {
+        _ctx0_is_code = true;
+        _code_header_printed = false;  /* JS injects "last edited" first */
+        _state = SUP_CODE_RUNNING;
+        SUP_DEBUG("→ code.py");
+    } else {
+        _ctx0_is_code = false;
+        _state = SUP_REPL;
+        cp_context_set_status(0, CTX_IDLE);
+        SUP_DEBUG("→ REPL (no code.py)");
+    }
+}
+
+/* Full lifecycle restart: banner → boot.py → code.py → REPL.
+ * Used by cp_ctrl_d and cp_auto_reload. */
+static void _restart_lifecycle(void) {
+    /* Stop any running code on ctx0 */
+    vm_yield_stop();
+    cp_context_set_status(0, CTX_IDLE);
+    _ctx0_is_code = false;
+    _code_header_printed = false;
+
+    _print_banner();
+
+    if (_start_boot_py()) {
+        _state = SUP_BOOT_RUNNING;
+        SUP_DEBUG("restart → boot.py");
+    } else {
+        _boot_to_code();
+    }
+}
+
+#endif /* MICROPY_VM_YIELD_ENABLED */
 
 /* ------------------------------------------------------------------ */
 /* Static buffers                                                      */
@@ -359,49 +429,36 @@ int cp_init(void) {
     /* ── Boot sequence ──
      * Matches real CircuitPython board behavior:
      *   banner → boot.py → auto-reload msg → code.py header → code.py → REPL
-     * settings.toml is read on demand by os.getenv(). */
+     * settings.toml is read on demand by os.getenv().
+     *
+     * boot.py and code.py both run via yield-stepping so the frame loop
+     * stays responsive.  The supervisor chains: boot.py done → code.py,
+     * code.py done → WAITING_FOR_KEY → REPL.  See cp_step(). */
 
     /* 1. Print banner (version + board ID) */
     _print_banner();
 
-    /* 2. Run boot.py if present (board setup, pin aliases, etc.) */
-    {
-        pyexec_result_t result;
-        pyexec_file_if_exists("/boot.py", &result);
-    }
-
-    /* 3. Print auto-reload status */
-    _print_auto_reload_status();
-
-    /* 4. Try to start code.py via the yield-stepping machinery.
-     *    If it exists and compiles, we enter SUP_CODE_RUNNING.
-     *    If not, we fall through to REPL. */
+    /* 2. Start boot.py via yield-stepping (or skip to code.py) */
     #if MICROPY_VM_YIELD_ENABLED
-    {
-        mp_code_state_t *cs = cp_compile_file("/code.py");
-        if (cs != NULL) {
-            vm_yield_start(cs);
-            cp_context_load(0, cs);
-            cp_context_set_status(0, CTX_RUNNABLE);
-        }
-    }
-    if (vm_yield_code_running()) {
-        _ctx0_is_code = true;
-        _code_header_printed = false;  /* JS injects "last edited" first */
-        _state = SUP_CODE_RUNNING;
-        SUP_DEBUG("initialized → code.py (heap=%dK budget=%dms)",
+    if (_start_boot_py()) {
+        _state = SUP_BOOT_RUNNING;
+        SUP_DEBUG("initialized → boot.py (heap=%dK budget=%dms)",
                   WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
-    } else
-    #endif
+    } else {
+        /* No boot.py → skip to code.py / REPL */
+        _boot_to_code();
+        SUP_DEBUG("initialized → %s (heap=%dK budget=%dms)",
+                  _state == SUP_CODE_RUNNING ? "code.py" : "REPL",
+                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
+    }
+    #else
     {
         _state = SUP_REPL;
         cp_context_set_status(0, CTX_IDLE);
-        #if MICROPY_REPL_EVENT_DRIVEN
-        pyexec_event_repl_init();
-        #endif
         SUP_DEBUG("initialized → REPL (heap=%dK budget=%dms)",
                   WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     }
+    #endif
 
     return 0;
 }
@@ -486,13 +543,22 @@ int cp_step(uint32_t now_ms) {
 
             if (ret == 0 || ret == 2) {
                 /* Normal completion or exception — context is done */
-                cp_context_set_status(ctx_id, CTX_DONE);
-                SUP_DEBUG("ctx%d done", ctx_id);
 
-                /* If context 0 was running code.py, print lifecycle msgs */
-                if (ctx_id == 0 && _ctx0_is_code) {
-                    _print_code_done();
-                    _print_press_any_key();
+                if (ctx_id == 0 && _state == SUP_BOOT_RUNNING) {
+                    /* boot.py finished → chain to code.py.
+                     * pystack was freed by vm_yield_step, so we can
+                     * compile code.py directly on the same pystack. */
+                    SUP_DEBUG("boot.py done (ret=%d)", ret);
+                    _boot_to_code();
+                } else {
+                    cp_context_set_status(ctx_id, CTX_DONE);
+                    SUP_DEBUG("ctx%d done", ctx_id);
+
+                    /* If context 0 was running code.py, print lifecycle msgs */
+                    if (ctx_id == 0 && _ctx0_is_code) {
+                        _print_code_done();
+                        _print_press_any_key();
+                    }
                 }
             } else {
                 /* Yielded — sleeping or budget exhausted.
@@ -518,7 +584,10 @@ int cp_step(uint32_t now_ms) {
                 _state = SUP_REPL;
             }
         } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
-            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+            /* Don't override SUP_BOOT_RUNNING — boot.py is still stepping */
+            if (_state != SUP_BOOT_RUNNING) {
+                _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+            }
         }
     }
     #endif
@@ -787,7 +856,8 @@ int cp_complete(int len) {
 
 __attribute__((export_name("cp_ctrl_c")))
 void cp_ctrl_c(void) {
-    if (_state == SUP_EXPR_RUNNING || _state == SUP_CODE_RUNNING) {
+    if (_state == SUP_EXPR_RUNNING || _state == SUP_CODE_RUNNING
+        || _state == SUP_BOOT_RUNNING) {
         mp_sched_keyboard_interrupt();
     }
 }
@@ -799,38 +869,24 @@ void cp_ctrl_c(void) {
 __attribute__((export_name("cp_ctrl_d")))
 void cp_ctrl_d(void) {
     #if MICROPY_VM_YIELD_ENABLED
-    if (_state == SUP_EXPR_RUNNING) {
-        vm_yield_stop();
-    }
-
-    /* Print soft reboot message (matches real board) */
     _print_soft_reboot();
+    _restart_lifecycle();
+    #endif
+}
 
-    /* Re-run boot sequence: banner → boot.py → auto-reload → code.py */
-    _print_banner();
-    {
-        pyexec_result_t result;
-        pyexec_file_if_exists("/boot.py", &result);
-    }
-    _print_auto_reload_status();
+/* ------------------------------------------------------------------ */
+/* cp_auto_reload — restart lifecycle after file change                 */
+/*                                                                     */
+/* Called by JS when code.py (or another .py file) is written.         */
+/* Same as Ctrl-D but triggered by filesystem change.                  */
+/* ------------------------------------------------------------------ */
 
-    /* Try code.py, then fall back to REPL */
-    {
-        mp_code_state_t *cs = cp_compile_file("/code.py");
-        if (cs != NULL) {
-            vm_yield_start(cs);
-            cp_context_load(0, cs);
-            cp_context_set_status(0, CTX_RUNNABLE);
-            _ctx0_is_code = true;
-            _code_header_printed = false;  /* JS injects "last edited" first */
-            _state = SUP_CODE_RUNNING;
-            SUP_DEBUG("Ctrl-D → code.py");
-        } else {
-            _state = SUP_REPL;
-            cp_context_set_status(0, CTX_IDLE);
-            SUP_DEBUG("Ctrl-D → REPL");
-        }
-    }
+__attribute__((export_name("cp_auto_reload")))
+void cp_auto_reload(void) {
+    #if MICROPY_VM_YIELD_ENABLED
+    _print_soft_reboot();
+    _restart_lifecycle();
+    SUP_DEBUG("auto-reload triggered");
     #endif
 }
 

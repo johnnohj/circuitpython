@@ -1,13 +1,25 @@
 CircuitPython WASM port
 =====================
 
+### LLM Disclosure
+
+This port has been created over several iterations through the use of an agentic LLM - Claude Code. The overall designs and larger architectural choices are mine, informed by an amateur's understanding of the designs and choices made by existing ports, in particular the `unix` and MicroPython's `webassembly` ports. While development has been a sustained effort, rather than a one-and-done prompt session, the hazards and pitfalls inherent to the use of LLM programs nevertheless persist. This work is offered to the community 'warts and all.'
+
 ### Project Goals
+
+If you'll permit a short indulgence, this project was undertaken as a personal hobby project; it's been as much about seeing CircuitPython/MicroPython from 'inside' as about trying to build something useful or, at least, interesting. Based on those criteria, it's already been a success.
+
+But, it's not done.
 
 As the `README.md` file notes:
     This port is offered for rapid prototyping, general testing, and experimentation with the primary intention to allow users to see whether some code 'works' even when they happen not to have the hardware at hand.
-Indeed, the guiding mantra has been `If it works on real hardware, it should work here`.
+Indeed, the guiding mantra has been `If it works on real hardware, it should work here.`
 
-### Features, Current and Planned
+Most ports, however, don't need to provide their own hardware or, more specifically, hardware representations. While that hardware may be simple JavaScript objects, the departure from established scope for this port is already enough to give me pause. I would be honored to have this port, or something this work inspired, be adopted officially, potentially as a part of the `circuitpython.org` online editor, as previous iterations have experimented with, but whether and how are not for me to say.
+
+It remains to be said that web assembly is very much an emerging technology, with standards under active development and review. This port can and should only be considered experimental for that reason. If, however, it illuminates the possibilities for running CircuitPython in a web browser and inspires sustained interest, that is enough.
+
+### Features, Current and Envisioned
 
 - Simulated board behavior with familiar boot, execution cycle
 - Genuine CircuitPython REPL experience
@@ -17,43 +29,11 @@ Indeed, the guiding mantra has been `If it works on real hardware, it should wor
 
 ## Outstanding Work
 
-# Lifecycle Scaffolding (small, deferred)
-
-3. Auto-reload via VFS write hook — MEMFS write interception → supervisor notification → re-run code.py. The largest of the three.
-
-# Runtime Behavior
-
-6. boot.py yield-stepping — currently runs blocking via pyexec_file_if_exists, can't yield. Low priority unless boot.py gets heavy.
-
-# Hardware Module Enrichment (builds on today's work)
-
-8. Interactive board SVGs — swappable *.svg board artwork with clickable LEDs, toggleable pins, pressable buttons. Hardware modules drive the SVG state.
-
-# Multi-Context / Scheduling
-
-13. Tab backgrounding — switch to idle context on visibilitychange, resume when visible. Pause/resume exists but no idle-context swap.
-14. Sequential file execution — boot.py → code.py → REPL chain through yield-stepping (partially done, boot.py is blocking).
-
-# External Hardware Targets (future)
-
-15. WebUSBTarget — route U2IF commands to real U2IF firmware boards via WebUSB.
-16. WebSerialTarget — route commands to real CircuitPython boards via WebSerial raw REPL.
-17. Tee mode — simultaneous simulated + real hardware.
-
-# Documentation
-
-18. ARCHITECTURE.md update — needs update for single-worker model, hardware module system, asyncio yield path.
-
-## Rough priority tiers:
-
-- Now ready: 8 (hardware module enrichment — the new system is in place, these build directly on it)
-- Next: 6 (runtime edge cases), 3 (lifecycle polish)
-- Later: 13-14 (multi-context), 15-17 (external hardware)
-- Ongoing: 18 (docs)
+See `MIGRATION_PLAN.md`
 
 ### Design Commentary
 
 Principal challenges:
 - Fidelity to real hardware/expected behavior
 - Constraints of the JavaScript + WebAssembly runtime environment
-- Inventing what a wasm port of CircuitPython would look like
+- Inventing what a wasm port of CircuitPython might look like

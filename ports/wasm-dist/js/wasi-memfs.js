@@ -61,6 +61,7 @@ export class WasiMemfs {
         this.onHardwareWrite = options.onHardwareWrite || null;
         this.onHardwareRead = options.onHardwareRead || null;
         this.onHardwareCommand = options.onHardwareCommand || null;
+        this.onFileChanged = options.onFileChanged || null;
 
         // IndexedDB persistence backend (optional)
         this.idb = options.idb || null;
@@ -73,7 +74,8 @@ export class WasiMemfs {
         this.memory = instance.exports.memory;
     }
 
-    // Seed a file with initial content (e.g., code.py)
+    // Write a file to the in-memory filesystem.
+    // Fires onFileChanged callback for files under /CIRCUITPY/.
     writeFile(path, data) {
         if (typeof data === 'string') {
             data = new TextEncoder().encode(data);
@@ -83,6 +85,10 @@ export class WasiMemfs {
         const parts = path.split('/');
         for (let i = 1; i < parts.length; i++) {
             this.dirs.add(parts.slice(0, i).join('/') || '/');
+        }
+        // Notify listeners (auto-reload, etc.)
+        if (this.onFileChanged) {
+            this.onFileChanged(path);
         }
     }
 
@@ -163,6 +169,7 @@ export class WasiMemfs {
                     buf.set(data, offset);
                     self.files.set(entry.path, buf);
                     entry.offset = needed;
+                    entry.dirty = true;
 
                     // Intercept /hal/ writes → notify hardware listeners
                     if (entry.path.startsWith('/hal/') && self.onHardwareWrite) {
@@ -218,10 +225,16 @@ export class WasiMemfs {
                 fd_close(fd) {
                     if (fd <= 3) return ERRNO.SUCCESS;
                     const entry = self.fds.get(fd);
-                    // Persist to IndexedDB if applicable
-                    if (entry && entry.type === 'file' && self.idb && self.idb.shouldPersist(entry.path)) {
-                        const data = self.files.get(entry.path);
-                        if (data) self.idb.save(entry.path, data);
+                    if (entry && entry.type === 'file') {
+                        // Persist to IndexedDB if applicable
+                        if (self.idb && self.idb.shouldPersist(entry.path)) {
+                            const data = self.files.get(entry.path);
+                            if (data) self.idb.save(entry.path, data);
+                        }
+                        // Notify file-changed listeners (auto-reload)
+                        if (entry.dirty && self.onFileChanged) {
+                            self.onFileChanged(entry.path);
+                        }
                     }
                     self.fds.delete(fd);
                     return ERRNO.SUCCESS;

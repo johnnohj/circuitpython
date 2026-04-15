@@ -27,12 +27,14 @@ import { Fwip } from './fwip.js';
 import { Display } from './display.mjs';
 import { Readline } from './readline.mjs';
 import { HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
+import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
 const SUP_REPL = 1;
 const SUP_WAITING_FOR_KEY = 5;
-const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'WAIT_KEY'];
+const SUP_BOOT_RUNNING = 6;
+const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'WAIT_KEY', 'BOOT'];
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
@@ -83,6 +85,12 @@ export class CircuitPython {
         this._waitingForKey = false;
         this._hw = new HardwareRouter();
         this._ctxCallbacks = new Map();  // context id → onDone callback
+        this._autoReloadTimer = null;
+        this._autoReloadEnabled = false;
+        this._prevSupState = 0;  // track transitions for "last edited" injection
+        this._idb = null;        // saved for _printCodePyLastEdited
+        this._target = null;     // external hardware target
+        this._pollCounter = 0;   // input polling throttle
     }
 
     // ── Public API ──
@@ -141,6 +149,14 @@ export class CircuitPython {
     /** Clean up all resources. */
     destroy() {
         this.pause();
+        if (this._autoReloadTimer) {
+            clearTimeout(this._autoReloadTimer);
+            this._autoReloadTimer = null;
+        }
+        if (this._target) {
+            this._target.disconnect().catch(() => {});
+            this._target = null;
+        }
         if (env.hasDOM) {
             if (this._visibilityHandler) {
                 document.removeEventListener('visibilitychange', this._visibilityHandler);
@@ -159,6 +175,8 @@ export class CircuitPython {
     get state() {
         if (!this._exports) return 'loading';
         if (this._waitingForKey) return 'waiting';
+        const supState = this._exports.cp_get_state();
+        if (supState === SUP_BOOT_RUNNING) return 'booting';
         // Read context 0 status
         const m = this._readContextMeta(0);
         if (!m || m.status <= 1 || m.status === 6) return 'repl';
@@ -277,6 +295,37 @@ export class CircuitPython {
         return count;
     }
 
+    // ── External hardware targets ──
+
+    /**
+     * Connect an external hardware target.
+     * Target receives /hal/ state diffs each frame and forwards to
+     * real hardware via WebUSB, WebSerial, or both (Tee).
+     *
+     * @param {HardwareTarget} target — connected target
+     */
+    connectTarget(target) {
+        this._target = target;
+        // Wire input data back to MEMFS
+        target.onInput((type, pin, value) => {
+            if (type === 'gpio') {
+                const gpio = this.hardware('gpio');
+                if (gpio) gpio.setInputValue(this._wasi, pin, value);
+            }
+        });
+    }
+
+    /** Disconnect the current hardware target. */
+    async disconnectTarget() {
+        if (this._target) {
+            await this._target.disconnect();
+            this._target = null;
+        }
+    }
+
+    /** @returns {HardwareTarget|null} The currently connected target. */
+    get target() { return this._target; }
+
     // ── Internal ──
 
     async _init(options) {
@@ -299,6 +348,7 @@ export class CircuitPython {
 
         // IndexedDB persistence
         const idb = options.persist ? new IdbBackend() : null;
+        this._idb = idb;
 
         // Register default hardware modules
         this._hw.register(new GpioModule());
@@ -321,6 +371,13 @@ export class CircuitPython {
             },
             onHardwareRead: (path, offset) => {
                 return this._hw.onRead(path, offset);
+            },
+            onFileChanged: (path) => {
+                // Auto-reload when .py files under /CIRCUITPY/ change
+                if (this._autoReloadEnabled &&
+                    path.startsWith('/CIRCUITPY/') && path.endsWith('.py')) {
+                    this._scheduleAutoReload();
+                }
             },
         });
 
@@ -384,12 +441,16 @@ export class CircuitPython {
             }
         }
 
-        // Initialize the supervisor (prints banner + auto-reload message)
+        // Initialize the supervisor (prints banner, starts boot.py or code.py)
         this._exports.cp_init();
+        this._prevSupState = this._exports.cp_get_state();
 
-        // Inject "code.py last edited" line before the deferred "code.py output:" header.
-        // cp_init defers the header to the first cp_step so we can inject here.
-        this._printCodePyLastEdited(idb);
+        // Inject "code.py last edited" if cp_init went directly to code.py
+        // (no boot.py).  When boot.py exists, injection happens in _loop
+        // after boot.py finishes and code.py starts.
+        if (this._prevSupState === 3 /* SUP_CODE_RUNNING */) {
+            this._printCodePyLastEdited(idb);
+        }
 
         // Display (browser only)
         this._display = options.canvas
@@ -482,6 +543,9 @@ export class CircuitPython {
             process.stdin.on('data', this._stdinHandler);
         }
 
+        // Enable auto-reload now that init is complete
+        this._autoReloadEnabled = true;
+
         // Start frame loop
         this._raf = env.requestFrame(() => this._loop());
     }
@@ -509,6 +573,21 @@ export class CircuitPython {
         const addr = this._exports.cp_input_buf_addr();
         new Uint8Array(this._exports.memory.buffer, addr, bytes.length).set(bytes);
         this._exports.cp_print(bytes.length);
+    }
+
+    /** Schedule an auto-reload after a debounce period (500ms). */
+    _scheduleAutoReload() {
+        if (this._autoReloadTimer) clearTimeout(this._autoReloadTimer);
+        this._autoReloadTimer = setTimeout(() => {
+            this._autoReloadTimer = null;
+            if (!this._exports) return;
+            this._waitingForKey = false;
+            this._codeDoneFired = false;
+            this._exports.cp_auto_reload();
+            if (this._readline) {
+                this._readline._waitingForResult = true;
+            }
+        }, 500);
     }
 
     /** Transition from WAITING_FOR_KEY to REPL. */
@@ -557,12 +636,30 @@ export class CircuitPython {
         // Post-step: let hardware modules read output state
         this._hw.postStep(this._wasi, nowMs);
 
+        // Forward state to external hardware target (if connected)
+        if (this._target && this._target.connected) {
+            this._target.applyState(this._wasi, nowMs);
+            // Poll inputs at reduced rate (~3 times/second)
+            if (++this._pollCounter >= 20) {
+                this._pollCounter = 0;
+                this._target.pollInputs();
+            }
+        }
+
         if (this._display) {
             this._display.paint();
             this._display.drawCursor();
         }
 
         this._frameCount++;
+
+        // Detect boot.py → code.py transition: inject "last edited" timestamp
+        if (this._prevSupState === SUP_BOOT_RUNNING && supState !== SUP_BOOT_RUNNING) {
+            if (supState === 3 /* SUP_CODE_RUNNING */) {
+                this._printCodePyLastEdited(this._idb);
+            }
+        }
+        this._prevSupState = supState;
 
         // When code.py finishes → enter WAITING_FOR_KEY state
         if (supState === SUP_WAITING_FOR_KEY && !this._waitingForKey) {
@@ -628,3 +725,4 @@ export class CircuitPython {
 
 // Re-export hardware module classes for external use
 export { HardwareModule, HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
+export { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';

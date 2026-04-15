@@ -150,6 +150,129 @@ test('lifecycle: [sup] debug goes to stderr not stdout', async () => {
     assertContains(r.stderr, '[sup]');
 });
 
+// ── boot.py lifecycle tests ──
+
+test('lifecycle: boot.py runs before code.py', async () => {
+    const r = await runBoard('print("from-code")', {
+        files: { '/CIRCUITPY/boot.py': 'print("from-boot")' },
+    });
+    assertContains(r.stdout, 'from-boot');
+    assertContains(r.stdout, 'from-code');
+    assertOrder(r.stdout, 'from-boot', 'code.py output:');
+    assertOrder(r.stdout, 'code.py output:', 'from-code');
+});
+
+test('lifecycle: boot.py error does not prevent code.py', async () => {
+    const r = await runBoard('print("survived")', {
+        files: { '/CIRCUITPY/boot.py': 'raise ValueError("oops")' },
+    });
+    assertContains(r.stdout, 'survived');
+    assertContains(r.stderr, 'ValueError');
+});
+
+test('lifecycle: no boot.py skips to code.py', async () => {
+    // Default: no boot.py file seeded
+    const r = await runBoard('print("direct")');
+    assertContains(r.stdout, 'direct');
+    assertContains(r.stdout, 'code.py output:');
+});
+
+test('lifecycle: boot.py sets global visible to code.py', async () => {
+    // boot.py defines a variable; code.py should be able to import it
+    // (they share the same VM/globals via __main__)
+    const r = await runBoard('print("done")', {
+        files: { '/CIRCUITPY/boot.py': 'BOOT_FLAG = 42' },
+    });
+    // boot.py ran without error
+    assertContains(r.stdout, 'done');
+});
+
+test('lifecycle: message ordering with boot.py', async () => {
+    const r = await runBoard('print("output")', {
+        files: { '/CIRCUITPY/boot.py': 'pass' },
+    });
+    assertOrder(r.stdout, 'CircuitPython', 'Auto-reload');
+    assertOrder(r.stdout, 'Auto-reload', 'code.py output:');
+    assertOrder(r.stdout, 'code.py output:', 'output');
+    assertOrder(r.stdout, 'output', 'Code done running');
+});
+
+test('lifecycle: Ctrl-D with boot.py re-runs both', async () => {
+    const { board, stdout } = await createLiveBoard('print("code-run")', {
+        files: { '/CIRCUITPY/boot.py': 'print("boot-run")' },
+    });
+    let output = stdout;
+    board._onStdout = (text) => { output += text; };
+
+    board.ctrlD();
+    await waitFrames(board, 60);
+
+    const bootCount = (output.match(/boot-run/g) || []).length;
+    if (bootCount < 2) throw new Error(`Expected "boot-run" at least twice, got ${bootCount}`);
+    board.destroy();
+});
+
+// ── auto-reload tests ──
+
+test('auto-reload: writing code.py triggers reload', async () => {
+    const { board, stdout } = await createLiveBoard('print("v1")');
+    let output = stdout;
+    board._onStdout = (text) => { output += text; };
+
+    // Write new code.py → triggers auto-reload after 500ms debounce
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode('print("v2")'));
+
+    // Wait for debounce (500ms) + several frames for execution
+    await new Promise(r => setTimeout(r, 700));
+    await waitFrames(board, 60);
+
+    assertContains(output, 'soft reboot');
+    assertContains(output, 'v2');
+    board.destroy();
+});
+
+test('auto-reload: debounce coalesces rapid writes', async () => {
+    const { board, stdout } = await createLiveBoard('print("v1")');
+    let output = stdout;
+    let rebootCount = 0;
+    board._onStdout = (text) => {
+        output += text;
+        rebootCount += (text.match(/soft reboot/g) || []).length;
+    };
+
+    // Rapid-fire writes — should coalesce into one reload
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode('print("a")'));
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode('print("b")'));
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode('print("c")'));
+
+    await new Promise(r => setTimeout(r, 700));
+    await waitFrames(board, 60);
+
+    // Should only have one soft reboot from the coalesced writes
+    if (rebootCount !== 1) throw new Error(`Expected 1 soft reboot, got ${rebootCount}`);
+    // Should see the last version
+    assertContains(output, 'c');
+    board.destroy();
+});
+
+test('auto-reload: non-.py files do not trigger reload', async () => {
+    const { board, stdout } = await createLiveBoard('print("stable")');
+    let output = stdout;
+    board._onStdout = (text) => { output += text; };
+
+    // Write a .txt file — should NOT trigger auto-reload
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/data.txt', enc.encode('hello'));
+
+    await new Promise(r => setTimeout(r, 700));
+    await waitFrames(board, 10);
+
+    assertNotContains(output, 'soft reboot');
+    board.destroy();
+});
+
 // ── asyncio tests ──
 
 test('asyncio: sleep yields to supervisor (no busy-wait)', async () => {
@@ -535,7 +658,7 @@ test('runtime: Ctrl-D during WAITING_FOR_KEY reboots', async () => {
  * Helper: create a board, wait for code.py to finish, return the live board.
  * Caller must destroy the board when done.
  */
-function createLiveBoard(codePy = 'pass', { timeoutMs = 3000 } = {}) {
+function createLiveBoard(codePy = 'pass', { timeoutMs = 3000, files } = {}) {
     return new Promise(async (resolve, reject) => {
         let stdout = '';
         let timer;
@@ -543,6 +666,7 @@ function createLiveBoard(codePy = 'pass', { timeoutMs = 3000 } = {}) {
         const board = await CircuitPython.create({
             wasmUrl: 'build-browser/circuitpython.wasm',
             codePy,
+            files,
             onStdout: (text) => { stdout += text; },
             onStderr: () => {},
             onCodeDone: () => {
@@ -669,6 +793,176 @@ test('multicontext: activeContextCount', async () => {
     }
     board.killContext(id);
     board.destroy();
+});
+
+// ── hardware target tests ──
+
+import { HardwareTarget, TeeTarget } from './js/targets.mjs';
+
+test('target: HardwareTarget base class connects/disconnects', async () => {
+    const t = new HardwareTarget();
+    if (t.connected) throw new Error('Should start disconnected');
+    if (t.type !== 'base') throw new Error(`Expected type "base", got "${t.type}"`);
+    await t.connect();
+    if (!t.connected) throw new Error('Should be connected after connect()');
+    await t.disconnect();
+    if (t.connected) throw new Error('Should be disconnected after disconnect()');
+});
+
+test('target: applyState diffs GPIO and calls onGpioChange', async () => {
+    const changes = [];
+    class TestTarget extends HardwareTarget {
+        get type() { return 'test'; }
+        onGpioChange(pin, state) { changes.push({ pin, ...state }); }
+    }
+
+    const target = new TestTarget();
+    await target.connect();
+
+    // Create a fake memfs with GPIO data
+    const fakeMemfs = {
+        readFile(path) {
+            if (path === '/hal/gpio') {
+                // Pin 0: enabled=1, direction=1(out), value=1, pull=0, openDrain=0
+                const data = new Uint8Array(32 * 8);  // 32 pins × 8 bytes
+                data[0] = 1;  // enabled
+                data[1] = 1;  // direction = output
+                data[2] = 1;  // value = high
+                return data;
+            }
+            return null;
+        },
+    };
+
+    // First call: everything is "new"
+    target.applyState(fakeMemfs, 0);
+    if (changes.length !== 1) throw new Error(`Expected 1 change, got ${changes.length}`);
+    if (changes[0].pin !== 0) throw new Error(`Expected pin 0, got ${changes[0].pin}`);
+    if (changes[0].value !== 1) throw new Error(`Expected value 1, got ${changes[0].value}`);
+    if (changes[0].direction !== 1) throw new Error(`Expected direction 1, got ${changes[0].direction}`);
+
+    // Second call: same data, no changes
+    changes.length = 0;
+    target.applyState(fakeMemfs, 16);
+    if (changes.length !== 0) throw new Error(`Expected 0 changes on same data, got ${changes.length}`);
+
+    await target.disconnect();
+});
+
+const GPIO_MAX_PINS_TEST = 32;
+
+test('target: TeeTarget forwards to multiple targets', async () => {
+    const log1 = [], log2 = [];
+    class LogTarget extends HardwareTarget {
+        constructor(log) { super(); this._log = log; }
+        get type() { return 'log'; }
+        onGpioChange(pin, state) { this._log.push({ pin, value: state.value }); }
+    }
+
+    const t1 = new LogTarget(log1);
+    const t2 = new LogTarget(log2);
+    const tee = new TeeTarget([t1, t2]);
+
+    await tee.connect();
+    if (!t1.connected || !t2.connected) throw new Error('Subtargets should be connected');
+
+    const fakeMemfs = {
+        readFile(path) {
+            if (path === '/hal/gpio') {
+                const data = new Uint8Array(GPIO_MAX_PINS_TEST * 8);
+                data[0 * 8 + 0] = 1;  // pin 0 enabled
+                data[0 * 8 + 1] = 1;  // output
+                data[0 * 8 + 2] = 1;  // value high
+                return data;
+            }
+            return null;
+        },
+    };
+
+    tee.applyState(fakeMemfs, 0);
+    if (log1.length !== 1) throw new Error(`Target 1: expected 1 change, got ${log1.length}`);
+    if (log2.length !== 1) throw new Error(`Target 2: expected 1 change, got ${log2.length}`);
+    if (log1[0].pin !== 0 || log1[0].value !== 1) throw new Error('Target 1 got wrong data');
+    if (log2[0].pin !== 0 || log2[0].value !== 1) throw new Error('Target 2 got wrong data');
+
+    await tee.disconnect();
+    if (t1.connected || t2.connected) throw new Error('Subtargets should be disconnected');
+});
+
+test('target: TeeTarget addTarget/removeTarget', async () => {
+    const tee = new TeeTarget([]);
+    await tee.connect();
+
+    const log = [];
+    class LogTarget extends HardwareTarget {
+        get type() { return 'log'; }
+        onGpioChange(pin, state) { log.push(pin); }
+    }
+
+    const t = new LogTarget();
+    await t.connect();
+    tee.addTarget(t);
+    if (tee.targets.length !== 1) throw new Error('Expected 1 target');
+
+    tee.removeTarget(t);
+    if (tee.targets.length !== 0) throw new Error('Expected 0 targets');
+
+    await tee.disconnect();
+    await t.disconnect();
+});
+
+test('target: connectTarget wires input data back to MEMFS', async () => {
+    const { board } = await createLiveBoard('pass');
+
+    const inputs = [];
+    class TestTarget extends HardwareTarget {
+        get type() { return 'test'; }
+        async pollInputs() {
+            // Simulate hardware reading pin 5 as HIGH
+            if (this._onInput) this._onInput('gpio', 5, 1);
+            inputs.push('polled');
+        }
+    }
+
+    const target = new TestTarget();
+    await target.connect();
+    board.connectTarget(target);
+
+    if (board.target !== target) throw new Error('target getter should return connected target');
+
+    // Wait enough frames for poll to fire (~20 frames for first poll)
+    await waitFrames(board, 25);
+    if (inputs.length === 0) throw new Error('pollInputs was never called');
+
+    await board.disconnectTarget();
+    if (board.target !== null) throw new Error('target should be null after disconnect');
+
+    board.destroy();
+});
+
+test('target: WebUSBTarget/WebSerialTarget unavailable in Node', async () => {
+    // These require browser APIs — just verify they throw helpful errors
+    const { WebUSBTarget, WebSerialTarget } = await import('./js/targets.mjs');
+
+    const usb = new WebUSBTarget();
+    try {
+        await usb.connect();
+        throw new Error('Should have thrown');
+    } catch (e) {
+        if (!e.message.includes('WebUSB not available')) {
+            throw new Error(`Wrong error: ${e.message}`);
+        }
+    }
+
+    const serial = new WebSerialTarget();
+    try {
+        await serial.connect();
+        throw new Error('Should have thrown');
+    } catch (e) {
+        if (!e.message.includes('WebSerial not available')) {
+            throw new Error(`Wrong error: ${e.message}`);
+        }
+    }
 });
 
 // ── Run all ──
