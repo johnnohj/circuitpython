@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "circuitpython-wasm-board-definition",
+  "title": "CircuitPython WASM Board Definition",
+  "description": "Describes a simulated board's identity, pin layout, visual coordinates, and on-board components. Combines WipperSnapper's electrical metadata with PXT's visual coordinate system.",
+  "type": "object",
+  "required": ["boardName", "displayName", "vendor", "pins"],
+  "properties": {
+    "boardName": {
+      "type": "string",
+      "description": "Machine-readable board ID (e.g., 'feather_esp32s2')"
+    },
+    "displayName": {
+      "type": "string",
+      "description": "Human-readable board name"
+    },
+    "vendor": { "type": "string" },
+    "productURL": { "type": "string", "format": "uri" },
+    "documentationURL": { "type": "string", "format": "uri" },
+    "mcuName": {
+      "type": "string",
+      "description": "Microcontroller name (e.g., 'esp32s2', 'rp2040', 'wasm')"
+    },
+    "mcuRefVoltage": {
+      "type": "number",
+      "description": "ADC reference voltage"
+    },
+
+    "visual": {
+      "type": "object",
+      "description": "Board artwork and layout coordinates (PXT-style)",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "SVG filename or URL for board artwork"
+        },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "pinDistance": {
+          "type": "number",
+          "description": "Standard pin-to-pin distance in pixels"
+        },
+        "resetButton": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "w": { "type": "number" },
+            "h": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "pins": {
+      "type": "array",
+      "description": "All pins on the board",
+      "items": {
+        "type": "object",
+        "required": ["name", "id"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Python name (e.g., 'D13', 'A0', 'SDA', 'NEOPIXEL')"
+          },
+          "id": {
+            "type": "integer",
+            "description": "GPIO number (internal identifier)"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Label shown on board SVG (defaults to name)"
+          },
+          "aliases": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Alternative names (e.g., ['LED', 'LED_BUILTIN'] for D13)"
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "digital": { "type": "boolean", "default": true },
+              "analog_in": { "type": "boolean", "default": false },
+              "analog_out": { "type": "boolean", "default": false },
+              "pwm": { "type": "boolean", "default": false },
+              "servo": { "type": "boolean", "default": false },
+              "touch": { "type": "boolean", "default": false },
+              "i2c_sda": { "type": "boolean", "default": false },
+              "i2c_scl": { "type": "boolean", "default": false },
+              "spi_mosi": { "type": "boolean", "default": false },
+              "spi_miso": { "type": "boolean", "default": false },
+              "spi_sck": { "type": "boolean", "default": false },
+              "uart_tx": { "type": "boolean", "default": false },
+              "uart_rx": { "type": "boolean", "default": false }
+            }
+          },
+          "visual": {
+            "type": "object",
+            "description": "Position on board SVG (PXT-style coordinates)",
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "side": {
+                "type": "string",
+                "enum": ["left", "right", "top", "bottom", "internal"]
+              },
+              "labelOffset": {
+                "type": "object",
+                "properties": {
+                  "x": { "type": "number" },
+                  "y": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "power": {
+      "type": "object",
+      "description": "Power pins (not GPIO — fixed function)",
+      "properties": {
+        "threeVolt": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "x": {"type":"number"}, "y": {"type":"number"}, "label": {"type":"string"} } }
+        },
+        "fiveVolt": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "x": {"type":"number"}, "y": {"type":"number"}, "label": {"type":"string"} } }
+        },
+        "ground": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "x": {"type":"number"}, "y": {"type":"number"}, "label": {"type":"string"} } }
+        }
+      }
+    },
+
+    "i2c": {
+      "type": "array",
+      "description": "I2C bus definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "sda": { "type": "string", "description": "Pin name (e.g., 'SDA')" },
+          "scl": { "type": "string", "description": "Pin name (e.g., 'SCL')" },
+          "frequency": { "type": "integer", "default": 100000 }
+        }
+      }
+    },
+
+    "spi": {
+      "type": "array",
+      "description": "SPI bus definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "mosi": { "type": "string" },
+          "miso": { "type": "string" },
+          "sck": { "type": "string" }
+        }
+      }
+    },
+
+    "uart": {
+      "type": "array",
+      "description": "UART definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "tx": { "type": "string" },
+          "rx": { "type": "string" },
+          "baudrate": { "type": "integer", "default": 115200 }
+        }
+      }
+    }
+  }
+}

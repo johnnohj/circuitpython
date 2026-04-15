@@ -1,0 +1,47 @@
+{
+  "componentName": "lis3dh",
+  "displayName": "LIS3DH Triple-Axis Accelerometer",
+  "vendor": "STMicroelectronics",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/2809",
+  "documentationURL": "https://learn.adafruit.com/adafruit-lis3dh-triple-axis-accelerometer-breakout",
+
+  "driver": {
+    "package": "adafruit_lis3dh",
+    "repo": "https://github.com/adafruit/Adafruit_CircuitPython_LIS3DH",
+    "importName": "adafruit_lis3dh",
+    "example": "import board, busio, adafruit_lis3dh\ni2c = busio.I2C(board.SCL, board.SDA)\nlis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c)\nx, y, z = lis3dh.acceleration\nprint(f'{x:.2f} {y:.2f} {z:.2f}')"
+  },
+
+  "i2c": {
+    "addresses": [24, 25],
+    "defaultAddress": 24,
+    "registers": [
+      { "address": 15,  "name": "who_am_i",   "access": "r",  "defaultValue": 51, "description": "Device ID (0x33)" },
+      { "address": 32,  "name": "ctrl_reg1",   "access": "rw", "defaultValue": 7 },
+      { "address": 35,  "name": "ctrl_reg4",   "access": "rw", "defaultValue": 0 },
+      { "address": 39,  "name": "status_reg",  "access": "r",  "defaultValue": 15, "description": "Data ready flags" },
+      { "address": 40,  "name": "out_x_l",     "access": "r",  "defaultValue": 0 },
+      { "address": 41,  "name": "out_x_h",     "access": "r",  "defaultValue": 0 },
+      { "address": 42,  "name": "out_y_l",     "access": "r",  "defaultValue": 0 },
+      { "address": 43,  "name": "out_y_h",     "access": "r",  "defaultValue": 0 },
+      { "address": 44,  "name": "out_z_l",     "access": "r",  "defaultValue": 0 },
+      { "address": 45,  "name": "out_z_h",     "access": "r",  "defaultValue": 64, "description": "Z high byte (1g default)" }
+    ]
+  },
+
+  "sensors": [
+    { "type": "accel-x", "displayName": "Acceleration X", "unit": "m/s²",
+      "range": { "min": -156.96, "max": 156.96 }, "defaultValue": 0, "defaultPeriod": 0.1 },
+    { "type": "accel-y", "displayName": "Acceleration Y", "unit": "m/s²",
+      "range": { "min": -156.96, "max": 156.96 }, "defaultValue": 0, "defaultPeriod": 0.1 },
+    { "type": "accel-z", "displayName": "Acceleration Z", "unit": "m/s²",
+      "range": { "min": -156.96, "max": 156.96 }, "defaultValue": 9.8, "defaultPeriod": 0.1 }
+  ],
+
+  "visual": {
+    "icon": "accelerometer",
+    "color": "#3498db",
+    "widget": "graph"
+  }
+}
