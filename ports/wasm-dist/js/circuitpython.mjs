@@ -31,10 +31,14 @@ import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targ
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
+// Legacy SUP_* numeric codes — JS logic no longer *depends* on these for UX
+// decisions (it uses cp_is_runnable / cp_needs_input / cp_ctx0_completed_code
+// instead), but three are still read for the boot→code transition detection
+// and to gate prompt display on a finished expression.  Scheduled for removal
+// in Stage 3, when JS orchestrates boot/code/REPL directly.
 const SUP_REPL = 1;
-const SUP_WAITING_FOR_KEY = 5;
+const SUP_CODE_RUNNING = 3;
 const SUP_BOOT_RUNNING = 6;
-const SUP_STATES = ['INIT', 'REPL', 'EXPR', 'CODE', 'DONE', 'WAIT_KEY', 'BOOT'];
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
@@ -177,10 +181,7 @@ export class CircuitPython {
         if (this._waitingForKey) return 'waiting';
         const supState = this._exports.cp_get_state();
         if (supState === SUP_BOOT_RUNNING) return 'booting';
-        // Read context 0 status
-        const m = this._readContextMeta(0);
-        if (!m || m.status <= 1 || m.status === 6) return 'repl';
-        return 'running';
+        return this._exports.cp_is_runnable() ? 'running' : 'repl';
     }
 
     get frameCount() { return this._frameCount; }
@@ -590,11 +591,12 @@ export class CircuitPython {
         }, 500);
     }
 
-    /** Transition from WAITING_FOR_KEY to REPL. */
+    /** Transition from the "wait for key" UX to REPL.
+     *  Wait-for-key is now JS-owned: no C call, we just clear the flag
+     *  and show the prompt.  One "\r\n" separates the banner from the prompt. */
     _enterRepl() {
         this._waitingForKey = false;
-        this._exports.cp_press_any_key();
-        // Show the REPL prompt
+        this._handleStdout('\r\n');
         this._readline._waitingForResult = false;
         this._readline.showPrompt();
     }
@@ -655,15 +657,19 @@ export class CircuitPython {
 
         // Detect boot.py → code.py transition: inject "last edited" timestamp
         if (this._prevSupState === SUP_BOOT_RUNNING && supState !== SUP_BOOT_RUNNING) {
-            if (supState === 3 /* SUP_CODE_RUNNING */) {
+            if (supState === SUP_CODE_RUNNING) {
                 this._printCodePyLastEdited(this._idb);
             }
         }
         this._prevSupState = supState;
 
-        // When code.py finishes → enter WAITING_FOR_KEY state
-        if (supState === SUP_WAITING_FOR_KEY && !this._waitingForKey) {
+        // When code.py finishes, the supervisor sets an edge-trigger latch
+        // that we consume here.  JS owns the "Press any key ..." UX entirely —
+        // C does not track a WAITING_FOR_KEY substate anymore.
+        if (this._exports.cp_ctx0_completed_code() && !this._waitingForKey) {
             this._waitingForKey = true;
+            this._handleStdout('\r\nCode done running.\r\n');
+            this._handleStdout('\r\nPress any key to enter the REPL. Use CTRL-D to reload.\r\n');
 
             // Fire onCodeDone callback (e.g. for --exit mode)
             if (this._onCodeDone && !this._codeDoneFired) {
@@ -673,7 +679,8 @@ export class CircuitPython {
         }
 
         // When expression finishes → show prompt
-        if (supState === SUP_REPL && this._readline.waitingForResult) {
+        if (supState === SUP_REPL && !this._waitingForKey
+            && this._readline.waitingForResult) {
             this._readline.onResult();
         }
 
@@ -708,10 +715,22 @@ export class CircuitPython {
                 if (m && m.status > 0) activeCtxs++;
             }
             if (state) {
-                const sup = SUP_STATES[state.supState] || '?';
                 const yr = YIELD_REASONS[state.yieldReason] || '?';
                 const ctx0 = this._readContextMeta(0);
                 const ctxSt = ctx0 ? CTX_STATUSES[ctx0.status] || '?' : '?';
+                // Prefer the new predicates over raw SUP_* for JS-facing status.
+                // Fall back to the legacy string for booting (which cp_is_runnable
+                // doesn't distinguish) and waiting-for-key (JS-owned).
+                let sup;
+                if (this._waitingForKey) {
+                    sup = 'WAIT';
+                } else if (state.supState === 6 /* SUP_BOOT_RUNNING */) {
+                    sup = 'BOOT';
+                } else if (this._exports.cp_is_runnable()) {
+                    sup = 'RUN';
+                } else {
+                    sup = this._exports.cp_needs_input() ? 'REPL' : 'IDLE';
+                }
                 this._statusEl.textContent =
                     `${sup} | ctx0:${ctxSt} | ctxs:${activeCtxs} | yield:${yr} | pystack:${state.vmDepth}B`;
             } else {

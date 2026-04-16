@@ -91,13 +91,22 @@ extern void *mp_vm_yield_state;
 #define SUP_EXPR_RUNNING     2
 #define SUP_CODE_RUNNING     3
 #define SUP_CODE_FINISHED    4
-#define SUP_WAITING_FOR_KEY  5
+/* 5 (formerly SUP_WAITING_FOR_KEY) intentionally skipped — that UX now
+ * lives entirely in JS, signaled via cp_ctx0_completed_code(). */
 #define SUP_BOOT_RUNNING     6
 
 static int _state = SUP_UNINITIALIZED;
 static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
 static bool _code_header_printed = false;  /* deferred so JS can inject "last edited" */
 static uint32_t _frame_count = 0;
+
+/* Edge-trigger latch: set by cp_step when ctx0 transitions out of a
+ * code.py run; cleared by the first cp_ctx0_completed_code() read.
+ * Defined here (above cp_step) so cp_step can set it. */
+static bool _ctx0_code_completion_pending = false;
+
+/* Forward declarations for primitives used by cp_ctrl_c, etc. */
+int cp_is_runnable(void);
 
 /* JS time source — written by cp_step(), read by mp_hal_ticks_ms().
  * Eliminates clock_gettime syscall from the hot loop. */
@@ -125,7 +134,6 @@ void supervisor_execution_status(void) {
             serial_write("code.py");
             break;
         case SUP_CODE_FINISHED:
-        case SUP_WAITING_FOR_KEY:
             serial_write("Done");
             break;
         default:
@@ -182,13 +190,9 @@ static void _print_code_py_header(const char *filename) {
     mp_hal_stdout_tx_str(" output:\r\n");
 }
 
-static void _print_code_done(void) {
-    mp_hal_stdout_tx_str("\r\nCode done running.\r\n");
-}
-
-static void _print_press_any_key(void) {
-    mp_hal_stdout_tx_str("\r\nPress any key to enter the REPL. Use CTRL-D to reload.\r\n");
-}
+/* _print_code_done and _print_press_any_key removed — JS owns the
+ * "Code done running. / Press any key to enter the REPL." UX, signaled
+ * by the cp_ctx0_completed_code() edge-trigger. */
 
 static void _print_soft_reboot(void) {
     mp_hal_stdout_tx_str("\r\nsoft reboot\r\n");
@@ -554,10 +558,12 @@ int cp_step(uint32_t now_ms) {
                     cp_context_set_status(ctx_id, CTX_DONE);
                     SUP_DEBUG("ctx%d done", ctx_id);
 
-                    /* If context 0 was running code.py, print lifecycle msgs */
+                    /* If context 0 was running code.py, set the edge-trigger
+                     * latch so JS can fire its wait-for-key UX.  The
+                     * "Code done running." / "Press any key ..." messages
+                     * are now printed by JS. */
                     if (ctx_id == 0 && _ctx0_is_code) {
-                        _print_code_done();
-                        _print_press_any_key();
+                        _ctx0_code_completion_pending = true;
                     }
                 }
             } else {
@@ -576,13 +582,10 @@ int cp_step(uint32_t now_ms) {
          * finishes → CTX_DONE → SUP_REPL). */
         uint8_t ctx0 = cp_context_get_status(0);
         if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
-            if (_ctx0_is_code && _state == SUP_CODE_RUNNING) {
-                /* code.py just finished → wait for keypress before REPL */
-                _state = SUP_WAITING_FOR_KEY;
-            } else if (_state != SUP_WAITING_FOR_KEY) {
-                /* REPL expression finished, or already transitioned */
-                _state = SUP_REPL;
-            }
+            /* Whatever ctx0 was running, it's done.  Default to REPL;
+             * no "waiting for key" substate — JS owns that UX now. */
+            _state = SUP_REPL;
+            _ctx0_is_code = false;
         } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
             /* Don't override SUP_BOOT_RUNNING — boot.py is still stepping */
             if (_state != SUP_BOOT_RUNNING) {
@@ -856,8 +859,7 @@ int cp_complete(int len) {
 
 __attribute__((export_name("cp_ctrl_c")))
 void cp_ctrl_c(void) {
-    if (_state == SUP_EXPR_RUNNING || _state == SUP_CODE_RUNNING
-        || _state == SUP_BOOT_RUNNING) {
+    if (cp_is_runnable()) {
         mp_sched_keyboard_interrupt();
     }
 }
@@ -888,25 +890,6 @@ void cp_auto_reload(void) {
     _restart_lifecycle();
     SUP_DEBUG("auto-reload triggered");
     #endif
-}
-
-/* ------------------------------------------------------------------ */
-/* cp_press_any_key — transition from WAITING_FOR_KEY to REPL          */
-/*                                                                     */
-/* Called by JS when the user presses any key while in the             */
-/* SUP_WAITING_FOR_KEY state (after code.py finishes).  Prints the     */
-/* REPL banner and shows the >>> prompt.                               */
-/* ------------------------------------------------------------------ */
-
-__attribute__((export_name("cp_press_any_key")))
-void cp_press_any_key(void) {
-    if (_state != SUP_WAITING_FOR_KEY) return;
-
-    _ctx0_is_code = false;
-    _state = SUP_REPL;
-    cp_context_set_status(0, CTX_IDLE);
-    mp_hal_stdout_tx_str("\r\n");
-    SUP_DEBUG("press any key → REPL");
 }
 
 /* ------------------------------------------------------------------ */
@@ -988,6 +971,50 @@ int cp_run_file(const char *path) {
 __attribute__((export_name("cp_get_state")))
 int cp_get_state(void) {
     return (int)_state;
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_is_runnable / cp_needs_input / cp_ctx0_completed_code            */
+/*                                                                     */
+/* Minimal JS-facing predicates that replace SUP_* polling.            */
+/* JS shouldn't need to know which supervisor substate we're in — it   */
+/* only needs: is there still work for me to tick, and does anything   */
+/* want input?  These are the primitives for that.                     */
+/*                                                                     */
+/* cp_ctx0_completed_code is a one-shot edge-trigger: it returns 1     */
+/* exactly once per code.py completion, then clears.  Lets JS fire     */
+/* its wait-for-key UX without polling supervisor state.               */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_is_runnable")))
+int cp_is_runnable(void) {
+    /* Any context actively doing work? */
+    for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
+        uint8_t s = cp_context_get_status(i);
+        if (s == CTX_RUNNABLE || s == CTX_RUNNING
+            || s == CTX_YIELDED || s == CTX_SLEEPING) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+__attribute__((export_name("cp_needs_input")))
+int cp_needs_input(void) {
+    /* True when REPL is idle and ready to accept a new expression.
+     * No context runnable AND ctx0 is idle/done => waiting for JS input. */
+    if (cp_is_runnable()) return 0;
+    uint8_t s0 = cp_context_get_status(0);
+    return (s0 == CTX_IDLE || s0 == CTX_DONE || s0 == CTX_FREE) ? 1 : 0;
+}
+
+__attribute__((export_name("cp_ctx0_completed_code")))
+int cp_ctx0_completed_code(void) {
+    if (_ctx0_code_completion_pending) {
+        _ctx0_code_completion_pending = false;
+        return 1;
+    }
+    return 0;
 }
 
 __attribute__((export_name("cp_set_debug")))
