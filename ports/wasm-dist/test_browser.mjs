@@ -355,6 +355,67 @@ asyncio.run(main())
     assertContains(r.stdout, 'computed 12497500');
 });
 
+test('asyncio: bare except does NOT catch suspend sentinel', async () => {
+    // The supervisor's suspend sentinel propagates as an NLR exception, but
+    // user Python code MUST NOT be able to catch it — otherwise error-swallowing
+    // patterns like `try: ... except: pass` would silently break suspension.
+    //
+    // Before the identity-check bypasses in py/vm.c, the sentinel was a
+    // SystemExit subclass that bare `except:` and `except BaseException:`
+    // would happily catch, breaking the suspension chain.
+    const r = await runBoard(`
+import asyncio
+
+caught = False
+async def main():
+    global caught
+    try:
+        total = 0
+        for i in range(5000):
+            total += i
+        await asyncio.sleep(0)
+        print("computed", total)
+    except:
+        caught = True
+        print("caught!")
+
+asyncio.run(main())
+if caught:
+    print("FAIL: bare except caught sentinel")
+else:
+    print("PASS: bare except did not catch sentinel")
+`, { timeoutMs: 5000 });
+    assertContains(r.stdout, 'computed 12497500');
+    assertContains(r.stdout, 'PASS: bare except did not catch sentinel');
+});
+
+test('asyncio: except BaseException does NOT catch suspend sentinel', async () => {
+    const r = await runBoard(`
+import asyncio
+
+caught = False
+async def main():
+    global caught
+    try:
+        total = 0
+        for i in range(5000):
+            total += i
+        await asyncio.sleep(0)
+        print("computed", total)
+    except BaseException:
+        caught = True
+        print("caught!")
+
+asyncio.run(main())
+if caught:
+    print("FAIL: except BaseException caught sentinel")
+else:
+    print("PASS: except BaseException did not catch sentinel")
+`, { timeoutMs: 5000 });
+    assertContains(r.stdout, 'computed 12497500');
+    assertContains(r.stdout, 'PASS: except BaseException did not catch sentinel');
+});
+
 // ── hardware module tests ──
 // Note: digitalio/analogio/microcontroller are disabled in the browser build.
 // These tests exercise the JS hardware modules directly via MEMFS /hal/ endpoints,

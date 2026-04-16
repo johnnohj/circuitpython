@@ -271,6 +271,12 @@ mp_vm_return_kind_t MICROPY_WRAP_MP_EXECUTE_BYTECODE(mp_execute_bytecode)(mp_cod
     // loop and the exception handler, leading to very obscure bugs.
     #define RAISE(o) do { nlr_pop(); nlr.ret_val = MP_OBJ_TO_PTR(o); goto exception_handler; } while (0)
 
+#if MICROPY_VM_YIELD_ENABLED
+    // Supervisor's suspend sentinel — identity-matched in the exception
+    // handler so it bypasses user try/except and traceback accumulation.
+    extern mp_obj_exception_t mp_vm_suspend_sentinel;
+#endif
+
 #if MICROPY_STACKLESS
 run_code_state: ;
 #endif
@@ -1500,10 +1506,16 @@ unwind_loop:
             // - constant GeneratorExit object, because it's const
             // - exceptions re-raised by END_FINALLY
             // - exceptions re-raised explicitly by "raise"
+            // - the supervisor's suspend sentinel (MICROPY_VM_YIELD_ENABLED) — it's a
+            //   static singleton; per-frame traceback accumulation would leak memory
+            //   across suspend cycles
             // CIRCUITPY-CHANGE: MICROPY_CONST_GENERATOREXIT_OBJ check; true just helps formatting.
             if ( true
                 #if MICROPY_CONST_GENERATOREXIT_OBJ
                 && nlr.ret_val != &mp_const_GeneratorExit_obj
+                #endif
+                #if MICROPY_VM_YIELD_ENABLED
+                && nlr.ret_val != (void *)&mp_vm_suspend_sentinel
                 #endif
                 && *code_state->ip != MP_BC_END_FINALLY
                 && *code_state->ip != MP_BC_RAISE_LAST) {
@@ -1540,7 +1552,15 @@ unwind_loop:
                 POP_EXC_BLOCK();
             }
 
-            if (exc_sp >= exc_stack) {
+            if (exc_sp >= exc_stack
+                #if MICROPY_VM_YIELD_ENABLED
+                // Never let Python try/except (including bare `except:` and
+                // `except BaseException:`) catch the supervisor's suspend
+                // sentinel.  Fall through to the stackless-unwind / propagate
+                // branches so the sentinel reaches vm_yield_step intact.
+                && nlr.ret_val != (void *)&mp_vm_suspend_sentinel
+                #endif
+                ) {
                 // catch exception and pass to byte code
                 code_state->ip = exc_sp->handler;
                 mp_obj_t *sp = MP_TAGPTR_PTR(exc_sp->val_sp);

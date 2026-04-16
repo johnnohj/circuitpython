@@ -46,10 +46,16 @@
 /* EXCEPTION handler and treats it as suspension (return 1) rather     */
 /* than a genuine SystemExit (return 0 → soft reboot).                 */
 /*                                                                     */
-/* Typed as SystemExit subclass for NLR compat, but matched by pointer */
-/* identity (not subclass check) in the supervisor.  User Python code  */
-/* that catches BaseException will also catch this — a known hazard    */
-/* for now; future work: make it a non-BaseException type.             */
+/* Typed as SystemExit subclass so mp_obj_exception_add_traceback and   */
+/* other exception-aware machinery don't assert on non-exception input. */
+/* Made uncatchable by user Python code via two identity-check bypasses */
+/* in py/vm.c's exception_handler (gated by MICROPY_VM_YIELD_ENABLED):  */
+/*   1. Skip traceback accumulation (static singleton would leak)       */
+/*   2. Skip user try/except handling (bare `except:` and               */
+/*      `except BaseException:` both fall through to propagate)         */
+/* Result: sentinel propagates unhindered through Python code, including */
+/* user error-swallowing patterns, and reaches vm_yield_step's EXCEPTION */
+/* handler where it's identity-matched again (return 1 vs. soft reboot). */
 /* ------------------------------------------------------------------ */
 
 mp_obj_exception_t mp_vm_suspend_sentinel = {
