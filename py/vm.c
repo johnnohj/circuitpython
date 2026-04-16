@@ -1252,6 +1252,34 @@ yield:
                             RAISE(raise_t);
                         }
                         DISPATCH();
+                    #if MICROPY_VM_YIELD_ENABLED
+                    } else if (ret_kind == MP_VM_RETURN_SUSPEND) {
+                        // Inner generator/coroutine was suspended by the
+                        // supervisor (budget exhausted, etc) BEFORE reaching
+                        // a YIELD opcode.  Its code_state is preserved in
+                        // mp_vm_yield_state by vm.c's backwards-branch handler.
+                        //
+                        // Restore the outer frame's stack to the pre-YIELD_FROM
+                        // state (push send_value back) and rewind ip so
+                        // YIELD_FROM re-executes on resume.  Do NOT touch
+                        // mp_vm_yield_state — inner already owns it.
+                        //
+                        // Note: the current supervisor re-entry model enters
+                        // at mp_vm_yield_state directly, bypassing this outer
+                        // frame's YIELD_FROM when inner eventually yields a
+                        // value.  Nested-chain handling across SUSPEND
+                        // boundaries is deferred; the state preserved here is
+                        // correct for the case where outer is later resumed
+                        // via its own .send() call.
+                        PUSH(send_value);
+                        nlr_pop();
+                        ip--;
+                        code_state->ip = ip;
+                        code_state->sp = sp;
+                        code_state->exc_sp_idx = MP_CODE_STATE_EXC_SP_IDX_FROM_PTR(exc_stack, exc_sp);
+                        FRAME_LEAVE();
+                        return MP_VM_RETURN_SUSPEND;
+                    #endif
                     } else {
                         assert(ret_kind == MP_VM_RETURN_EXCEPTION);
                         assert(!mp_obj_exception_match(ret_value, MP_OBJ_FROM_PTR(&mp_type_StopIteration)));
