@@ -1352,11 +1352,17 @@ pending_exception_check:
                 // occur every few instructions.
                 MICROPY_VM_HOOK_LOOP
 
-                // Step-wise yield check: if the JS driver has exhausted the
-                // step budget, suspend execution exactly like a generator yield.
-                // All state is in the heap-allocated code_state chain (stackless)
-                // so the C stack is clean.  JS resumes by calling mp_vm_step()
-                // again which re-enters at run_code_state.
+                // Step-wise suspend check: if the supervisor has exhausted the
+                // step budget, pause execution.  All state is in the
+                // heap-allocated code_state chain (stackless) so the C stack is
+                // clean.  The driver resumes by calling mp_vm_step() again
+                // which re-enters at run_code_state.
+                //
+                // We return MP_VM_RETURN_SUSPEND (not MP_VM_RETURN_YIELD) to
+                // distinguish supervisor-driven suspension from a Python
+                // `yield` expression.  Generator-resume boundaries propagate
+                // SUSPEND upward without treating the top-of-stack as a
+                // yielded value.
                 #if MICROPY_VM_YIELD_ENABLED
                 if (mp_vm_should_yield()) {
                     nlr_pop();
@@ -1369,7 +1375,7 @@ pending_exception_check:
                     MICROPY_VM_YIELD_SAVE_STATE(code_state);
                     #endif
                     FRAME_LEAVE();
-                    return MP_VM_RETURN_YIELD;
+                    return MP_VM_RETURN_SUSPEND;
                 }
                 #endif
 

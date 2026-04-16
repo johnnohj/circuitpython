@@ -258,6 +258,14 @@ int vm_yield_step(void) {
             return 0;
 
         case MP_VM_RETURN_YIELD:
+            // Python-level `yield` expression (generator yielded a value).
+            // Supervisor treats it identically to SUSPEND: code is paused,
+            // resume next frame.
+            return 1;
+
+        case MP_VM_RETURN_SUSPEND:
+            // Supervisor-driven suspension (budget exhausted, etc).
+            // code_state is preserved on pystack; next cp_step resumes.
             return 1;
 
         case MP_VM_RETURN_EXCEPTION: {
