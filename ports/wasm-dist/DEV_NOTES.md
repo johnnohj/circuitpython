@@ -29,7 +29,9 @@ It remains to be said that web assembly is very much an emerging technology, wit
 
 ## Outstanding Work
 
-See `MIGRATION_PLAN.md`
+- **Validate SUSPEND mechanism** under broader asyncio workloads — see
+  `design/yield-suspend-separation.md`.
+- **Lifecycle UX gaps** — see memory/remaining_lifecycle_items.md.
 
 ### Design Commentary
 
