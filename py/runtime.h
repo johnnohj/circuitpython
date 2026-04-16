@@ -47,6 +47,14 @@ typedef enum {
     MP_VM_RETURN_NORMAL,
     MP_VM_RETURN_YIELD,
     MP_VM_RETURN_EXCEPTION,
+    #if MICROPY_VM_YIELD_ENABLED
+    // Supervisor-driven suspension of VM bytecode execution.  Distinct from
+    // MP_VM_RETURN_YIELD (which signals a Python `yield` expression): this
+    // value propagates from the backwards-branch budget check through
+    // generator-resume boundaries so the outer supervisor can distinguish
+    // "code is paused" from "generator yielded a value".
+    MP_VM_RETURN_SUSPEND,
+    #endif
 } mp_vm_return_kind_t;
 
 typedef enum {
