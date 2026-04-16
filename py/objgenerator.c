@@ -346,6 +346,23 @@ static mp_obj_t gen_resume_and_raise(mp_obj_t self_in, mp_obj_t send_value, mp_o
         case MP_VM_RETURN_YIELD:
             return ret;
 
+        #if MICROPY_VM_YIELD_ENABLED
+        case MP_VM_RETURN_SUSPEND:
+            // Supervisor suspended the generator's bytecode frame mid-execution
+            // (budget exhausted, etc).  The generator's code_state (ip/sp) is
+            // preserved inside its gen_instance_t; the next .send() call will
+            // resume from the saved ip naturally.
+            //
+            // Return mp_const_none to the caller (e.g. asyncio's event loop
+            // calling task.coro.send(None)).  From asyncio's perspective this
+            // looks identical to the coroutine voluntarily yielding None —
+            // the task is rescheduled, and on the next cp_step the event loop
+            // will call .send(None) again, re-entering the generator at its
+            // preserved ip.  The "spurious None yield" is observable from
+            // Python but functionally indistinguishable from a cooperative yield.
+            return mp_const_none;
+        #endif
+
         case MP_VM_RETURN_EXCEPTION:
             nlr_raise(ret);
     }

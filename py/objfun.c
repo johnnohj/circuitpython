@@ -335,14 +335,24 @@ static mp_obj_t PLACE_IN_ITCM(fun_bc_call)(mp_obj_t self_in, size_t n_args, size
         // return value is in *sp
         result = *code_state->sp;
     #if MICROPY_VM_YIELD_ENABLED
-    } else if (vm_return_kind == MP_VM_RETURN_YIELD) {
-        // VM yielded (budget/sleep).  Code state is saved in
-        // mp_vm_yield_state by MICROPY_VM_YIELD_SAVE_STATE.
-        // Don't free pystack — the supervisor will resume via
-        // mp_execute_bytecode(mp_vm_yield_state).  Propagate
-        // as a special exception so nlr unwinds the C stack.
-        extern mp_obj_exception_t mp_vm_yield_exception;
-        nlr_raise(MP_OBJ_FROM_PTR(&mp_vm_yield_exception));
+    } else if (vm_return_kind == MP_VM_RETURN_YIELD
+               || vm_return_kind == MP_VM_RETURN_SUSPEND) {
+        // Supervisor paused the VM (budget/sleep/display/io) inside a
+        // C-called Python frame.  code_state is saved (mp_vm_yield_state
+        // set by MICROPY_VM_YIELD_SAVE_STATE in vm.c).  Don't free
+        // pystack — supervisor resumes via mp_execute_bytecode(mp_vm_yield_state).
+        //
+        // Propagate via nlr_raise of a static sentinel so the C stack
+        // unwinds cleanly.  vm_yield_step's EXCEPTION handler does an
+        // identity-check against this sentinel and treats it as
+        // suspension (return 1), not as a genuine SystemExit.
+        //
+        // Accepts YIELD as well as SUSPEND: before Phase 2, the VM
+        // returned YIELD for supervisor-driven pauses.  Keep the
+        // legacy path covered in case any compile-unit still produces
+        // YIELD (or the enum is reverted in a later cleanup).
+        extern mp_obj_exception_t mp_vm_suspend_sentinel;
+        nlr_raise(MP_OBJ_FROM_PTR(&mp_vm_suspend_sentinel));
     #endif
     } else {
         // must be an exception because normal functions can't yield

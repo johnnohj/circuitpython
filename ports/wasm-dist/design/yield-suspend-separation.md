@@ -1,8 +1,31 @@
 # Yield / Suspend Separation — Design & Implementation Plan
 
-**Status**: Planned, not yet implemented
-**Date**: 2026-04-16
+**Status**: Phases 1–4 implemented (2026-04-16). Phase 5 deferred.
 **Gate**: `MICROPY_VM_YIELD_ENABLED` (existing macro)
+
+**Commits**:
+- `345720d7f3` Phase 1 — enum value
+- `0603d77810` Phase 2 — VM emits SUSPEND at backwards branch
+- `f137204324` Phase 3a — `mp_obj_gen_resume` preserves state
+- `3721a551ed` Phase 3b — `mp_resume` audit + doc comment
+- `d31fcf9cd7` Phase 3c — `MP_BC_YIELD_FROM` SUSPEND handler
+- (TBD) Phase 4 — `gen_resume_and_raise` None-return, `fun_bc_call` SUSPEND, sentinel rename, vm_yield_step identity check
+
+## Key findings during implementation
+
+### The stackless-unwind trap
+
+[py/vm.c:1563-1581](../../../py/vm.c#L1563) — when an uncaught exception reaches a stackless frame, `mp_nonlocal_free(code_state, ...)` runs, **destroying the frame** as part of normal unwind semantics. This means a "pure sentinel via `mp_pending_exception` RAISE" architecture would free exactly the state we need to preserve.
+
+Consequence: the enum-based propagation (Phases 1–3c) is the right mechanism for in-VM paths — it returns through the stackless chain without triggering the free. The NLR sentinel is only safe at C-call boundaries (`fun_bc_call`, `gen_resume_and_raise`) where no stackless chain exists to destroy.
+
+### The "return None from gen_resume_and_raise" trick
+
+Phase 4b exploits a property of MicroPython's asyncio: when a coroutine calls `yield` without a value, it yields `None`. Asyncio's event loop treats a None-yield as "task wants to be rescheduled immediately".
+
+When the supervisor suspends a coroutine mid-bytecode (via SUSPEND return), the generator's `code_state` (ip/sp) is preserved **inside the `gen_instance_t` object**, independent of `mp_vm_yield_state`. By having `gen_resume_and_raise` return `mp_const_none` on SUSPEND, the event loop sees a normal None-yield, reschedules the task, and the next `.send(None)` naturally resumes the generator from its saved ip. No C stack reconstruction needed.
+
+**Trade-off**: a spurious None-yield is observable from Python (if a user wraps `.send()` and inspects the return value). In practice, no asyncio code does this — the yielded value for a "plain yield" is always None.
 
 ---
 
@@ -442,3 +465,102 @@ isolate by reverting the most recent sub-step.
 - `supervisor/vm_yield.c` — supervisor side of the protocol
 - Revert commit: `eab2661be2` (Phase 1 Python supervisor; this plan
   makes Phase 1 feasible)
+
+---
+
+## Future directions
+
+### Reducing upstream `py/` modifications
+
+Phases 1–3c touch four files under `py/` (runtime.h, vm.c, objgenerator.c,
+runtime.c).  If upstream cleanliness becomes a priority, the following
+reductions are possible:
+
+- **Remove the enum entirely** — revert Phases 1, 2, 3a/b/c. This loses the
+  direct SUSPEND propagation path. All suspension would flow through the
+  NLR sentinel (Phase 4 mechanism). Viable IF the sentinel + context-switch
+  approach is built out to handle the stackless-chain-unwind problem
+  (see below).
+
+- **Move detection to `MICROPY_VM_HOOK_*`** — if we can save `code_state`
+  from the hook (by threading a parameter or using a per-thread global),
+  the Phase 2 block in `vm.c` can be removed. The hook itself would call
+  `mp_sched_exception(&mp_vm_suspend_sentinel)` to trigger the sentinel
+  mechanism without any `py/vm.c` delta.
+
+### `MICROPY_INTERNAL_WFE` integration
+
+Upstream MicroPython exposes `mp_event_wait_indefinite()` / `mp_event_wait_ms()`
+(`py/scheduler.c:274,286`) for blocking event waits (used by
+`select.select()`, upstream ports' `time.sleep()`). The port defines
+`MICROPY_INTERNAL_WFE(timeout_ms)` to do the actual wait.
+
+Our port currently bypasses these primitives: `mp_hal_delay_ms` directly
+sets context delay + `mp_vm_request_yield(YIELD_SLEEP, ms)`. Integrating
+via `MICROPY_INTERNAL_WFE` would:
+
+- Route `time.sleep` and `select.select` through the same suspension
+  mechanism naturally
+- Provide a foundation for real async I/O (asyncio with actual socket
+  waits, not just `sleep(0)`)
+- Match the upstream idiom — easier to port features and tests across
+
+Sketch:
+```c
+// In ports/wasm-dist/mpconfigport.h:
+#define MICROPY_INTERNAL_WFE(timeout_ms) wasm_internal_wfe(timeout_ms)
+
+// In supervisor/vm_yield.c:
+void wasm_internal_wfe(mp_int_t timeout_ms) {
+    if (timeout_ms < 0) {
+        // Indefinite wait — treat as "yield until an event arrives".
+        mp_vm_request_yield(YIELD_IO_WAIT, 0);
+    } else {
+        // Bounded wait — same as time.sleep of that duration.
+        uint64_t deadline = (uint64_t)mp_hal_ticks_ms() + timeout_ms;
+        int id = cp_context_active();
+        cp_context_set_delay(id, deadline);
+        cp_context_set_sleeping(id, deadline);
+        mp_vm_request_yield(YIELD_SLEEP, (uint32_t)timeout_ms);
+    }
+    // Returns to caller; next backwards branch triggers SUSPEND.
+}
+```
+
+This doesn't need to happen now — it's a natural follow-on when
+implementing real async I/O.
+
+### Context switching instead of nesting
+
+The deepest architectural option: when `task.coro.send(None)` is called from
+asyncio's event loop, instead of creating a nested mp_execute_bytecode call
+on the C stack, **create a new context for the task**. The task runs in its
+own pystack region. When the task yields, switch context back to the event
+loop, pass the yielded value via a shared register/slot.
+
+This sidesteps the C-stack-nesting problem entirely — no C glue between
+generator and its caller, no NLR unwinding needed for SUSPEND.
+
+**Prerequisites**:
+- Per-task context allocation (currently 8 contexts, hardcoded)
+- Context-aware `gen.send()` — intercept at C level, switch context instead
+  of calling mp_obj_gen_resume directly
+- Return-value handshake between contexts (shared slot)
+
+This is a large refactor. The Phase 4 "return None" trick handles the
+common asyncio case without needing this, so per-task contexts can wait
+until we have a concrete need (e.g., much deeper call chains that exhaust
+the simpler mechanism).
+
+### `FRAME_*` observability
+
+`FRAME_ENTER()` / `FRAME_LEAVE()` in `py/vm.c:157-177` are currently
+active only under `MICROPY_PY_SYS_SETTRACE`. Defining port-local
+lightweight hooks (e.g. `FRAME_ENTER_HOOK()` / `FRAME_LEAVE_HOOK()`) that
+call into the supervisor gives per-frame timing visibility — useful for:
+
+- Budget attribution ("which Python function consumed our 13ms")
+- Hot-function profiling for JS devtools
+- An additional SUSPEND checkpoint at the frame-return boundary
+
+Deferred — orthogonal feature, not required for asyncio correctness.

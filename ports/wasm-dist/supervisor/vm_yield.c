@@ -37,15 +37,23 @@
 #include "supervisor/context.h"
 
 /* ------------------------------------------------------------------ */
-/* Yield exception sentinel                                            */
+/* Suspend sentinel                                                    */
 /*                                                                     */
-/* When fun_bc_call gets MP_VM_RETURN_YIELD, it nlr_raises this        */
-/* static exception to unwind the C stack without freeing pystack.     */
-/* parse_compile_execute catches it and returns PYEXEC_VM_YIELD.       */
+/* When a C-called Python frame (fun_bc_call, gen_resume_and_raise)    */
+/* observes MP_VM_RETURN_SUSPEND (or the legacy YIELD in the supervisor */
+/* yield context), it nlr_raises this static sentinel to unwind the    */
+/* C stack.  vm_yield_step identity-checks the sentinel in its         */
+/* EXCEPTION handler and treats it as suspension (return 1) rather     */
+/* than a genuine SystemExit (return 0 → soft reboot).                 */
+/*                                                                     */
+/* Typed as SystemExit subclass for NLR compat, but matched by pointer */
+/* identity (not subclass check) in the supervisor.  User Python code  */
+/* that catches BaseException will also catch this — a known hazard    */
+/* for now; future work: make it a non-BaseException type.             */
 /* ------------------------------------------------------------------ */
 
-mp_obj_exception_t mp_vm_yield_exception = {
-    .base = { &mp_type_SystemExit },  /* reuse SystemExit type for nlr compat */
+mp_obj_exception_t mp_vm_suspend_sentinel = {
+    .base = { &mp_type_SystemExit },  /* SystemExit type for NLR compat */
     .args = (mp_obj_tuple_t *)&mp_const_empty_tuple_obj,
     .traceback = NULL,
 };
@@ -270,6 +278,16 @@ int vm_yield_step(void) {
 
         case MP_VM_RETURN_EXCEPTION: {
             mp_obj_t exc = MP_OBJ_FROM_PTR(vm->code_state->state[0]);
+
+            // Identity-check the suspend sentinel BEFORE the SystemExit
+            // subclass check — the sentinel is a static singleton raised by
+            // fun_bc_call / gen_resume_and_raise to unwind the C stack when
+            // the supervisor suspended a C-called Python frame.  State is
+            // preserved in mp_vm_yield_state; next cp_step resumes normally.
+            if (exc == MP_OBJ_FROM_PTR(&mp_vm_suspend_sentinel)) {
+                return 1;
+            }
+
             if (mp_obj_is_subclass_fast(
                     MP_OBJ_FROM_PTR(((mp_obj_base_t *)MP_OBJ_TO_PTR(exc))->type),
                     MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {

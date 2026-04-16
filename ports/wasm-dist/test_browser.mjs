@@ -330,6 +330,31 @@ asyncio.run(main())
     assertContains(r.stdout, 'looped');
 });
 
+test('asyncio: tight loop inside coroutine yields via supervisor (Phase 4 regression)', async () => {
+    // Exercises the deep-nested SUSPEND path: asyncio.run → event loop →
+    // task.coro.send(None) → main() → tight loop triggers budget exhaustion
+    // INSIDE the coroutine's bytecode.  Before Phase 4, mp_obj_gen_resume
+    // would treat SUSPEND as generator completion (zero ip + garbage value),
+    // corrupting asyncio scheduling.  After Phase 4, gen_resume_and_raise
+    // returns mp_const_none on SUSPEND, generator's code_state preserved
+    // inside gen_instance_t, next .send() resumes naturally.
+    const r = await runBoard(`
+import asyncio
+
+async def main():
+    # A tight forward-only computation that's likely to hit the budget
+    # check at some backwards branch inside the coroutine, BEFORE the await.
+    total = 0
+    for i in range(5000):
+        total += i
+    await asyncio.sleep(0)
+    print("computed", total)
+
+asyncio.run(main())
+`, { timeoutMs: 5000 });
+    assertContains(r.stdout, 'computed 12497500');
+});
+
 // ── hardware module tests ──
 // Note: digitalio/analogio/microcontroller are disabled in the browser build.
 // These tests exercise the JS hardware modules directly via MEMFS /hal/ endpoints,
