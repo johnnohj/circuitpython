@@ -1518,6 +1518,11 @@ mp_vm_return_kind_t mp_resume(mp_obj_t self_in, mp_obj_t send_value, mp_obj_t th
         || type == &mp_type_coro_instance
         #endif
         ) {
+        // MICROPY_VM_YIELD_ENABLED: mp_obj_gen_resume may return
+        // MP_VM_RETURN_SUSPEND when the supervisor suspended the generator's
+        // bytecode frame mid-execution.  Propagated unchanged by returning
+        // its value directly — callers (YIELD_FROM handler in vm.c, etc.)
+        // must handle SUSPEND distinctly from YIELD.
         return mp_obj_gen_resume(self_in, send_value, throw_value, ret_val);
     }
 

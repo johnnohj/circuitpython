@@ -277,6 +277,42 @@ the sentinel, escalate to 4b.
   use new name; `mp_obj_is_subclass_fast(exc, SystemExit)` check still
   catches it (option 4a).
 
+**Critical: `vm_yield_step` MP_VM_RETURN_EXCEPTION handler must
+distinguish the yield sentinel from genuine SystemExit**
+
+Current behavior (`supervisor/vm_yield.c:271-282`): any SystemExit
+subclass returns 0 (soft reboot / done), tearing down vm->code_state.
+When Phase 4 lands NLR-based propagation, the outer mp_execute_bytecode
+will return EXCEPTION with `mp_vm_yield_exception` in state[0], and
+this handler would incorrectly terminate execution instead of
+recognizing it as suspension.
+
+Required change (part of Phase 4):
+
+```c
+case MP_VM_RETURN_EXCEPTION: {
+    mp_obj_t exc = MP_OBJ_FROM_PTR(vm->code_state->state[0]);
+    #if MICROPY_VM_YIELD_ENABLED
+    // Distinguish yield sentinel from genuine SystemExit/exit().
+    // Sentinel is an identity check — we raised this exact static object.
+    if (exc == MP_OBJ_FROM_PTR(&mp_vm_suspend_sentinel)) {
+        // State already saved in mp_vm_yield_state by vm.c before the
+        // nlr_raise.  Next cp_step resumes at innermost suspended frame.
+        return 1;
+    }
+    #endif
+    if (mp_obj_is_subclass_fast(...SystemExit...)) {
+        /* genuine exit — unchanged */
+    }
+    ...
+}
+```
+
+Identity check (`exc == &mp_vm_suspend_sentinel`) is safer than
+subclass check — the sentinel is a static singleton, never constructed
+at Python level, so pointer equality is sufficient and cannot be
+confused with a user-raised SystemExit instance.
+
 **Verification**:
 - Frozen asyncio import with yield during init works.
 - `import some_module` where module code has a long loop works across
