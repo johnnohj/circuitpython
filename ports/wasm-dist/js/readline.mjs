@@ -30,22 +30,12 @@ export class Readline {
         this._history = [];
         this._historyIdx = -1;
         this._waitingForResult = true;  // true after cp_exec or at boot
-        this._keyQueue = [];      // buffered keys for Python supervisor (main.py)
 
         this.PS1 = '>>> ';
         this.PS2 = '... ';
     }
 
     get waitingForResult() { return this._waitingForResult; }
-
-    /** Check if keys are queued for the Python supervisor. */
-    hasKey() { return this._keyQueue.length > 0; }
-
-    /** Dequeue one key for the Python supervisor. */
-    getKey() { return this._keyQueue.length > 0 ? this._keyQueue.shift() : ''; }
-
-    /** Push a key into the queue for the Python supervisor. */
-    pushKey(key) { this._keyQueue.push(key); }
 
     /** Called when an expression finishes and the REPL should show a prompt. */
     onResult() {
