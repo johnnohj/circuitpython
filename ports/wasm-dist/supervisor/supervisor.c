@@ -666,167 +666,156 @@ uintptr_t cp_frozen_names_addr(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* cp_exec — compile and execute a REPL expression (called by JS)      */
+/* cp_run — unified run-entry (called by JS)                            */
 /*                                                                     */
-/* JS writes source text into the shared input buffer, then calls      */
-/* cp_exec(len).  We compile it, hand the module_fun to                */
-/* vm_yield_start_expr, and transition to SUP_EXPR_RUNNING.            */
-/* vm_yield_step() handles yield/resume from there.                    */
+/* One function to start any Python work.  JS writes source text (for  */
+/* CP_SRC_EXPR) or a path (for CP_SRC_FILE) into the shared input      */
+/* buffer, then calls cp_run(src_kind, src_len, ctx, priority).        */
+/*                                                                     */
+/*   src_kind:                                                         */
+/*     CP_SRC_EXPR (0) — compile buffer as REPL expression/statement   */
+/*                       (MP_PARSE_SINGLE_INPUT)                       */
+/*     CP_SRC_FILE (1) — buffer contains a file path; compile the file */
+/*                       (MP_PARSE_FILE_INPUT)                         */
+/*                                                                     */
+/*   ctx:                                                              */
+/*     CP_CTX_MAIN (-1) — run on context 0 (fails if ctx0 is busy)     */
+/*     CP_CTX_NEW  (-2) — allocate a new context                       */
+/*                                                                     */
+/*   priority — only used when ctx=CP_CTX_NEW                          */
 /*                                                                     */
 /* Returns:                                                            */
-/*   0  — started ok (will run in SUP_EXPR_RUNNING)                    */
-/*   1  — compile error (already printed to stderr)                    */
-/*   2  — busy (expression or code.py already running)                 */
+/*     ≥ 0 — context id the code is running in (0 for MAIN, 1+ for NEW) */
+/*     -1  — ctx0 busy (only when ctx=CP_CTX_MAIN)                     */
+/*     -2  — compile error                                             */
+/*     -3  — no free context slot (only when ctx=CP_CTX_NEW)           */
+/*     -4  — VM yield disabled / invalid args                          */
+/* ------------------------------------------------------------------ */
+
+#define CP_SRC_EXPR 0
+#define CP_SRC_FILE 1
+#define CP_CTX_MAIN (-1)
+#define CP_CTX_NEW  (-2)
+
+__attribute__((export_name("cp_run")))
+int cp_run(int src_kind, int src_len, int ctx, int priority) {
+    #if MICROPY_VM_YIELD_ENABLED
+    if (src_len <= 0 || src_len >= INPUT_BUF_SIZE) {
+        return -4;
+    }
+    if (src_kind != CP_SRC_EXPR && src_kind != CP_SRC_FILE) {
+        return -4;
+    }
+    _input_buf[src_len] = '\0';
+
+    /* MAIN target: ctx0 must be idle.  REPL is the only legal entry state
+     * for user-initiated runs on ctx0 (boot.py / code.py are driven by
+     * the internal lifecycle path). */
+    if (ctx == CP_CTX_MAIN && _state != SUP_REPL) {
+        return -1;
+    }
+
+    /* Allocate target context */
+    int target_id;
+    int prev_id = cp_context_active();
+    if (ctx == CP_CTX_MAIN) {
+        target_id = 0;
+        if (prev_id != 0) {
+            cp_context_save(prev_id);
+            cp_context_restore(0);
+        }
+    } else if (ctx == CP_CTX_NEW) {
+        target_id = cp_context_create((uint8_t)priority);
+        if (target_id < 0) {
+            return -3;
+        }
+        /* Preserve caller's globals/locals so compilation of this new
+         * context sees the importable module dict. */
+        mp_obj_dict_t *caller_globals = mp_globals_get();
+        mp_obj_dict_t *caller_locals = mp_locals_get();
+        cp_context_save(prev_id);
+        cp_context_restore(target_id);
+        mp_globals_set(caller_globals);
+        mp_locals_set(caller_locals);
+    } else {
+        return -4;
+    }
+
+    /* Compile on the target context's pystack */
+    mp_code_state_t *cs;
+    if (src_kind == CP_SRC_EXPR) {
+        cs = cp_compile_str(_input_buf, (size_t)src_len, MP_PARSE_SINGLE_INPUT);
+    } else {
+        cs = cp_compile_file(_input_buf);
+    }
+    if (cs == NULL) {
+        /* Compile failed — restore caller's context; destroy NEW target */
+        if (ctx == CP_CTX_NEW) {
+            cp_context_restore(prev_id);
+            cp_context_destroy(target_id);
+        }
+        return -2;
+    }
+
+    /* Start the VM, mark runnable, hand off to the scheduler */
+    vm_yield_start(cs);
+    cp_context_load(target_id, cs);
+    cp_context_set_status(target_id, CTX_RUNNABLE);
+
+    if (ctx == CP_CTX_MAIN) {
+        /* Convention: EXPR = REPL expression (ctx0_is_code=false),
+         *             FILE = code.py-like run (ctx0_is_code=true).
+         * JS controls which by choosing src_kind. */
+        _ctx0_is_code = (src_kind == CP_SRC_FILE);
+        _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+        SUP_DEBUG("cp_run → %s on ctx0",
+                  _ctx0_is_code ? "SUP_CODE_RUNNING" : "SUP_EXPR_RUNNING");
+    } else {
+        /* Save the new context's state and switch back to caller */
+        cp_context_save(target_id);
+        cp_context_restore(prev_id);
+        SUP_DEBUG("cp_run → ctx%d (kind=%d pri=%d)",
+                  target_id, src_kind, priority);
+    }
+    return target_id;
+    #else
+    (void)src_kind; (void)src_len; (void)ctx; (void)priority;
+    return -4;
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* Legacy run-entry shims — thin wrappers around cp_run.                */
+/* Kept as exports for JS callers that haven't migrated yet; scheduled  */
+/* for removal once all consumers use cp_run directly.                  */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_exec")))
 int cp_exec(int len) {
-    if (_state != SUP_REPL) {
-        return 2;  /* busy */
-    }
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
-        return 1;
-    }
-    _input_buf[len] = '\0';
-
-    #if MICROPY_VM_YIELD_ENABLED
-    /* Ensure context 0 is active — REPL expressions always run on ctx 0.
-     * If the scheduler last ran a different context, switch back. */
-    {
-        int cur = cp_context_active();
-        if (cur != 0) {
-            cp_context_save(cur);
-            cp_context_restore(0);
-        }
-    }
-
-    mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
-        MP_PARSE_SINGLE_INPUT);
-    if (cs == NULL) {
-        return 1;  /* compile error */
-    }
-
-    vm_yield_start(cs);
-    cp_context_load(0, cs);
-    cp_context_set_status(0, CTX_RUNNABLE);
-    _ctx0_is_code = false;
-    _state = SUP_EXPR_RUNNING;
-    SUP_DEBUG("cp_exec → SUP_EXPR_RUNNING");
-    return 0;
-    #else
+    /* Legacy return codes: 0=ok, 1=compile error, 2=busy.
+     * cp_run returns: 0=ok (ctx0), -1=busy, -2=compile error, -4=bad args. */
+    int r = cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
+    if (r == 0) return 0;
+    if (r == -1) return 2;
     return 1;
-    #endif
 }
-
-/* ------------------------------------------------------------------ */
-/* cp_context_exec — create a new context, compile code, start it      */
-/*                                                                     */
-/* JS writes source text into the shared input buffer, then calls      */
-/* cp_context_exec(len, priority).  A new context is created, the code */
-/* is compiled on its pystack, and it's marked runnable.  The scheduler */
-/* will pick it up on the next cp_step().                              */
-/*                                                                     */
-/* Returns context id (1–7) on success, -1 if no slots, -2 on compile  */
-/* error.                                                              */
-/* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_context_exec")))
 int cp_context_exec(int len, int priority) {
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
-        return -2;
-    }
-    _input_buf[len] = '\0';
-
-    #if MICROPY_VM_YIELD_ENABLED
-    int id = cp_context_create((uint8_t)priority);
-    if (id < 0) {
-        return -1;  /* no free slots */
-    }
-
-    /* Save current globals — new context inherits them for
-     * compilation (needs module dict to resolve imports). */
-    mp_obj_dict_t *caller_globals = mp_globals_get();
-    mp_obj_dict_t *caller_locals = mp_locals_get();
-
-    /* Switch to the new context's pystack so the compiled
-     * code_state lands in the right memory region. */
-    int prev_id = cp_context_active();
-    cp_context_save(prev_id);
-    cp_context_restore(id);
-
-    /* Restore globals for compilation — cp_context_restore set them
-     * to the new context's (empty) saved values. */
-    mp_globals_set(caller_globals);
-    mp_locals_set(caller_locals);
-
-    mp_code_state_t *cs = cp_compile_str(_input_buf, (size_t)len,
-        MP_PARSE_SINGLE_INPUT);
-    if (cs == NULL) {
-        /* Compile failed — restore previous context, destroy this one */
-        cp_context_restore(prev_id);
-        cp_context_destroy(id);
-        return -2;
-    }
-
-    vm_yield_start(cs);
-    cp_context_set_status(id, CTX_RUNNABLE);
-
-    /* Save new context state, switch back to caller */
-    cp_context_save(id);
-    cp_context_restore(prev_id);
-
-    SUP_DEBUG("cp_context_exec → ctx%d (pri=%d)", id, priority);
-    return id;
-    #else
+    /* Legacy: ≥1 ctx id, -1 no slots, -2 compile error.
+     * cp_run:  ≥1 ctx id, -3 no slots, -2 compile error. */
+    int r = cp_run(CP_SRC_EXPR, len, CP_CTX_NEW, priority);
+    if (r >= 0) return r;
+    if (r == -3) return -1;
     return -2;
-    #endif
 }
-
-/* ------------------------------------------------------------------ */
-/* cp_context_exec_file — create context, compile file, start it       */
-/*                                                                     */
-/* Like cp_context_exec but compiles a .py file from the filesystem.   */
-/* Path is passed via the shared input buffer.                         */
-/*                                                                     */
-/* Returns context id on success, -1 if no slots, -2 on compile error. */
-/* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_context_exec_file")))
 int cp_context_exec_file(int path_len, int priority) {
-    if (path_len <= 0 || path_len >= INPUT_BUF_SIZE) {
-        return -2;
-    }
-    _input_buf[path_len] = '\0';
-
-    #if MICROPY_VM_YIELD_ENABLED
-    int id = cp_context_create((uint8_t)priority);
-    if (id < 0) {
-        return -1;
-    }
-
-    int prev_id = cp_context_active();
-    cp_context_save(prev_id);
-    cp_context_restore(id);
-
-    mp_code_state_t *cs = cp_compile_file(_input_buf);
-    if (cs == NULL) {
-        cp_context_restore(prev_id);
-        cp_context_destroy(id);
-        return -2;
-    }
-
-    vm_yield_start(cs);
-    cp_context_set_status(id, CTX_RUNNABLE);
-
-    cp_context_save(id);
-    cp_context_restore(prev_id);
-
-    SUP_DEBUG("cp_context_exec_file(%s) → ctx%d (pri=%d)",
-            _input_buf, id, priority);
-    return id;
-    #else
+    int r = cp_run(CP_SRC_FILE, path_len, CP_CTX_NEW, priority);
+    if (r >= 0) return r;
+    if (r == -3) return -1;
     return -2;
-    #endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -937,30 +926,8 @@ void sh_on_event(const sh_event_t *evt) {
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Exported: cp_run_file                                               */
-/* ------------------------------------------------------------------ */
-
-__attribute__((export_name("cp_run_file")))
-int cp_run_file(const char *path) {
-    #if MICROPY_VM_YIELD_ENABLED
-    SUP_DEBUG("run_file: %s", path);
-    mp_code_state_t *cs = cp_compile_file(path);
-    if (cs == NULL) {
-        return -1;
-    }
-    vm_yield_start(cs);
-    cp_context_load(0, cs);
-    cp_context_set_status(0, CTX_RUNNABLE);
-    _ctx0_is_code = true;
-    _state = SUP_CODE_RUNNING;
-    return 0;
-    #else
-    (void)path;
-    SUP_DEBUG("run_file: VM yield not enabled");
-    return -1;
-    #endif
-}
+/* cp_run_file removed — zero consumers; superseded by
+ * cp_run(CP_SRC_FILE, path_len, CP_CTX_MAIN, 0). */
 
 /* ------------------------------------------------------------------ */
 /* Exported: accessors                                                 */

@@ -42,6 +42,12 @@ const SUP_BOOT_RUNNING = 6;
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
+// cp_run() kind/ctx constants (must match supervisor.c)
+const CP_SRC_EXPR = 0;
+const CP_SRC_FILE = 1;
+const CP_CTX_MAIN = -1;
+const CP_CTX_NEW  = -2;
+
 export class CircuitPython {
     /**
      * Create and boot a CircuitPython board.
@@ -99,11 +105,11 @@ export class CircuitPython {
 
     // ── Public API ──
 
-    /** Execute a REPL expression. */
+    /** Execute a REPL expression on ctx0. */
     exec(code) {
         if (!this._readline) return;
         const len = this._readline.writeInputBuf(code);
-        this._exports.cp_exec(len);
+        this._exports.cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
         this._readline._waitingForResult = true;
     }
 
@@ -219,7 +225,9 @@ export class CircuitPython {
     runCode(code, options = {}) {
         const { priority = 200, onDone = null } = options;
         const len = this._readline.writeInputBuf(code);
-        const id = this._exports.cp_context_exec(len, priority);
+        const r = this._exports.cp_run(CP_SRC_EXPR, len, CP_CTX_NEW, priority);
+        // Normalize cp_run codes to legacy runCode contract: -1=no slots, -2=compile error
+        const id = r >= 0 ? r : (r === -3 ? -1 : -2);
         if (id >= 0 && onDone) {
             this._ctxCallbacks.set(id, onDone);
         }
@@ -239,7 +247,8 @@ export class CircuitPython {
     runFile(path, options = {}) {
         const { priority = 200, onDone = null } = options;
         const len = this._readline.writeInputBuf(path);
-        const id = this._exports.cp_context_exec_file(len, priority);
+        const r = this._exports.cp_run(CP_SRC_FILE, len, CP_CTX_NEW, priority);
+        const id = r >= 0 ? r : (r === -3 ? -1 : -2);
         if (id >= 0 && onDone) {
             this._ctxCallbacks.set(id, onDone);
         }
