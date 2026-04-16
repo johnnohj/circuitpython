@@ -295,6 +295,17 @@ mp_vm_return_kind_t mp_obj_gen_resume(mp_obj_t self_in, mp_obj_t send_value, mp_
             #endif
             break;
 
+        #if MICROPY_VM_YIELD_ENABLED
+        case MP_VM_RETURN_SUSPEND:
+            // Supervisor suspended the generator's bytecode frame (budget,
+            // sleep, display, I/O wait).  code_state->ip and code_state->sp
+            // are preserved by MICROPY_VM_YIELD_SAVE_STATE in vm.c — DO NOT
+            // read *code_state.sp as a yielded value (not at a YIELD opcode)
+            // and DO NOT zero code_state.ip (generator is still live).
+            // Just propagate SUSPEND upward.  *ret_val intentionally unused.
+            break;
+        #endif
+
         case MP_VM_RETURN_EXCEPTION: {
             self->code_state.ip = 0;
             #if MICROPY_EMIT_NATIVE
