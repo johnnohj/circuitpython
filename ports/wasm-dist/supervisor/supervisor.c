@@ -89,21 +89,16 @@ extern void *mp_vm_yield_state;
 #define SUP_UNINITIALIZED    0
 #define SUP_REPL             1
 #define SUP_EXPR_RUNNING     2
-#define SUP_CODE_RUNNING     3
+#define SUP_CODE_RUNNING     3  /* ctx0 is running a file (boot.py, code.py, or any) */
 #define SUP_CODE_FINISHED    4
-/* 5 (formerly SUP_WAITING_FOR_KEY) intentionally skipped — that UX now
- * lives entirely in JS, signaled via cp_ctx0_completed_code(). */
-#define SUP_BOOT_RUNNING     6
+/* 5 (formerly SUP_WAITING_FOR_KEY) intentionally skipped — UX lives in JS.
+ * 6 (formerly SUP_BOOT_RUNNING) intentionally skipped — C no longer
+ *   distinguishes boot.py from code.py; JS knows which file it dispatched. */
 
 static int _state = SUP_UNINITIALIZED;
 static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
 static bool _code_header_printed = false;  /* deferred so JS can inject "last edited" */
 static uint32_t _frame_count = 0;
-
-/* Edge-trigger latch: set by cp_step when ctx0 transitions out of a
- * code.py run; cleared by the first cp_ctx0_completed_code() read.
- * Defined here (above cp_step) so cp_step can set it. */
-static bool _ctx0_code_completion_pending = false;
 
 /* Forward declarations for primitives used by cp_ctrl_c, etc. */
 int cp_is_runnable(void);
@@ -127,11 +122,8 @@ void supervisor_execution_status(void) {
         case SUP_REPL:
             serial_write("REPL");
             break;
-        case SUP_BOOT_RUNNING:
-            serial_write("boot.py");
-            break;
         case SUP_CODE_RUNNING:
-            serial_write("code.py");
+            serial_write("running");
             break;
         case SUP_CODE_FINISHED:
             serial_write("Done");
@@ -180,89 +172,18 @@ static void _print_banner(void) {
               MICROPY_BANNER_NAME_AND_VERSION);
 }
 
-static void _print_auto_reload_status(void) {
-    mp_hal_stdout_tx_str(
-        "Auto-reload is on. Simply save files over USB to run them or enter REPL to disable.\r\n");
-}
-
-static void _print_code_py_header(const char *filename) {
-    mp_hal_stdout_tx_str(filename);
-    mp_hal_stdout_tx_str(" output:\r\n");
-}
-
-/* _print_code_done and _print_press_any_key removed — JS owns the
- * "Code done running. / Press any key to enter the REPL." UX, signaled
- * by the cp_ctx0_completed_code() edge-trigger. */
-
 static void _print_soft_reboot(void) {
     mp_hal_stdout_tx_str("\r\nsoft reboot\r\n");
 }
 
-/* ------------------------------------------------------------------ */
-/* Lifecycle helpers — start boot.py / code.py via yield-stepping      */
-/* ------------------------------------------------------------------ */
+/* _print_code_done, _print_press_any_key, _print_auto_reload_status,
+ * _print_code_py_header removed — JS owns all these UX strings now
+ * (emitted by runBoardLifecycle() and the wait-for-key handler). */
 
-#if MICROPY_VM_YIELD_ENABLED
-
-/* Try to compile and start boot.py on context 0 via yield-stepping.
- * Returns true if boot.py exists and compiled successfully. */
-static bool _start_boot_py(void) {
-    mp_code_state_t *cs = cp_compile_file("/boot.py");
-    if (cs == NULL) return false;
-    vm_yield_start(cs);
-    cp_context_load(0, cs);
-    cp_context_set_status(0, CTX_RUNNABLE);
-    return true;
-}
-
-/* Try to compile and start code.py on context 0 via yield-stepping.
- * Returns true if code.py exists and compiled successfully. */
-static bool _start_code_py(void) {
-    mp_code_state_t *cs = cp_compile_file("/code.py");
-    if (cs == NULL) return false;
-    vm_yield_start(cs);
-    cp_context_load(0, cs);
-    cp_context_set_status(0, CTX_RUNNABLE);
-    return true;
-}
-
-/* Transition from boot.py done → code.py (or REPL if no code.py).
- * Called when boot.py finishes in cp_step, or when boot.py doesn't exist. */
-static void _boot_to_code(void) {
-    _print_auto_reload_status();
-    if (_start_code_py()) {
-        _ctx0_is_code = true;
-        _code_header_printed = false;  /* JS injects "last edited" first */
-        _state = SUP_CODE_RUNNING;
-        SUP_DEBUG("→ code.py");
-    } else {
-        _ctx0_is_code = false;
-        _state = SUP_REPL;
-        cp_context_set_status(0, CTX_IDLE);
-        SUP_DEBUG("→ REPL (no code.py)");
-    }
-}
-
-/* Full lifecycle restart: banner → boot.py → code.py → REPL.
- * Used by cp_ctrl_d and cp_auto_reload. */
-static void _restart_lifecycle(void) {
-    /* Stop any running code on ctx0 */
-    vm_yield_stop();
-    cp_context_set_status(0, CTX_IDLE);
-    _ctx0_is_code = false;
-    _code_header_printed = false;
-
-    _print_banner();
-
-    if (_start_boot_py()) {
-        _state = SUP_BOOT_RUNNING;
-        SUP_DEBUG("restart → boot.py");
-    } else {
-        _boot_to_code();
-    }
-}
-
-#endif /* MICROPY_VM_YIELD_ENABLED */
+/* Lifecycle helpers (_boot_to_code / _restart_lifecycle / _start_boot_py /
+ * _start_code_py) removed in Stage 3.  JS orchestrates the boot.py →
+ * code.py → REPL sequence via runBoardLifecycle(); C provides primitives
+ * (cp_run, cp_banner, cp_soft_reboot) but no longer owns the sequence. */
 
 /* ------------------------------------------------------------------ */
 /* Static buffers                                                      */
@@ -430,40 +351,16 @@ int cp_init(void) {
     vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
     #endif
 
-    /* ── Boot sequence ──
-     * Matches real CircuitPython board behavior:
-     *   banner → boot.py → auto-reload msg → code.py header → code.py → REPL
-     * settings.toml is read on demand by os.getenv().
-     *
-     * boot.py and code.py both run via yield-stepping so the frame loop
-     * stays responsive.  The supervisor chains: boot.py done → code.py,
-     * code.py done → WAITING_FOR_KEY → REPL.  See cp_step(). */
+    /* cp_init no longer runs boot.py / code.py — JS orchestrates the
+     * lifecycle via runBoardLifecycle().  We come up in REPL state with
+     * ctx0 idle; JS calls cp_banner() and cp_run() as needed. */
+    _state = SUP_REPL;
+    _ctx0_is_code = false;
+    _code_header_printed = false;
+    cp_context_set_status(0, CTX_IDLE);
 
-    /* 1. Print banner (version + board ID) */
-    _print_banner();
-
-    /* 2. Start boot.py via yield-stepping (or skip to code.py) */
-    #if MICROPY_VM_YIELD_ENABLED
-    if (_start_boot_py()) {
-        _state = SUP_BOOT_RUNNING;
-        SUP_DEBUG("initialized → boot.py (heap=%dK budget=%dms)",
-                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
-    } else {
-        /* No boot.py → skip to code.py / REPL */
-        _boot_to_code();
-        SUP_DEBUG("initialized → %s (heap=%dK budget=%dms)",
-                  _state == SUP_CODE_RUNNING ? "code.py" : "REPL",
-                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
-    }
-    #else
-    {
-        _state = SUP_REPL;
-        cp_context_set_status(0, CTX_IDLE);
-        SUP_DEBUG("initialized → REPL (heap=%dK budget=%dms)",
-                  WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
-    }
-    #endif
-
+    SUP_DEBUG("cp_init complete (heap=%dK budget=%dms) — awaiting JS orchestration",
+              WASM_GC_HEAP_SIZE / 1024, WASM_FRAME_BUDGET_MS);
     return 0;
 }
 
@@ -524,13 +421,6 @@ int cp_step(uint32_t now_ms) {
         }
         #endif
     } else {
-        /* Print deferred "code.py output:" header on first frame.
-         * Deferred so JS can inject "last edited" line after cp_init. */
-        if (_ctx0_is_code && !_code_header_printed) {
-            _print_code_py_header("code.py");
-            _code_header_printed = true;
-        }
-
         /* Browser mode: scheduler-driven context dispatch.
          * Pick the highest-priority runnable context and step it. */
         int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
@@ -547,25 +437,10 @@ int cp_step(uint32_t now_ms) {
 
             if (ret == 0 || ret == 2) {
                 /* Normal completion or exception — context is done */
-
-                if (ctx_id == 0 && _state == SUP_BOOT_RUNNING) {
-                    /* boot.py finished → chain to code.py.
-                     * pystack was freed by vm_yield_step, so we can
-                     * compile code.py directly on the same pystack. */
-                    SUP_DEBUG("boot.py done (ret=%d)", ret);
-                    _boot_to_code();
-                } else {
-                    cp_context_set_status(ctx_id, CTX_DONE);
-                    SUP_DEBUG("ctx%d done", ctx_id);
-
-                    /* If context 0 was running code.py, set the edge-trigger
-                     * latch so JS can fire its wait-for-key UX.  The
-                     * "Code done running." / "Press any key ..." messages
-                     * are now printed by JS. */
-                    if (ctx_id == 0 && _ctx0_is_code) {
-                        _ctx0_code_completion_pending = true;
-                    }
-                }
+                cp_context_set_status(ctx_id, CTX_DONE);
+                SUP_DEBUG("ctx%d done", ctx_id);
+                /* JS's runBoardLifecycle awaits ctx0 idle to advance stages;
+                 * no edge-trigger latch needed here. */
             } else {
                 /* Yielded — sleeping or budget exhausted.
                  * mp_hal_delay_ms already set CTX_SLEEPING if applicable;
@@ -577,9 +452,8 @@ int cp_step(uint32_t now_ms) {
         }
 
         /* Update _state from context 0.  JS-triggered transitions
-         * (cp_exec, cp_ctrl_d, cp_run_file) set the initial _state;
-         * this block handles ongoing transitions (e.g. expression
-         * finishes → CTX_DONE → SUP_REPL). */
+         * (cp_run, cp_ctrl_d) set the initial _state; this block handles
+         * ongoing transitions (e.g. expression finishes → CTX_DONE → SUP_REPL). */
         uint8_t ctx0 = cp_context_get_status(0);
         if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
             /* Whatever ctx0 was running, it's done.  Default to REPL;
@@ -587,10 +461,7 @@ int cp_step(uint32_t now_ms) {
             _state = SUP_REPL;
             _ctx0_is_code = false;
         } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
-            /* Don't override SUP_BOOT_RUNNING — boot.py is still stepping */
-            if (_state != SUP_BOOT_RUNNING) {
-                _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
-            }
+            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
         }
     }
     #endif
@@ -854,32 +725,50 @@ void cp_ctrl_c(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* cp_ctrl_d — soft reboot (called by JS on Ctrl-D)                    */
+/* cp_banner — print the CircuitPython banner (version + board id)     */
+/*                                                                     */
+/* JS calls this at lifecycle start.  C owns the banner string because */
+/* the version/board identifiers live in MICROPY_BANNER_NAME_AND_VERSION */
+/* and the port-specific "running on <board>" line.                    */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_banner")))
+void cp_banner(void) {
+    _print_banner();
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_soft_reboot — stop ctx0 + print "soft reboot" + return to REPL   */
+/*                                                                     */
+/* Does NOT auto-restart boot.py / code.py.  JS observes the state     */
+/* transition and decides what to run next (typically, a fresh call    */
+/* to runBoardLifecycle()).                                            */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_soft_reboot")))
+void cp_soft_reboot(void) {
+    #if MICROPY_VM_YIELD_ENABLED
+    _print_soft_reboot();
+    vm_yield_stop();
+    cp_context_set_status(0, CTX_IDLE);
+    _ctx0_is_code = false;
+    _code_header_printed = false;
+    _state = SUP_REPL;
+    SUP_DEBUG("soft reboot — ctx0 stopped, JS owns next step");
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_ctrl_d — Ctrl-D from JS: soft reboot (JS re-invokes lifecycle)   */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_ctrl_d")))
 void cp_ctrl_d(void) {
-    #if MICROPY_VM_YIELD_ENABLED
-    _print_soft_reboot();
-    _restart_lifecycle();
-    #endif
+    cp_soft_reboot();
 }
 
-/* ------------------------------------------------------------------ */
-/* cp_auto_reload — restart lifecycle after file change                 */
-/*                                                                     */
-/* Called by JS when code.py (or another .py file) is written.         */
-/* Same as Ctrl-D but triggered by filesystem change.                  */
-/* ------------------------------------------------------------------ */
-
-__attribute__((export_name("cp_auto_reload")))
-void cp_auto_reload(void) {
-    #if MICROPY_VM_YIELD_ENABLED
-    _print_soft_reboot();
-    _restart_lifecycle();
-    SUP_DEBUG("auto-reload triggered");
-    #endif
-}
+/* cp_auto_reload removed — JS handles file-change events directly by
+ * calling cp_soft_reboot() then runBoardLifecycle(). */
 
 /* ------------------------------------------------------------------ */
 /* cp_continue — check if input needs more lines (called by JS)        */
@@ -941,16 +830,16 @@ int cp_get_state(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* cp_is_runnable / cp_needs_input / cp_ctx0_completed_code            */
+/* cp_is_runnable / cp_needs_input                                      */
 /*                                                                     */
 /* Minimal JS-facing predicates that replace SUP_* polling.            */
 /* JS shouldn't need to know which supervisor substate we're in — it   */
 /* only needs: is there still work for me to tick, and does anything   */
-/* want input?  These are the primitives for that.                     */
+/* want input?                                                         */
 /*                                                                     */
-/* cp_ctx0_completed_code is a one-shot edge-trigger: it returns 1     */
-/* exactly once per code.py completion, then clears.  Lets JS fire     */
-/* its wait-for-key UX without polling supervisor state.               */
+/* (The cp_ctx0_completed_code edge-trigger from Stage 1 was removed in */
+/* Stage 3; runBoardLifecycle awaits ctx0 idle directly and owns the   */
+/* "Code done running. / Press any key ..." UX itself.)                */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_is_runnable")))
@@ -975,14 +864,12 @@ int cp_needs_input(void) {
     return (s0 == CTX_IDLE || s0 == CTX_DONE || s0 == CTX_FREE) ? 1 : 0;
 }
 
+#if 0  /* removed in Stage 3 — see comment block above */
 __attribute__((export_name("cp_ctx0_completed_code")))
 int cp_ctx0_completed_code(void) {
-    if (_ctx0_code_completion_pending) {
-        _ctx0_code_completion_pending = false;
-        return 1;
-    }
     return 0;
 }
+#endif
 
 __attribute__((export_name("cp_set_debug")))
 void cp_set_debug(int enabled) {

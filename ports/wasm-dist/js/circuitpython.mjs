@@ -31,14 +31,7 @@ import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targ
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
-// Legacy SUP_* numeric codes — JS logic no longer *depends* on these for UX
-// decisions (it uses cp_is_runnable / cp_needs_input / cp_ctx0_completed_code
-// instead), but three are still read for the boot→code transition detection
-// and to gate prompt display on a finished expression.  Scheduled for removal
-// in Stage 3, when JS orchestrates boot/code/REPL directly.
-const SUP_REPL = 1;
-const SUP_CODE_RUNNING = 3;
-const SUP_BOOT_RUNNING = 6;
+// Context-status display names (matches CTX_* in supervisor/context.h)
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
@@ -47,6 +40,10 @@ const CP_SRC_EXPR = 0;
 const CP_SRC_FILE = 1;
 const CP_CTX_MAIN = -1;
 const CP_CTX_NEW  = -2;
+
+// Auto-reload message — printed between boot.py and code.py by runBoardLifecycle
+const AUTO_RELOAD_MSG =
+    'Auto-reload is on. Simply save files over USB to run them or enter REPL to disable.\r\n';
 
 export class CircuitPython {
     /**
@@ -97,7 +94,7 @@ export class CircuitPython {
         this._ctxCallbacks = new Map();  // context id → onDone callback
         this._autoReloadTimer = null;
         this._autoReloadEnabled = false;
-        this._prevSupState = 0;  // track transitions for "last edited" injection
+        // (ex-_prevSupState — boot-transition detection removed in Stage 3)
         this._idb = null;        // saved for _printCodePyLastEdited
         this._target = null;     // external hardware target
         this._pollCounter = 0;   // input polling throttle
@@ -130,10 +127,13 @@ export class CircuitPython {
     ctrlD() {
         this._waitingForKey = false;
         this._codeDoneFired = false;
+        // C prints "soft reboot" and stops ctx0; JS re-invokes the lifecycle
+        // to run boot.py / code.py again (no implicit restart in C anymore).
         this._exports.cp_ctrl_d();
         if (this._readline) {
             this._readline._waitingForResult = true;
         }
+        this.runBoardLifecycle();
     }
 
     /** Type a single character. */
@@ -185,8 +185,6 @@ export class CircuitPython {
     get state() {
         if (!this._exports) return 'loading';
         if (this._waitingForKey) return 'waiting';
-        const supState = this._exports.cp_get_state();
-        if (supState === SUP_BOOT_RUNNING) return 'booting';
         return this._exports.cp_is_runnable() ? 'running' : 'repl';
     }
 
@@ -208,6 +206,100 @@ export class CircuitPython {
      * @returns {HardwareModule|null}
      */
     hardware(name) { return this._hw.get(name); }
+
+    // ── Board lifecycle orchestration ──
+
+    /**
+     * Run the traditional CircuitPython board lifecycle:
+     *   banner → boot.py → auto-reload msg → code.py last-edited →
+     *   code.py header → code.py → (wait-for-key) → REPL
+     *
+     * All stages are optional; the default matches real-board behavior.
+     * Safe to call multiple times (soft-reboot path re-invokes it).
+     *
+     * The returned promise resolves once code.py has been dispatched
+     * (not when it finishes — ongoing execution is handled by _loop).
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.printBanner=true]
+     * @param {boolean} [options.bootPy=true]   — attempt /boot.py if present
+     * @param {boolean} [options.autoReloadMsg=true]
+     * @param {boolean} [options.codePy=true]   — attempt /code.py if present
+     * @returns {Promise<void>}
+     */
+    async runBoardLifecycle(options = {}) {
+        const {
+            printBanner = true,
+            bootPy = true,
+            autoReloadMsg = true,
+            codePy = true,
+        } = options;
+
+        if (printBanner) this._exports.cp_banner();
+
+        if (bootPy) {
+            if (this._runMainFile('/boot.py') === 0) {
+                await this._awaitCtx0Idle();
+            }
+            // Non-zero return = no /boot.py (compile failed) — skip silently.
+        }
+
+        if (autoReloadMsg) this._handleStdout(AUTO_RELOAD_MSG);
+
+        if (codePy) {
+            this._printCodePyLastEdited(this._idb);
+            if (this._runMainFile('/code.py') === 0) {
+                this._handleStdout('code.py output:\r\n');
+                await this._awaitCtx0Idle();
+                // code.py finished — fire wait-for-key UX.  runBoardLifecycle
+                // owns this because it knows which run was the user-visible
+                // "code.py" (vs. the preceding boot.py, which doesn't trigger
+                // wait-for-key even though it's also an SRC_FILE run on ctx0).
+                this._waitingForKey = true;
+                this._handleStdout('\r\nCode done running.\r\n');
+                this._handleStdout('\r\nPress any key to enter the REPL. Use CTRL-D to reload.\r\n');
+                if (this._onCodeDone && !this._codeDoneFired) {
+                    this._codeDoneFired = true;
+                    this._onCodeDone();
+                }
+            }
+        }
+    }
+
+    /** Write a string to the shared input buffer. Returns bytes written. */
+    _writeInputBuf(text) {
+        const enc = new TextEncoder();
+        const bytes = enc.encode(text);
+        const addr = this._exports.cp_input_buf_addr();
+        const cap = this._exports.cp_input_buf_size() - 1;
+        const len = Math.min(bytes.length, cap);
+        new Uint8Array(this._exports.memory.buffer, addr, len)
+            .set(bytes.subarray(0, len));
+        return len;
+    }
+
+    /** Start /<path>.py on ctx0 via cp_run(CP_SRC_FILE, CP_CTX_MAIN). */
+    _runMainFile(path) {
+        const len = this._writeInputBuf(path);
+        return this._exports.cp_run(CP_SRC_FILE, len, CP_CTX_MAIN, 0);
+    }
+
+    /** Resolve once ctx0 is idle/done/free. */
+    _awaitCtx0Idle() {
+        return new Promise((resolve) => {
+            const check = () => {
+                if (!this._exports) { resolve(); return; }
+                const m = this._readContextMeta(0);
+                // 0=FREE 1=IDLE 6=DONE — anything else means still running
+                if (!m || m.status === 0 || m.status === 1 || m.status === 6) {
+                    resolve();
+                    return;
+                }
+                setTimeout(check, 16);
+            };
+            check();
+        });
+    }
 
     // ── Multi-context API ──
 
@@ -451,16 +543,9 @@ export class CircuitPython {
             }
         }
 
-        // Initialize the supervisor (prints banner, starts boot.py or code.py)
+        // Initialize the supervisor (core init only — no auto-lifecycle).
+        // JS orchestrates boot.py → code.py → REPL via runBoardLifecycle().
         this._exports.cp_init();
-        this._prevSupState = this._exports.cp_get_state();
-
-        // Inject "code.py last edited" if cp_init went directly to code.py
-        // (no boot.py).  When boot.py exists, injection happens in _loop
-        // after boot.py finishes and code.py starts.
-        if (this._prevSupState === 3 /* SUP_CODE_RUNNING */) {
-            this._printCodePyLastEdited(idb);
-        }
 
         // Display (browser only)
         this._display = options.canvas
@@ -556,8 +641,17 @@ export class CircuitPython {
         // Enable auto-reload now that init is complete
         this._autoReloadEnabled = true;
 
-        // Start frame loop
+        // Start frame loop BEFORE kicking off lifecycle so cp_step ticks
+        // boot.py / code.py forward.
         this._raf = env.requestFrame(() => this._loop());
+
+        // Kick off the traditional board lifecycle (banner → boot → code → REPL).
+        // Fire-and-forget: _loop advances ctx0 each frame; runBoardLifecycle
+        // awaits ctx0 idle between stages.  Callers can pass autoLifecycle:false
+        // to skip and orchestrate manually (e.g., headless test harnesses).
+        if (options.autoLifecycle !== false) {
+            this.runBoardLifecycle();
+        }
     }
 
     /** Print "code.py last edited: ..." line via cp_print. */
@@ -593,10 +687,13 @@ export class CircuitPython {
             if (!this._exports) return;
             this._waitingForKey = false;
             this._codeDoneFired = false;
-            this._exports.cp_auto_reload();
+            // Soft-reboot (stops ctx0, prints "soft reboot"), then re-run
+            // the lifecycle — JS owns both halves now.
+            this._exports.cp_soft_reboot();
             if (this._readline) {
                 this._readline._waitingForResult = true;
             }
+            this.runBoardLifecycle();
         }, 500);
     }
 
@@ -642,7 +739,7 @@ export class CircuitPython {
         // Pre-step: let hardware modules inject fresh data
         this._hw.preStep(this._wasi, nowMs);
 
-        const supState = this._exports.cp_step(nowMs);
+        this._exports.cp_step(nowMs);
 
         // Post-step: let hardware modules read output state
         this._hw.postStep(this._wasi, nowMs);
@@ -664,32 +761,16 @@ export class CircuitPython {
 
         this._frameCount++;
 
-        // Detect boot.py → code.py transition: inject "last edited" timestamp
-        if (this._prevSupState === SUP_BOOT_RUNNING && supState !== SUP_BOOT_RUNNING) {
-            if (supState === SUP_CODE_RUNNING) {
-                this._printCodePyLastEdited(this._idb);
-            }
-        }
-        this._prevSupState = supState;
+        // Code-done UX is driven by runBoardLifecycle now (it awaits ctx0
+        // idle after code.py and fires "Code done running." / "Press any key"
+        // itself).  _loop no longer consumes cp_ctx0_completed_code — the
+        // orchestrator knows which file was code.py and which was boot.py.
 
-        // When code.py finishes, the supervisor sets an edge-trigger latch
-        // that we consume here.  JS owns the "Press any key ..." UX entirely —
-        // C does not track a WAITING_FOR_KEY substate anymore.
-        if (this._exports.cp_ctx0_completed_code() && !this._waitingForKey) {
-            this._waitingForKey = true;
-            this._handleStdout('\r\nCode done running.\r\n');
-            this._handleStdout('\r\nPress any key to enter the REPL. Use CTRL-D to reload.\r\n');
-
-            // Fire onCodeDone callback (e.g. for --exit mode)
-            if (this._onCodeDone && !this._codeDoneFired) {
-                this._codeDoneFired = true;
-                this._onCodeDone();
-            }
-        }
-
-        // When expression finishes → show prompt
-        if (supState === SUP_REPL && !this._waitingForKey
-            && this._readline.waitingForResult) {
+        // When a REPL expression (or any ctx0 run) finishes and nothing else
+        // is runnable, show the prompt.  cp_needs_input() encapsulates the
+        // right condition: no runnable context + ctx0 idle/done/free.
+        if (!this._waitingForKey && this._readline.waitingForResult
+            && this._exports.cp_needs_input()) {
             this._readline.onResult();
         }
 
@@ -727,14 +808,10 @@ export class CircuitPython {
                 const yr = YIELD_REASONS[state.yieldReason] || '?';
                 const ctx0 = this._readContextMeta(0);
                 const ctxSt = ctx0 ? CTX_STATUSES[ctx0.status] || '?' : '?';
-                // Prefer the new predicates over raw SUP_* for JS-facing status.
-                // Fall back to the legacy string for booting (which cp_is_runnable
-                // doesn't distinguish) and waiting-for-key (JS-owned).
+                // Status derived purely from predicates — no raw SUP_* polling.
                 let sup;
                 if (this._waitingForKey) {
                     sup = 'WAIT';
-                } else if (state.supState === 6 /* SUP_BOOT_RUNNING */) {
-                    sup = 'BOOT';
                 } else if (this._exports.cp_is_runnable()) {
                     sup = 'RUN';
                 } else {
