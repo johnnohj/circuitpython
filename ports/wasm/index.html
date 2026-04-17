@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CircuitPython — Browser Board</title>
+<style>
+:root {
+    --bg: #1e1e2e;
+    --surface: #282838;
+    --border: #3e3e5e;
+    --text: #cdd6f4;
+    --dim: #6c7086;
+    --accent: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --yellow: #f9e2af;
+    --font: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr 1fr;
+    gap: 1px;
+}
+
+/* ── Header ── */
+header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+}
+header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+}
+header .status {
+    color: var(--dim);
+    font-size: 12px;
+    margin-left: auto;
+}
+
+/* ── Panels ── */
+.panel {
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.panel-title {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.panel-title .actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+}
+
+/* ── Board panel (top-left) ── */
+#board-panel {
+    grid-column: 1;
+    grid-row: 2;
+}
+#board-canvas {
+    flex: 1;
+    min-height: 0;
+}
+#board-svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* ── Output sub-panel ── */
+#output {
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 8px;
+    overflow-y: auto;
+    max-height: 120px;
+    border-top: 1px solid var(--border);
+    color: var(--green);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* ── Editor panel (top-right) ── */
+#editor-panel {
+    grid-column: 2;
+    grid-row: 2;
+}
+#editor {
+    flex: 1;
+    resize: none;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border: none;
+    outline: none;
+    tab-size: 4;
+    min-height: 0;
+}
+
+/* ── REPL panel (bottom, full width) ── */
+#repl-panel {
+    grid-column: 1 / -1;
+    grid-row: 3;
+}
+#repl-output {
+    flex: 1;
+    font-family: var(--font);
+    font-size: 13px;
+    padding: 8px 12px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    min-height: 0;
+    color: var(--text);
+}
+#repl-input-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 12px 8px;
+    border-top: 1px solid var(--border);
+    gap: 4px;
+}
+#repl-prompt {
+    color: var(--accent);
+    font-weight: 600;
+    user-select: none;
+}
+#repl-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+}
+
+/* ── Buttons ── */
+button {
+    background: var(--border);
+    color: var(--text);
+    border: none;
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-family: var(--font);
+    font-size: 11px;
+    cursor: pointer;
+}
+button:hover { background: var(--accent); color: var(--bg); }
+button.danger:hover { background: var(--red); }
+button.primary { background: var(--accent); color: var(--bg); }
+
+/* ── Board visualization ── */
+.pin-circle {
+    cursor: pointer;
+    transition: fill 0.1s;
+}
+.pin-label {
+    font-size: 9px;
+    fill: var(--dim);
+    text-anchor: middle;
+    pointer-events: none;
+    font-family: var(--font);
+}
+.neopixel-led {
+    transition: fill 0.05s;
+}
+.component-label {
+    font-size: 8px;
+    fill: var(--dim);
+    text-anchor: middle;
+    font-family: var(--font);
+}
+</style>
+</head>
+<body>
+
+<header>
+    <h1>CircuitPython</h1>
+    <span id="board-name">Loading...</span>
+    <span class="status" id="status">Initializing</span>
+</header>
+
+<!-- Board + Output (top-left) -->
+<div class="panel" id="board-panel">
+    <div class="panel-title">
+        Board
+        <div class="actions">
+            <button id="btn-a" title="Press Button A">BTN A</button>
+            <button id="btn-b" title="Press Button B">BTN B</button>
+        </div>
+    </div>
+    <div id="board-canvas">
+        <svg id="board-svg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div id="output"></div>
+</div>
+
+<!-- Editor (top-right) -->
+<div class="panel" id="editor-panel">
+    <div class="panel-title">
+        code.py
+        <div class="actions">
+            <button id="btn-run" class="primary" title="Save & Run (Ctrl+S)">Run</button>
+            <button id="btn-stop" class="danger" title="Stop (Ctrl+C)">Stop</button>
+            <button id="btn-reboot" title="Soft Reboot (Ctrl+D)">Reboot</button>
+        </div>
+    </div>
+    <textarea id="editor" spellcheck="false">import board
+import digitalio
+import time
+
+led = digitalio.DigitalInOut(board.LED)
+led.switch_to_output()
+
+while True:
+    led.value = not led.value
+    time.sleep(0.5)
+</textarea>
+</div>
+
+<!-- REPL (bottom) -->
+<div class="panel" id="repl-panel">
+    <div class="panel-title">
+        REPL
+        <div class="actions">
+            <button id="btn-clear-repl">Clear</button>
+        </div>
+    </div>
+    <div id="repl-output"></div>
+    <div id="repl-input-row">
+        <span id="repl-prompt">&gt;&gt;&gt;</span>
+        <input id="repl-input" type="text" autocomplete="off" placeholder="Type Python here...">
+    </div>
+</div>
+
+<script type="module">
+import { CircuitPython } from './js/circuitpython.mjs';
+import { BoardAdapter, loadBoardAdapter } from './js/board-adapter.mjs';
+
+// ── DOM elements ──
+const $status = document.getElementById('status');
+const $boardName = document.getElementById('board-name');
+const $output = document.getElementById('output');
+const $editor = document.getElementById('editor');
+const $replOutput = document.getElementById('repl-output');
+const $replInput = document.getElementById('repl-input');
+const $svg = document.getElementById('board-svg');
+
+// ── State ──
+let board = null;
+let adapter = null;
+let codeRunning = false;
+
+// ── Initialize ──
+async function init() {
+    $status.textContent = 'Loading adapter...';
+    adapter = await loadBoardAdapter(
+        'boards/wasm_browser/definition.json',
+        'boards/wasm_browser/magic.json',
+    );
+    $boardName.textContent = adapter.displayName;
+
+    $status.textContent = 'Loading WASM...';
+    board = await CircuitPython.create({
+        wasmUrl: 'build-browser/circuitpython.wasm',
+        codePy: $editor.value,
+        onStdout: handleStdout,
+        onStderr: (text) => appendOutput(text, 'var(--red)'),
+        onCodeDone: () => {
+            codeRunning = false;
+            $status.textContent = 'Ready';
+        },
+    });
+
+    codeRunning = true;
+    $status.textContent = 'Running';
+
+    // Build board SVG
+    renderBoardSvg();
+
+    // Start render loop for board visualization
+    requestAnimationFrame(renderLoop);
+}
+
+// ── Stdout handling ──
+// During code.py execution, stdout goes to the output panel.
+// During REPL, stdout goes to the REPL panel.
+function handleStdout(text) {
+    if (codeRunning) {
+        appendOutput(text);
+    } else {
+        appendRepl(text);
+    }
+}
+
+function appendOutput(text, color) {
+    $output.textContent += text;
+    $output.scrollTop = $output.scrollHeight;
+}
+
+function appendRepl(text) {
+    $replOutput.textContent += text;
+    $replOutput.scrollTop = $replOutput.scrollHeight;
+}
+
+// ── Editor actions ──
+document.getElementById('btn-run').addEventListener('click', runCode);
+document.getElementById('btn-stop').addEventListener('click', () => board?.ctrlC());
+document.getElementById('btn-reboot').addEventListener('click', () => {
+    $output.textContent = '';
+    board?.ctrlD();
+    codeRunning = true;
+    $status.textContent = 'Rebooting...';
+});
+
+function runCode() {
+    if (!board) return;
+    $output.textContent = '';
+    const code = $editor.value;
+    // Write to MEMFS and trigger auto-reload
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode(code));
+    codeRunning = true;
+    $status.textContent = 'Running';
+}
+
+// Ctrl+S to run
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        runCode();
+    }
+});
+
+// ── REPL ──
+$replInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const line = $replInput.value;
+        $replInput.value = '';
+        appendRepl('>>> ' + line + '\n');
+        board?.exec(line);
+    }
+});
+
+document.getElementById('btn-clear-repl').addEventListener('click', () => {
+    $replOutput.textContent = '';
+});
+
+// ── Button controls ──
+function setupButton(btnId, pinName) {
+    const el = document.getElementById(btnId);
+    el.addEventListener('mousedown', () => adapter?.setInput(board, pinName, false));
+    el.addEventListener('mouseup', () => adapter?.setInput(board, pinName, true));
+    el.addEventListener('mouseleave', () => adapter?.setInput(board, pinName, true));
+}
+setupButton('btn-a', 'BUTTON_A');
+setupButton('btn-b', 'BUTTON_B');
+
+// ── Board SVG rendering ──
+function renderBoardSvg() {
+    if (!adapter) return;
+    const ns = 'http://www.w3.org/2000/svg';
+
+    // Board background
+    const bg = document.createElementNS(ns, 'rect');
+    bg.setAttribute('width', '400');
+    bg.setAttribute('height', '220');
+    bg.setAttribute('rx', '8');
+    bg.setAttribute('fill', '#1a3a2a');
+    bg.setAttribute('stroke', '#2a5a3a');
+    bg.setAttribute('stroke-width', '2');
+    $svg.appendChild(bg);
+
+    // Title
+    const title = document.createElementNS(ns, 'text');
+    title.setAttribute('x', '200');
+    title.setAttribute('y', '115');
+    title.setAttribute('text-anchor', 'middle');
+    title.setAttribute('fill', '#3a6a4a');
+    title.setAttribute('font-size', '12');
+    title.setAttribute('font-family', 'var(--font)');
+    title.textContent = adapter.boardName.toUpperCase();
+    $svg.appendChild(title);
+
+    // Pins
+    for (const pin of adapter.pins) {
+        const v = pin.visual;
+        if (!v) continue;
+
+        const g = document.createElementNS(ns, 'g');
+        g.setAttribute('data-pin', pin.name);
+
+        const circle = document.createElementNS(ns, 'circle');
+        circle.setAttribute('cx', v.x);
+        circle.setAttribute('cy', v.y);
+        circle.setAttribute('r', v.side === 'internal' ? 8 : 6);
+        circle.setAttribute('fill', '#333');
+        circle.setAttribute('stroke', '#555');
+        circle.setAttribute('stroke-width', '1');
+        circle.classList.add('pin-circle');
+        g.appendChild(circle);
+
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', v.x);
+        label.setAttribute('y', v.side === 'bottom' ? v.y + 16 : v.y - 10);
+        label.classList.add('pin-label');
+        label.textContent = pin.displayName || pin.name;
+        g.appendChild(label);
+
+        $svg.appendChild(g);
+    }
+
+    // NeoPixel strip placeholder (10 LEDs near NEOPIXEL pin)
+    const npPin = adapter.resolvePin('NEOPIXEL');
+    if (npPin) {
+        for (let i = 0; i < 10; i++) {
+            const led = document.createElementNS(ns, 'circle');
+            led.setAttribute('cx', 200 + (i - 4.5) * 18);
+            led.setAttribute('cy', 160);
+            led.setAttribute('r', 7);
+            led.setAttribute('fill', '#111');
+            led.setAttribute('stroke', '#333');
+            led.setAttribute('stroke-width', '1');
+            led.classList.add('neopixel-led');
+            led.setAttribute('data-np-index', i);
+            $svg.appendChild(led);
+        }
+    }
+
+    // Power pins
+    if (adapter.power) {
+        for (const p of [...(adapter.power.threeVolt || []), ...(adapter.power.fiveVolt || []), ...(adapter.power.ground || [])]) {
+            const label = document.createElementNS(ns, 'text');
+            label.setAttribute('x', p.x);
+            label.setAttribute('y', p.label === 'GND' ? (p.y > 100 ? p.y + 16 : p.y - 10) : p.y - 10);
+            label.classList.add('pin-label');
+            label.setAttribute('fill', p.label === 'GND' ? '#666' : (p.label === '3V3' ? 'var(--yellow)' : 'var(--red)'));
+            label.textContent = p.label;
+            $svg.appendChild(label);
+        }
+    }
+}
+
+// ── Live state render loop ──
+function renderLoop() {
+    if (!board || !adapter) {
+        requestAnimationFrame(renderLoop);
+        return;
+    }
+
+    const snap = adapter.getSnapshot(board);
+
+    // Update pin circles based on state
+    for (const [name, state] of Object.entries(snap.pins)) {
+        const g = $svg.querySelector(`[data-pin="${name}"]`);
+        if (!g) continue;
+        const circle = g.querySelector('.pin-circle');
+        if (!circle) continue;
+
+        if (!state.gpio || !state.gpio.enabled) {
+            circle.setAttribute('fill', '#333');
+            circle.setAttribute('stroke', '#555');
+        } else if (state.gpio.direction === 1) {
+            // Output pin
+            circle.setAttribute('fill', state.gpio.value ? '#a6e3a1' : '#45475a');
+            circle.setAttribute('stroke', state.gpio.value ? '#74c7a0' : '#555');
+        } else {
+            // Input pin
+            circle.setAttribute('fill', state.gpio.value ? '#89b4fa' : '#313244');
+            circle.setAttribute('stroke', '#555');
+        }
+
+        // Analog overlay
+        if (state.analog && state.analog.enabled) {
+            const pct = state.analog.value / 65535;
+            circle.setAttribute('fill', `hsl(${120 * pct}, 60%, ${30 + 30 * pct}%)`);
+        }
+
+        // PWM overlay (brightness)
+        if (state.pwm && state.pwm.enabled) {
+            const b = state.pwm.brightness;
+            circle.setAttribute('fill', `rgb(${Math.round(b * 166)}, ${Math.round(b * 227)}, ${Math.round(b * 161)})`);
+        }
+    }
+
+    // Update NeoPixel LEDs
+    const npStrip = snap.neopixels['NEOPIXEL'];
+    if (npStrip) {
+        for (let i = 0; i < npStrip.numPixels && i < 10; i++) {
+            const el = $svg.querySelector(`[data-np-index="${i}"]`);
+            if (!el || !npStrip.pixels[i]) continue;
+            const p = npStrip.pixels[i];
+            el.setAttribute('fill', `rgb(${p.r},${p.g},${p.b})`);
+            el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
+        }
+    }
+
+    // Update status
+    const yr = board._exports?.cp_get_yield_reason?.() ?? 0;
+    if (codeRunning) {
+        $status.textContent = yr === 1 ? 'Sleeping' : 'Running';
+    }
+
+    requestAnimationFrame(renderLoop);
+}
+
+// ── Tab key in editor ──
+$editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = $editor.selectionStart;
+        $editor.value = $editor.value.substring(0, start) + '    ' + $editor.value.substring($editor.selectionEnd);
+        $editor.selectionStart = $editor.selectionEnd = start + 4;
+    }
+});
+
+// ── Boot ──
+init().catch(err => {
+    $status.textContent = 'Error: ' + err.message;
+    console.error(err);
+});
+</script>
+</body>
+</html>
