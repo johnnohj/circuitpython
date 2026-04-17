@@ -257,6 +257,33 @@ test('auto-reload: debounce coalesces rapid writes', async () => {
     board.destroy();
 });
 
+test('stage6: auto-reload re-invokes full lifecycle (boot.py runs again)', async () => {
+    // Pins that auto-reload goes through JS's runBoardLifecycle — the same
+    // path Ctrl-D uses — rather than a C-side fast path that skips boot.py.
+    // If someone re-introduces a C-side VFS hook that calls cp_run directly
+    // without going through the orchestrator, this test catches it.
+    const { board, stdout } = await createLiveBoard('print("code-run")', {
+        files: { '/CIRCUITPY/boot.py': 'print("boot-run")' },
+    });
+    let output = stdout;
+    board._onStdout = (text) => { output += text; };
+
+    // Trigger auto-reload via file write
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode('print("code-v2")'));
+
+    await new Promise(r => setTimeout(r, 700));
+    await waitFrames(board, 60);
+
+    // boot.py should have run AGAIN (proving full lifecycle, not just code.py)
+    const bootCount = (output.match(/boot-run/g) || []).length;
+    if (bootCount < 2) {
+        throw new Error(`Expected boot.py to re-run after auto-reload (boot-run >= 2); got ${bootCount}`);
+    }
+    assertContains(output, 'code-v2');
+    board.destroy();
+});
+
 test('auto-reload: non-.py files do not trigger reload', async () => {
     const { board, stdout } = await createLiveBoard('print("stable")');
     let output = stdout;
