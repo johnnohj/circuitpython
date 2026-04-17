@@ -35,6 +35,31 @@
 #define CIRCUITPY_NEOPIXEL_WRITE    (1)
 #define CIRCUITPY_MICROCONTROLLER   (1)
 
+// ── Bus I/O (I2C, SPI, UART) ──
+// Enables `import busio` and the board.I2C() / board.SPI() / board.UART()
+// convenience constructors.  Pin assignments match definition.json.
+#undef CIRCUITPY_BUSIO
+#define CIRCUITPY_BUSIO             (1)
+
+// Default I2C bus: SDA=A4(GPIO18), SCL=A5(GPIO19)
+#define CIRCUITPY_BOARD_I2C         (1)
+#define CIRCUITPY_BOARD_I2C_PIN     {{ .scl = &pin_GPIO19, .sda = &pin_GPIO18 }}
+#define DEFAULT_I2C_BUS_SCL         (&pin_GPIO19)
+#define DEFAULT_I2C_BUS_SDA         (&pin_GPIO18)
+
+// Default SPI bus: SCK=D13(GPIO13), MOSI=D11(GPIO11), MISO=D12(GPIO12)
+#define CIRCUITPY_BOARD_SPI         (1)
+#define CIRCUITPY_BOARD_SPI_PIN     {{ .clock = &pin_GPIO13, .mosi = &pin_GPIO11, .miso = &pin_GPIO12 }}
+#define DEFAULT_SPI_BUS_SCK         (&pin_GPIO13)
+#define DEFAULT_SPI_BUS_MOSI        (&pin_GPIO11)
+#define DEFAULT_SPI_BUS_MISO        (&pin_GPIO12)
+
+// Default UART bus: TX=D1(GPIO1), RX=D0(GPIO0)
+#define CIRCUITPY_BOARD_UART        (1)
+#define CIRCUITPY_BOARD_UART_PIN    {{ .tx = &pin_GPIO1, .rx = &pin_GPIO0 }}
+#define DEFAULT_UART_BUS_TX         (&pin_GPIO1)
+#define DEFAULT_UART_BUS_RX         (&pin_GPIO0)
+
 // ── Event-driven REPL for browser frame-budget model ──
 // JS pushes keyboard events via /sys/events (semihosting protocol).
 // pyexec_event_repl_process_char() is a pure state machine — no blocking.

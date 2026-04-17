@@ -78,9 +78,13 @@ SRC_C += \
 	common-hal/microcontroller/Processor.c \
 	common-hal/board/__init__.c \
 	common-hal/board/board_pins.c \
+	common-hal/busio/I2C.c \
+	common-hal/busio/SPI.c \
+	common-hal/busio/UART.c \
 	common-hal/os/__init__.c \
 	common-hal/displayio/__init__.c \
-	shared/runtime/context_manager_helpers.c
+	shared/runtime/context_manager_helpers.c \
+	shared/runtime/buffer_helper.c
 
 # ── Shared-bindings (register Python modules) ──
 SRC_C += \
@@ -95,6 +99,10 @@ SRC_C += \
 	shared-bindings/analogio/AnalogOut.c \
 	shared-bindings/pwmio/__init__.c \
 	shared-bindings/pwmio/PWMOut.c \
+	shared-bindings/busio/__init__.c \
+	shared-bindings/busio/I2C.c \
+	shared-bindings/busio/SPI.c \
+	shared-bindings/busio/UART.c \
 	shared-bindings/microcontroller/__init__.c \
 	shared-bindings/microcontroller/Pin.c \
 	shared-bindings/microcontroller/Processor.c \
@@ -116,4 +124,11 @@ CFLAGS += \
 	-DCIRCUITPY_PWMIO=1 \
 	-DCIRCUITPY_NEOPIXEL_WRITE=1 \
 	-DCIRCUITPY_MICROCONTROLLER=1 \
-	-DCIRCUITPY_BOARD=1
+	-DCIRCUITPY_BOARD=1 \
+	-DCIRCUITPY_BUSIO=1 \
+	-DCIRCUITPY_BUSIO_I2C=1 \
+	-DCIRCUITPY_BUSIO_SPI=1 \
+	-DCIRCUITPY_BUSIO_UART=1
+
+# busio Make-level flag (for circuitpy_defns.mk SRC_PATTERNS)
+CIRCUITPY_BUSIO = 1

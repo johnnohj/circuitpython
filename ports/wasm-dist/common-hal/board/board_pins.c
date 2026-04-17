@@ -30,6 +30,12 @@
 #include "shared-bindings/board/__init__.h"
 #include "common-hal/microcontroller/Pin.h"
 
+#if CIRCUITPY_BUSIO
+#include "shared-bindings/busio/I2C.h"
+#include "shared-bindings/busio/SPI.h"
+#include "shared-bindings/busio/UART.h"
+#endif
+
 static const mp_rom_map_elem_t board_module_globals_table[] = {
     CIRCUITPYTHON_BOARD_DICT_STANDARD_ITEMS
 
@@ -81,5 +87,13 @@ static const mp_rom_map_elem_t board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_BUTTON_B), MP_ROM_PTR(&pin_GPIO22) },
     /* Legacy alias: BUTTON → BUTTON_A */
     { MP_ROM_QSTR(MP_QSTR_BUTTON),   MP_ROM_PTR(&pin_GPIO21) },
+
+    /* Bus convenience constructors: board.I2C(), board.SPI(), board.UART()
+     * These create lazily-initialized singletons using the default pins
+     * defined in mpconfigvariant.h (CIRCUITPY_BOARD_I2C_PIN, etc.).
+     * Requires CIRCUITPY_BUSIO=1. */
+    { MP_ROM_QSTR(MP_QSTR_I2C),  MP_ROM_PTR(&board_i2c_obj) },
+    { MP_ROM_QSTR(MP_QSTR_SPI),  MP_ROM_PTR(&board_spi_obj) },
+    { MP_ROM_QSTR(MP_QSTR_UART), MP_ROM_PTR(&board_uart_obj) },
 };
 MP_DEFINE_CONST_DICT(board_module_globals, board_module_globals_table);
