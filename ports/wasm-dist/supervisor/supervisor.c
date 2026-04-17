@@ -714,6 +714,51 @@ int cp_complete(int len) {
 }
 
 /* ------------------------------------------------------------------ */
+/* cp_syntax_check — parse + compile without running                    */
+/*                                                                     */
+/* Pure function (no side effects on active context): parses the shared */
+/* input buffer as a module body, compiles it, and returns whether the */
+/* source is syntactically valid.  Any exception (SyntaxError, etc.)   */
+/* is printed to stderr via mp_obj_print_exception — JS can capture    */
+/* stderr for structured details.                                      */
+/*                                                                     */
+/* Safe to call mid-run: uses a scoped nlr_buf, doesn't touch any      */
+/* context's code_state or globals.  The compiled module_fun is not    */
+/* retained after the call returns.                                    */
+/*                                                                     */
+/* Returns:                                                            */
+/*   0 — source compiles cleanly                                       */
+/*   1 — parse/compile error (details already written to stderr)       */
+/*   2 — input length out of range                                     */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_syntax_check")))
+int cp_syntax_check(int len) {
+    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+        return 2;
+    }
+    _input_buf[len] = '\0';
+
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        mp_lexer_t *lex = mp_lexer_new_from_str_len(
+            MP_QSTR__lt_stdin_gt_, _input_buf, (size_t)len, 0);
+        qstr source_name = lex->source_name;
+        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+        /* mp_compile allocates but the result is only rooted through the
+         * active function; since we discard it here, the GC will reclaim
+         * it on the next sweep.  This is fine — we're just validating. */
+        (void)mp_compile(&parse_tree, source_name, false);
+        nlr_pop();
+        return 0;
+    } else {
+        mp_obj_print_exception(&mp_stderr_print,
+            MP_OBJ_FROM_PTR(nlr.ret_val));
+        return 1;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* cp_ctrl_c — interrupt running expression (called by JS on Ctrl-C)   */
 /* ------------------------------------------------------------------ */
 

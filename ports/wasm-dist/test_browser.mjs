@@ -450,6 +450,84 @@ test('stage5: frame loop keeps advancing during tight Python loop', async () => 
     board.destroy();
 });
 
+// ── Stage 4: IDE features as pure functions ──
+// Completion and syntax checking must work WHILE another context is running,
+// without touching its state.  These are pure queries over the current VM.
+
+test('stage4: cp_syntax_check returns 0 for valid code', async () => {
+    const { board } = await createLiveBoard();
+    const len = board._writeInputBuf('x = 1\ny = x + 2\nprint(y)\n');
+    const r = board._exports.cp_syntax_check(len);
+    if (r !== 0) throw new Error(`Expected 0 (valid), got ${r}`);
+    board.destroy();
+});
+
+test('stage4: cp_syntax_check returns 1 for parse error', async () => {
+    const { board } = await createLiveBoard();
+    let stderr = '';
+    board._onStderr = (text) => { stderr += text; };
+
+    const len = board._writeInputBuf('def broken(:\n  pass\n');
+    const r = board._exports.cp_syntax_check(len);
+    if (r !== 1) throw new Error(`Expected 1 (error), got ${r}`);
+    // Error details should land on stderr
+    if (!stderr.includes('SyntaxError') && !stderr.includes('invalid syntax')) {
+        throw new Error(`Expected SyntaxError in stderr, got: ${stderr}`);
+    }
+    board.destroy();
+});
+
+test('stage4: cp_syntax_check is non-destructive mid-run', async () => {
+    // A background context is actively running; cp_syntax_check on unrelated
+    // source must not disrupt it.  Verifies the IDE-query path doesn't touch
+    // any context's code_state or globals.
+    const { board } = await createLiveBoard();
+
+    const id = board.runCode('import time; time.sleep(5)');
+    if (id < 1) throw new Error(`runCode returned ${id}`);
+    await waitFrames(board, 3);
+
+    // Ctx is running/sleeping — hit it with 10 syntax checks in quick succession
+    for (let i = 0; i < 10; i++) {
+        const len = board._writeInputBuf(`a${i} = ${i * i}\n`);
+        const r = board._exports.cp_syntax_check(len);
+        if (r !== 0) throw new Error(`Syntax check #${i} failed: ${r}`);
+    }
+
+    // The background context should still be alive and making progress
+    const m = board._readContextMeta(id);
+    if (!m || m.status === 0 || m.status === 6) {
+        throw new Error(`Background context disrupted: status=${m?.status}`);
+    }
+
+    board.killContext(id);
+    await waitFrames(board, 5);
+    board.destroy();
+});
+
+test('stage4: cp_complete callable mid-run without disrupting context', async () => {
+    const { board } = await createLiveBoard();
+
+    const id = board.runCode('import time; time.sleep(5)');
+    if (id < 1) throw new Error(`runCode returned ${id}`);
+    await waitFrames(board, 3);
+
+    // Invoke completion 5 times; must not crash or disrupt the running ctx
+    for (let i = 0; i < 5; i++) {
+        const len = board._writeInputBuf('pr');
+        board._exports.cp_complete(len);  // completions go to stdout
+    }
+
+    const m = board._readContextMeta(id);
+    if (!m || m.status === 0 || m.status === 6) {
+        throw new Error(`Background context disrupted: status=${m?.status}`);
+    }
+
+    board.killContext(id);
+    await waitFrames(board, 5);
+    board.destroy();
+});
+
 test('stage5: Ctrl-C interrupts tight Python loop within bounded frames', async () => {
     // The pending-exception mechanism must fire promptly — at most a couple
     // of frames after JS calls cp_ctrl_c, the VM should see the interrupt
