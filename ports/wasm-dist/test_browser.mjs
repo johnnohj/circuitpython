@@ -416,6 +416,81 @@ else:
     assertContains(r.stdout, 'PASS: except BaseException did not catch sentinel');
 });
 
+// ── Stage 5: scheduler fairness ──
+// The supervisor must give C-side HAL ticks + JS-initiated interventions a
+// guaranteed slice per frame regardless of what Python is doing.  These
+// tests pin the guarantees: (a) cp_step returns within budget even if Python
+// is in a pathological tight loop (SUSPEND does its job); (b) Ctrl-C
+// interrupts such a loop within a bounded number of frames.
+
+test('stage5: frame loop keeps advancing during tight Python loop', async () => {
+    // SUSPEND must return cp_step on time so the JS rAF loop keeps ticking —
+    // otherwise HAL polling, display paint, and input dispatch all stall.
+    const { board } = await createLiveBoard();
+
+    const startFrame = board.frameCount;
+    board.runCode('while True: pass');  // background context, tight loop
+
+    // Wait ~20 frames of wall time (≥300ms).  If SUSPEND works, frames
+    // advance; if it stalls, we'd be stuck inside cp_step forever.
+    await waitFrames(board, 20);
+    const delta = board.frameCount - startFrame;
+
+    if (delta < 18) {
+        throw new Error(`Frame loop stalled during tight loop: only ${delta}/20 frames advanced`);
+    }
+
+    // Clean up: ctrl-C the background context via killContext
+    //   (ctrlC would also work but it targets ctx0 / the whole board)
+    const ctxs = board.listContexts();
+    for (const c of ctxs) {
+        if (c.id !== 0 && c.status !== 0) board.killContext(c.id);
+    }
+    await waitFrames(board, 5);
+    board.destroy();
+});
+
+test('stage5: Ctrl-C interrupts tight Python loop within bounded frames', async () => {
+    // The pending-exception mechanism must fire promptly — at most a couple
+    // of frames after JS calls cp_ctrl_c, the VM should see the interrupt
+    // at its next HOOK_LOOP check (per backwards branch) and raise.
+    const { board } = await createLiveBoard();
+
+    board.exec('while True: pass');
+    await waitFrames(board, 10);  // let it settle in the tight loop
+
+    // Confirm it's actually running
+    if (!board._exports.cp_is_runnable()) {
+        throw new Error('Expected tight loop to be runnable before Ctrl-C');
+    }
+
+    const preCtrlC = board.frameCount;
+    board.ctrlC();
+
+    // Poll for ctx0 to stop — should happen within a small number of frames
+    let stoppedAtFrame = -1;
+    for (let i = 0; i < 30; i++) {
+        await waitFrames(board, 1);
+        if (!board._exports.cp_is_runnable()) {
+            stoppedAtFrame = board.frameCount;
+            break;
+        }
+    }
+
+    if (stoppedAtFrame < 0) {
+        throw new Error('Tight loop still running 30 frames after Ctrl-C');
+    }
+
+    const latency = stoppedAtFrame - preCtrlC;
+    // Budget per frame is ~13ms; ctrl-C should fire on the first HOOK_LOOP
+    // check after the interrupt is scheduled, well within a handful of frames.
+    if (latency > 5) {
+        throw new Error(`Ctrl-C latency exceeds bound: ${latency} frames (expected ≤5)`);
+    }
+
+    board.destroy();
+});
+
 // ── hardware module tests ──
 // Note: digitalio/analogio/microcontroller are disabled in the browser build.
 // These tests exercise the JS hardware modules directly via MEMFS /hal/ endpoints,
