@@ -203,7 +203,7 @@ typedef long mp_off_t;
 // Implementation of the machine module.
 #ifdef __wasi__
 // WASM: linear memory is directly addressable — no /dev/mem needed.
-#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/wasm-dist/modmachine.c"
+#define MICROPY_PY_MACHINE_INCLUDEFILE "ports/wasm/modmachine.c"
 #define MICROPY_MACHINE_MEM_GET_READ_ADDR   mod_machine_mem_get_addr
 #define MICROPY_MACHINE_MEM_GET_WRITE_ADDR  mod_machine_mem_get_addr
 #endif

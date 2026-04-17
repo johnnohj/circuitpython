@@ -507,7 +507,7 @@ via `MICROPY_INTERNAL_WFE` would:
 
 Sketch:
 ```c
-// In ports/wasm-dist/mpconfigport.h:
+// In ports/wasm/mpconfigport.h:
 #define MICROPY_INTERNAL_WFE(timeout_ms) wasm_internal_wfe(timeout_ms)
 
 // In supervisor/vm_yield.c:

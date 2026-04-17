@@ -4,7 +4,7 @@ import { WASI } from 'node:wasi';
 
 const wasi = new WASI({
     version: 'preview1',
-    args: ['circuitpython', '-c', 'print("hello from wasm-dist!")'],
+    args: ['circuitpython', '-c', 'print("hello from wasm!")'],
     preopens: { '/': '.' },
 });
 

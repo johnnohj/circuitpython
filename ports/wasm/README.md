@@ -39,7 +39,7 @@ executable that doesn't require system `libffi` or `pkg-config`.)
 To set up the environment for building (not needed every time), starting from
 the top-level CircuitPython directory:
 
-    $ cd ports/wasm-dist
+    $ cd ports/wasm
     $ make -C ../../mpy-cross
     $ make submodules
 
@@ -48,7 +48,7 @@ cross-compiler](https://github.com/micropython/micropython/?tab=readme-ov-file#t
 The `make submodules` step can be skipped if you didn't clone the CircuitPython
 source from git.
 
-Next, to build the actual executable (still in the `ports/wasm-dist` directory):
+Next, to build the actual executable (still in the `ports/wasm` directory):
 
     $ make
 
@@ -95,7 +95,7 @@ The binary will be built at `build-browser/circuitpython`.
 ### Other dependencies
 
 To actually enable/disable use of dependencies, edit the
-`ports/wasm-dist/mpconfigport.mk` file, which has inline descriptions of the
+`ports/wasm/mpconfigport.mk` file, which has inline descriptions of the
 options. For example, to build the SSL module, `MICROPY_PY_SSL` should be
 set to 1.
 
