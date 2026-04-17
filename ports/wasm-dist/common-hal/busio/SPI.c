@@ -1,5 +1,5 @@
 /*
- * SPI.c — Virtual SPI backed by OPFS transfer files.
+ * SPI.c — Virtual SPI backed by MEMFS transfer files.
  *
  * SPI is simpler than I2C: full-duplex byte transfers. We use a
  * transfer file at /hal/spi/xfer. Write puts data there; read pulls

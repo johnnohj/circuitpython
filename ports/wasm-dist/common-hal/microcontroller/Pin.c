@@ -3,7 +3,7 @@
  *
  * Adapted from ports/wasm/common-hal/microcontroller/Pin.c
  * Stripped: EMSCRIPTEN_KEEPALIVE, bank enable/disable UI.
- * Added: OPFS state flush hook (called by worker poll loop).
+ * Added: MEMFS state flush hook (called by worker poll loop).
  */
 
 #include "common-hal/microcontroller/Pin.h"

@@ -4,7 +4,7 @@
  * This is the single source of truth for what this CircuitPython port
  * supports. circuitpy_mpconfig.h reads these CIRCUITPY_* flags to
  * enable/disable modules and features. Both variants (standard and
- * OPFS) share this file.
+ * browser) share this file.
  *
  * Design principle: enable everything that's pure software. Disable
  * only what requires hardware we can't provide (GPIO, audio, display,
@@ -21,7 +21,8 @@
 
 // ---- Filesystem ----
 // No flash filesystem — we use VFS POSIX over WASI fd_* syscalls.
-// OPFS provides persistent storage; the supervisor doesn't manage it.
+// MEMFS (wasi-memfs.js) provides the filesystem; IndexedDB optionally
+// persists /CIRCUITPY/ across page reloads.  The supervisor doesn't manage it.
 #define DISABLE_FILESYSTEM          (1)
 #define INTERNAL_FLASH_FILESYSTEM   (0)
 #define CIRCUITPY_INTERNAL_NVM_SIZE (0)
@@ -34,9 +35,8 @@
 #define USB_NUM_ENDPOINT_PAIRS      (0)
 
 // ---- Hardware peripherals ----
-// Default: off. The worker variant enables these via mpconfigvariant.h
-// and provides C common-hal backed by OPFS endpoints.
-// The reactor uses frozen Python shims instead (modules/*.py).
+// Default: off. The browser variant enables these via mpconfigvariant.h
+// and provides C common-hal backed by MEMFS endpoints (/hal/*).
 #ifndef CIRCUITPY_MICROCONTROLLER
 #define CIRCUITPY_MICROCONTROLLER   (0)
 #endif
@@ -79,9 +79,8 @@
 #define CIRCUITPY_TOUCHIO           (0)
 
 // ---- Display ----
-// C displayio pipeline is worker-only (set in variants/worker/mpconfigvariant.h).
-// Non-worker variants use a frozen Python displayio shim that writes to OPFS.
-// Defaults here disable the C pipeline; the worker variant overrides them.
+// C displayio pipeline is browser-only (set in variants/browser/mpconfigvariant.h).
+// Defaults here disable the C pipeline; the browser variant overrides them.
 #ifndef CIRCUITPY_DISPLAYIO
 #define CIRCUITPY_DISPLAYIO         (0)
 #endif

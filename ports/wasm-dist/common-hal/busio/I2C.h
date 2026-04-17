@@ -1,5 +1,5 @@
 /*
- * I2C.h — Virtual I2C backed by OPFS register files.
+ * I2C.h — Virtual I2C backed by MEMFS register files.
  *
  * Each I2C device address maps to a file at /hal/i2c/dev/{addr_hex}.
  * The file contains the device's register space (up to 256 bytes).

@@ -1,5 +1,5 @@
 /*
- * I2C.c — Virtual I2C backed by OPFS register files.
+ * I2C.c — Virtual I2C backed by MEMFS register files.
  *
  * Each I2C device is a file at /hal/i2c/dev/{addr_dec}.
  * The file is the device's register space. A write of [reg, data...]
@@ -90,7 +90,7 @@ void common_hal_busio_i2c_unlock(busio_i2c_obj_t *self) {
 }
 
 bool common_hal_busio_i2c_probe(busio_i2c_obj_t *self, uint8_t addr) {
-    /* Device exists if its register file exists in OPFS. */
+    /* Device exists if its register file exists in MEMFS. */
     char path[64];
     _dev_path(path, sizeof(path), addr);
     struct stat st;

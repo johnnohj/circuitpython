@@ -38,7 +38,7 @@ DRESULT disk_ioctl(void *pdrv, BYTE cmd, void *buff) {
 }
 
 // settings_get_raw_vstr reads settings.toml.
-// TODO: implement proper settings.toml parsing from OPFS.
+// TODO: implement proper settings.toml parsing from MEMFS.
 #include "supervisor/shared/settings.h"
 settings_err_t settings_get_raw_vstr(const char *key, vstr_t *vstr) {
     (void)key;

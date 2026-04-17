@@ -1,5 +1,5 @@
 /*
- * UART.h — Virtual UART backed by OPFS ring files.
+ * UART.h — Virtual UART backed by MEMFS ring files.
  *
  * TX/RX data flows through /hal/uart/{port}/tx and /hal/uart/{port}/rx.
  * User code writes to TX; the worker or JS writes incoming data to RX.

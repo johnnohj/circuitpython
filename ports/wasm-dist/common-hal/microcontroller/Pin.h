@@ -2,7 +2,7 @@
  * Pin.h — Virtual GPIO pins for WASI port.
  *
  * 64 virtual pins in 4 banks of 16, each with configurable capabilities.
- * State arrays are the single source of truth; OPFS endpoints mirror
+ * State arrays are the single source of truth; MEMFS endpoints mirror
  * them for cross-instance communication.
  *
  * Adapted from ports/wasm/common-hal/microcontroller/Pin.h

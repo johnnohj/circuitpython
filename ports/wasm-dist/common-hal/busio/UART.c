@@ -1,5 +1,5 @@
 /*
- * UART.c — Virtual UART backed by OPFS files.
+ * UART.c — Virtual UART backed by MEMFS files.
  *
  * TX goes to /hal/uart/{port}/tx — the worker or JS reads it.
  * RX comes from /hal/uart/{port}/rx — simulated device or JS writes it.

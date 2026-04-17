@@ -1,5 +1,5 @@
 /*
- * SPI.h — Virtual SPI backed by OPFS transfer files.
+ * SPI.h — Virtual SPI backed by MEMFS transfer files.
  *
  * SPI transfers read/write through /hal/spi/xfer — a file where
  * the last write becomes the next read (loopback by default).
