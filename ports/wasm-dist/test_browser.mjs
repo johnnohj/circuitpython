@@ -443,6 +443,165 @@ else:
     assertContains(r.stdout, 'PASS: except BaseException did not catch sentinel');
 });
 
+// ── SUSPEND validation under asyncio workloads ──
+// These tests verify that the SUSPEND mechanism preserves VM state correctly
+// across suspend/resume cycles under realistic asyncio workloads.  Each test
+// has a deterministic expected output — if it matches, state preservation +
+// liveness + exception integrity are validated.  If any hangs, the timeout
+// catches it.
+
+test('suspend-validation: state preservation across concurrent tasks', async () => {
+    // Multiple tasks maintain independent local state across many await/yield
+    // boundaries.  If SUSPEND corrupts any task's locals (sp, ip, code_state),
+    // the running totals diverge from expected.
+    const r = await runBoard(`
+import asyncio
+
+async def worker(id, n):
+    total = 0
+    for i in range(n):
+        total += i
+        if i % 100 == 0:
+            await asyncio.sleep(0)
+    return (id, total)
+
+async def main():
+    results = await asyncio.gather(
+        worker(0, 2000),
+        worker(1, 2000),
+        worker(2, 2000),
+    )
+    for id, total in results:
+        print(f"worker {id}: {total}")
+    # Each must independently equal sum(range(2000)) = 1999000
+    ok = all(t == 1999000 for _, t in results)
+    print("PASS" if ok else "FAIL")
+
+asyncio.run(main())
+`, { timeoutMs: 10000 });
+    assertContains(r.stdout, 'worker 0: 1999000');
+    assertContains(r.stdout, 'worker 1: 1999000');
+    assertContains(r.stdout, 'worker 2: 1999000');
+    assertContains(r.stdout, 'PASS');
+});
+
+test('suspend-validation: producer/consumer liveness via Event', async () => {
+    // Producer and consumer coordinate via shared list + asyncio.Event.
+    // (CircuitPython's asyncio has no Queue; Event is the available primitive.)
+    // If SUSPEND breaks the event loop's task scheduling, one task starves
+    // or the handshake deadlocks.
+    const r = await runBoard(`
+import asyncio
+
+buf = []
+ready = asyncio.Event()
+done = asyncio.Event()
+
+async def producer():
+    for i in range(50):
+        buf.append(i)
+        ready.set()
+        await asyncio.sleep(0)
+    done.set()
+
+async def consumer():
+    total = 0
+    while not done.is_set() or buf:
+        if not buf:
+            ready.clear()
+            await ready.wait()
+        while buf:
+            total += buf.pop(0)
+        await asyncio.sleep(0)
+    return total
+
+async def main():
+    prod = asyncio.create_task(producer())
+    result = await consumer()
+    await prod
+    # sum(range(50)) = 1225
+    print(f"consumed {result}")
+    print("PASS" if result == 1225 else "FAIL")
+
+asyncio.run(main())
+`, { timeoutMs: 10000 });
+    assertContains(r.stdout, 'consumed 1225');
+    assertContains(r.stdout, 'PASS');
+});
+
+test('suspend-validation: exception integrity across tasks', async () => {
+    // One task raises while others are suspended.  The exception must propagate
+    // correctly without corrupting the sentinel or other tasks' state.
+    const r = await runBoard(`
+import asyncio
+
+async def crasher():
+    await asyncio.sleep(0)
+    raise ValueError("boom")
+
+async def survivor():
+    total = 0
+    for i in range(3000):
+        total += i
+    await asyncio.sleep(0)
+    return total
+
+async def main():
+    results = await asyncio.gather(
+        crasher(),
+        survivor(),
+        return_exceptions=True,
+    )
+    # results[0] should be the ValueError, results[1] should be sum(range(3000))
+    err = results[0]
+    val = results[1]
+    print(f"error: {type(err).__name__}: {err}")
+    print(f"survivor: {val}")
+    ok = isinstance(err, ValueError) and str(err) == "boom" and val == 4498500
+    print("PASS" if ok else "FAIL")
+
+asyncio.run(main())
+`, { timeoutMs: 10000 });
+    assertContains(r.stdout, 'error: ValueError: boom');
+    assertContains(r.stdout, 'survivor: 4498500');
+    assertContains(r.stdout, 'PASS');
+});
+
+test('suspend-validation: nested generator depth (4 levels)', async () => {
+    // Deep await chains: user code → wrapper → driver → inner coroutine.
+    // SUSPEND fires at the innermost level and must propagate back through
+    // 4+ generator frames without corrupting any frame's state.
+    const r = await runBoard(`
+import asyncio
+
+async def level4():
+    s = 0
+    for i in range(2000):
+        s += i
+    await asyncio.sleep(0)
+    return s
+
+async def level3():
+    return await level4() + 1
+
+async def level2():
+    return await level3() + 1
+
+async def level1():
+    return await level2() + 1
+
+async def main():
+    result = await level1()
+    # sum(range(2000)) + 3 = 1999003
+    print(f"result: {result}")
+    print("PASS" if result == 1999003 else "FAIL")
+
+asyncio.run(main())
+`, { timeoutMs: 10000 });
+    assertContains(r.stdout, 'result: 1999003');
+    assertContains(r.stdout, 'PASS');
+});
+
 // ── Stage 5: scheduler fairness ──
 // The supervisor must give C-side HAL ticks + JS-initiated interventions a
 // guaranteed slice per frame regardless of what Python is doing.  These
