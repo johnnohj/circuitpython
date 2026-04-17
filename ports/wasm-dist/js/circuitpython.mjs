@@ -108,6 +108,7 @@ export class CircuitPython {
         const len = this._readline.writeInputBuf(code);
         this._exports.cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
         this._readline._waitingForResult = true;
+        this._kick();
     }
 
     /** Send Ctrl-C: interrupt running code + kill background contexts. */
@@ -121,6 +122,7 @@ export class CircuitPython {
             }
         }
         if (this._readline) this._readline.handleInterrupt();
+        this._kick();
     }
 
     /** Send Ctrl-D: soft reboot. */
@@ -134,11 +136,13 @@ export class CircuitPython {
             this._readline._waitingForResult = true;
         }
         this.runBoardLifecycle();
+        this._kick();
     }
 
     /** Type a single character. */
     keypress(key) {
         if (this._readline) this._readline.handleKey(key, false, false);
+        this._kick();
     }
 
     /** Pause the frame loop (e.g. tab hidden). */
@@ -158,6 +162,7 @@ export class CircuitPython {
 
     /** Clean up all resources. */
     destroy() {
+        this._destroyed = true;
         this.pause();
         if (this._autoReloadTimer) {
             clearTimeout(this._autoReloadTimer);
@@ -281,7 +286,9 @@ export class CircuitPython {
     /** Start /<path>.py on ctx0 via cp_run(CP_SRC_FILE, CP_CTX_MAIN). */
     _runMainFile(path) {
         const len = this._writeInputBuf(path);
-        return this._exports.cp_run(CP_SRC_FILE, len, CP_CTX_MAIN, 0);
+        const r = this._exports.cp_run(CP_SRC_FILE, len, CP_CTX_MAIN, 0);
+        this._kick();
+        return r;
     }
 
     /** Resolve once ctx0 is idle/done/free. */
@@ -323,6 +330,7 @@ export class CircuitPython {
         if (id >= 0 && onDone) {
             this._ctxCallbacks.set(id, onDone);
         }
+        this._kick();
         return id;
     }
 
@@ -344,6 +352,7 @@ export class CircuitPython {
         if (id >= 0 && onDone) {
             this._ctxCallbacks.set(id, onDone);
         }
+        this._kick();
         return id;
     }
 
@@ -694,6 +703,7 @@ export class CircuitPython {
                 this._readline._waitingForResult = true;
             }
             this.runBoardLifecycle();
+            this._kick();
         }, 500);
     }
 
@@ -824,7 +834,43 @@ export class CircuitPython {
             }
         }
 
-        this._raf = env.requestFrame(() => this._loop());
+        this._scheduleNext(nowMs);
+    }
+
+    /**
+     * Schedule the next _loop() call based on VM state.
+     *
+     * We ask the VM how many ms until it needs attention:
+     *   0          → runnable now: requestAnimationFrame (full rate)
+     *   1..N ms    → sleeping: still tick at full rate for HAL/display
+     *               (cp_step is cheap during sleep — it skips the VM
+     *               phase and only runs HAL + background callbacks)
+     *   0xFFFFFFFF → truly idle (no contexts): don't schedule.
+     *               _kick() restarts on external event (keypress,
+     *               file write, cp_run call).  This is where we save
+     *               battery on mobile — no work, no ticks.
+     */
+    _scheduleNext(nowMs) {
+        const wake = this._exports.cp_next_wake_ms(nowMs);
+        // WASM i32: C's 0xFFFFFFFF arrives as -1 in JS
+        if (wake === -1) {
+            // Idle indefinitely — don't schedule; _kick() will restart
+            this._raf = null;
+        } else {
+            // Runnable or sleeping — keep ticking for HAL + display
+            this._raf = env.requestFrame(() => this._loop());
+        }
+    }
+
+    /**
+     * Kick the frame loop awake after an external event.
+     * Called by ctrlC, ctrlD, keypress, cp_run, auto-reload, etc.
+     * If the loop is already scheduled, this is a no-op.
+     */
+    _kick() {
+        if (!this._raf && !this._destroyed) {
+            this._raf = env.requestFrame(() => this._loop());
+        }
     }
 }
 

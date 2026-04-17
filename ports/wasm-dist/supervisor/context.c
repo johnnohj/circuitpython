@@ -211,6 +211,60 @@ void cp_context_set_sleeping(int id, uint64_t delay_until) {
 /* Scheduler                                                           */
 /* ------------------------------------------------------------------ */
 
+/* cp_next_wake_ms — tell JS how many ms until the VM needs attention.
+ *
+ * Takes the current time (same clock as cp_step's now_ms).
+ *
+ * Returns (uint32_t):
+ *   0          — at least one context is runnable RIGHT NOW; tick ASAP
+ *   1..0xFFFFFFFE — ms until the earliest sleeping context wakes;
+ *                JS can setTimeout(N) and skip frames
+ *   0xFFFFFFFF — nothing is runnable or sleeping; VM is idle until an
+ *                external event (keypress, file write, cp_run call).
+ *                JS should NOT schedule; instead, kick the loop when
+ *                an event arrives.
+ *
+ * This turns the frame loop from "tick every 16ms regardless" into
+ * "call me when I say, or when something happens."  On mobile browsers
+ * this is real battery savings; on desktop it frees the main thread. */
+__attribute__((export_name("cp_next_wake_ms")))
+uint32_t cp_next_wake_ms(uint32_t now_ms) {
+    uint64_t now64 = (uint64_t)now_ms;
+    uint64_t earliest = UINT64_MAX;
+    bool any_runnable = false;
+
+    for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
+        uint8_t st = _meta[i].status;
+        if (st == CTX_RUNNABLE || st == CTX_RUNNING || st == CTX_YIELDED) {
+            any_runnable = true;
+            break;
+        }
+        if (st == CTX_SLEEPING) {
+            uint64_t deadline =
+                (uint64_t)_meta[i].delay_until_lo |
+                ((uint64_t)_meta[i].delay_until_hi << 32);
+            if (deadline < earliest) {
+                earliest = deadline;
+            }
+        }
+    }
+
+    if (any_runnable) {
+        return 0;  /* tick now */
+    }
+    if (earliest < UINT64_MAX) {
+        if (earliest <= now64) {
+            return 0;  /* deadline already passed — tick now */
+        }
+        uint64_t delta = earliest - now64;
+        if (delta > 0xFFFFFFFEULL) {
+            return 0xFFFFFFFE;
+        }
+        return (uint32_t)delta;
+    }
+    return 0xFFFFFFFF;  /* idle indefinitely — wait for external event */
+}
+
 __attribute__((export_name("cp_scheduler_pick")))
 int cp_scheduler_pick(uint64_t now_ms) {
     int best_id = -1;

@@ -1118,12 +1118,57 @@ function waitFrames(board, n) {
     return new Promise(resolve => {
         const target = board.frameCount + n;
         const check = () => {
-            if (board.frameCount >= target) resolve();
-            else setTimeout(check, 20);
+            if (board.frameCount >= target) { resolve(); return; }
+            // Ensure loop is running — with WFE, the loop stops when
+            // idle.  resume() is a no-op if already running.
+            board.resume();
+            setTimeout(check, 20);
         };
         check();
     });
 }
+
+// ── WFE / event-driven loop tests ──
+// When the VM is truly idle (no contexts runnable or sleeping), the frame
+// loop stops entirely — no ticks, no CPU.  External events (_kick) restart it.
+
+test('wfe: loop stops when idle, _kick restarts it', async () => {
+    const { board } = await createLiveBoard();
+    // After code.py finishes and lifecycle completes, the VM is idle.
+    // Give the loop a few frames to detect idle and stop.
+    await new Promise(r => setTimeout(r, 200));
+    const fc1 = board.frameCount;
+    // Wait 500ms — if loop stopped, frameCount should not advance
+    // (allow 1–2 frames of slop for any in-flight rAF callbacks)
+    await new Promise(r => setTimeout(r, 500));
+    const fc2 = board.frameCount;
+    if (fc2 > fc1 + 3) {
+        throw new Error(`Loop should be idle but advanced ${fc2 - fc1} frames`);
+    }
+    // Now kick it — exec triggers _kick() internally
+    board.exec('print("woke")');
+    await new Promise(r => setTimeout(r, 200));
+    const fc3 = board.frameCount;
+    if (fc3 <= fc2) {
+        throw new Error('Loop did not restart after _kick()');
+    }
+    board.destroy();
+});
+
+test('wfe: sleeping context keeps loop ticking (HAL stays live)', async () => {
+    const { board } = await createLiveBoard();
+    // Run a long sleep — context is SLEEPING, not idle
+    board.runCode('import time; time.sleep(5)');
+    await new Promise(r => setTimeout(r, 50));
+    const fc1 = board.frameCount;
+    // Wait 200ms — loop should still be ticking for HAL
+    await new Promise(r => setTimeout(r, 200));
+    const fc2 = board.frameCount;
+    if (fc2 - fc1 < 5) {
+        throw new Error(`Loop should keep ticking during sleep, but only advanced ${fc2 - fc1} frames`);
+    }
+    board.destroy();
+});
 
 test('multicontext: runCode starts background context', async () => {
     const { board } = await createLiveBoard();
