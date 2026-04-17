@@ -242,11 +242,26 @@ export class WasiMemfs {
 
                 fd_sync() { return ERRNO.SUCCESS; },
 
-                fd_seek(fd, offset_lo, offset_hi, whence, newoffset) {
+                fd_seek(fd, ...args) {
+                    // WASI fd_seek signature: (fd: i32, offset: i64, whence: i32, newoffset: i32)
+                    // With BigInt integration (modern runtimes): offset is a single BigInt
+                    //   → args = [BigInt, whence, newoffset]
+                    // Without BigInt (legacy): offset is split into two i32s
+                    //   → args = [offset_lo, offset_hi, whence, newoffset]
+                    let offset, whence, newoffset;
+                    if (typeof args[0] === 'bigint') {
+                        offset = Number(args[0]);
+                        whence = args[1];
+                        newoffset = args[2];
+                    } else {
+                        offset = args[0] + (args[1] * 0x100000000);
+                        whence = args[2];
+                        newoffset = args[3];
+                    }
+
                     const entry = self.fds.get(fd);
                     if (!entry) return ERRNO.BADF;
 
-                    const offset = Number(offset_lo);
                     const fileData = self.files.get(entry.path);
                     const size = fileData ? fileData.length : 0;
 
