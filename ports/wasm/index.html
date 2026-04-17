@@ -162,6 +162,20 @@ header .status {
     font-size: 13px;
 }
 
+/* ── Settings ── */
+.setting {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--dim);
+    cursor: pointer;
+    user-select: none;
+}
+.setting input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
 /* ── Buttons ── */
 button {
     background: var(--border);
@@ -205,6 +219,9 @@ button.primary { background: var(--accent); color: var(--bg); }
 <header>
     <h1>CircuitPython</h1>
     <span id="board-name">Loading...</span>
+    <label class="setting">
+        <input type="checkbox" id="opt-verbose"> Verbose
+    </label>
     <span class="status" id="status">Initializing</span>
 </header>
 
@@ -293,12 +310,19 @@ async function init() {
         wasmUrl: 'build-browser/circuitpython.wasm',
         codePy: $editor.value,
         onStdout: handleStdout,
-        onStderr: (text) => appendOutput(text, 'var(--red)'),
+        onStderr: (text) => {
+            // [sup] debug goes to stderr; only show if verbose
+            if (text.startsWith('[sup]') && !$verbose.checked) return;
+            appendOutput(text, 'var(--red)');
+        },
         onCodeDone: () => {
             codeRunning = false;
             $status.textContent = 'Ready';
         },
     });
+
+    // Disable supervisor debug output by default
+    board._exports.cp_set_debug(0);
 
     codeRunning = true;
     $status.textContent = 'Running';
@@ -309,6 +333,12 @@ async function init() {
     // Start render loop for board visualization
     requestAnimationFrame(renderLoop);
 }
+
+// ── Verbose toggle ──
+const $verbose = document.getElementById('opt-verbose');
+$verbose.addEventListener('change', () => {
+    if (board) board._exports.cp_set_debug($verbose.checked ? 1 : 0);
+});
 
 // ── Stdout handling ──
 // During code.py execution, stdout goes to the output panel.
