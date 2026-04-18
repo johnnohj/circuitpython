@@ -250,27 +250,30 @@ button.primary { background: var(--accent); color: var(--bg); }
         </div>
     </div>
     <textarea id="editor" spellcheck="false">import board
-import digitalio
+import neopixel
 import time
 
-led = digitalio.DigitalInOut(board.LED)
-led.switch_to_output()
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, brightness=0.3)
 
-btn = digitalio.DigitalInOut(board.BUTTON_A)
-btn.switch_to_input(pull=digitalio.Pull.UP)
+def wheel(pos):
+    """Color wheel: 0-255 cycles through red, green, blue."""
+    pos = pos % 256
+    if pos < 85:
+        return (255 - pos * 3, pos * 3, 0)
+    elif pos < 170:
+        pos -= 85
+        return (0, 255 - pos * 3, pos * 3)
+    else:
+        pos -= 170
+        return (pos * 3, 0, 255 - pos * 3)
 
-print("btn pin:", btn)
-print("btn pull:", btn.pull)
-print("btn initial value:", btn.value)
-
-i = 0
+offset = 0
 while True:
-    val = btn.value
-    led.value = not val
-    if i % 20 == 0:
-        print(f"tick {i}: btn={val} led={led.value}")
-    i += 1
-    time.sleep(0.05)
+    for i in range(10):
+        pixels[i] = wheel((i * 256 // 10 + offset) % 256)
+    pixels.show()
+    offset = (offset + 2) % 256
+    time.sleep(0.03)
 </textarea>
 </div>
 

@@ -51,8 +51,12 @@
 #include "supervisor/compile.h"
 #include "supervisor/context.h"
 #include "supervisor/semihosting.h"
+#if CIRCUITPY_MICROCONTROLLER
 #include "shared-bindings/microcontroller/Pin.h"
+#endif
+#if CIRCUITPY_BOARD_I2C || CIRCUITPY_BOARD_SPI || CIRCUITPY_BOARD_UART
 #include "shared-module/board/__init__.h"
+#endif
 #if CIRCUITPY_DISPLAYIO
 #include "wasm_framebuffer.h"
 #endif
@@ -802,14 +806,15 @@ void cp_soft_reboot(void) {
     _code_header_printed = false;
     _state = SUP_REPL;
 
-    /* Release all claimed pins so the next code.py / REPL session starts
-     * clean.  On real boards, reset_port() does this; we call it directly
-     * since our port has no reset_port(). */
+    /* Release all claimed pins and bus singletons so the next code.py /
+     * REPL session starts clean.  On real boards, reset_port() does this;
+     * we call the pieces directly since our port has no reset_port(). */
+    #if CIRCUITPY_MICROCONTROLLER
     reset_all_pins();
-
-    /* Reset default bus singletons so board.I2C() etc. recreate fresh
-     * instances with unclaimed pins. */
+    #endif
+    #if CIRCUITPY_BOARD_I2C || CIRCUITPY_BOARD_SPI || CIRCUITPY_BOARD_UART
     reset_board_buses();
+    #endif
 
     SUP_DEBUG("soft reboot — ctx0 stopped, pins released, JS owns next step");
     #endif
