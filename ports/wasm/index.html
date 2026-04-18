@@ -204,6 +204,7 @@ button.primary { background: var(--accent); color: var(--bg); }
 }
 .neopixel-led {
     transition: fill 0.05s;
+    filter: url(#neopixel-glow);
 }
 .component-label {
     font-size: 8px;
@@ -253,7 +254,7 @@ button.primary { background: var(--accent); color: var(--bg); }
 import neopixel
 import time
 
-pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, brightness=0.3)
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, brightness=1.0)
 
 def wheel(pos):
     """Color wheel: 0-255 cycles through red, green, blue."""
@@ -457,6 +458,30 @@ setupButton('btn-b', 'BUTTON_B');
 function renderBoardSvg() {
     if (!adapter) return;
     const ns = 'http://www.w3.org/2000/svg';
+
+    // Glow filter for NeoPixel LEDs — simulates light emission
+    const defs = document.createElementNS(ns, 'defs');
+    const filter = document.createElementNS(ns, 'filter');
+    filter.setAttribute('id', 'neopixel-glow');
+    filter.setAttribute('x', '-50%');
+    filter.setAttribute('y', '-50%');
+    filter.setAttribute('width', '200%');
+    filter.setAttribute('height', '200%');
+    const blur = document.createElementNS(ns, 'feGaussianBlur');
+    blur.setAttribute('in', 'SourceGraphic');
+    blur.setAttribute('stdDeviation', '3');
+    blur.setAttribute('result', 'blur');
+    filter.appendChild(blur);
+    const merge = document.createElementNS(ns, 'feMerge');
+    const m1 = document.createElementNS(ns, 'feMergeNode');
+    m1.setAttribute('in', 'blur');
+    merge.appendChild(m1);
+    const m2 = document.createElementNS(ns, 'feMergeNode');
+    m2.setAttribute('in', 'SourceGraphic');
+    merge.appendChild(m2);
+    filter.appendChild(merge);
+    defs.appendChild(filter);
+    $svg.appendChild(defs);
 
     // Board background
     const bg = document.createElementNS(ns, 'rect');
