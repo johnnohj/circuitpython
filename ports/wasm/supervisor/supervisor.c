@@ -51,6 +51,8 @@
 #include "supervisor/compile.h"
 #include "supervisor/context.h"
 #include "supervisor/semihosting.h"
+#include "shared-bindings/microcontroller/Pin.h"
+#include "shared-module/board/__init__.h"
 #if CIRCUITPY_DISPLAYIO
 #include "wasm_framebuffer.h"
 #endif
@@ -799,7 +801,17 @@ void cp_soft_reboot(void) {
     _ctx0_is_code = false;
     _code_header_printed = false;
     _state = SUP_REPL;
-    SUP_DEBUG("soft reboot — ctx0 stopped, JS owns next step");
+
+    /* Release all claimed pins so the next code.py / REPL session starts
+     * clean.  On real boards, reset_port() does this; we call it directly
+     * since our port has no reset_port(). */
+    reset_all_pins();
+
+    /* Reset default bus singletons so board.I2C() etc. recreate fresh
+     * instances with unclaimed pins. */
+    reset_board_buses();
+
+    SUP_DEBUG("soft reboot — ctx0 stopped, pins released, JS owns next step");
     #endif
 }
 

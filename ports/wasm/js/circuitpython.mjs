@@ -586,6 +586,13 @@ export class CircuitPython {
         // DOM event listeners (browser only)
         if (env.hasDOM) {
             this._keyHandler = (e) => {
+                // Don't capture keys when the user is typing in an input,
+                // textarea, or contenteditable element (e.g., the code editor).
+                const tag = e.target?.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) {
+                    return;
+                }
+
                 // Intercept any key during WAITING_FOR_KEY → enter REPL
                 if (this._waitingForKey) {
                     this._enterRepl();
