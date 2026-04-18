@@ -193,7 +193,6 @@ button.primary { background: var(--accent); color: var(--bg); }
 
 /* ── Board visualization ── */
 .pin-circle {
-    cursor: pointer;
     transition: fill 0.1s;
 }
 .pin-label {
@@ -257,9 +256,21 @@ import time
 led = digitalio.DigitalInOut(board.LED)
 led.switch_to_output()
 
+btn = digitalio.DigitalInOut(board.BUTTON_A)
+btn.switch_to_input(pull=digitalio.Pull.UP)
+
+print("btn pin:", btn)
+print("btn pull:", btn.pull)
+print("btn initial value:", btn.value)
+
+i = 0
 while True:
-    led.value = not led.value
-    time.sleep(0.5)
+    val = btn.value
+    led.value = not val
+    if i % 20 == 0:
+        print(f"tick {i}: btn={val} led={led.value}")
+    i += 1
+    time.sleep(0.05)
 </textarea>
 </div>
 
@@ -407,7 +418,32 @@ document.getElementById('btn-clear-repl').addEventListener('click', () => {
 // ── Button controls ──
 function setupButton(btnId, pinName) {
     const el = document.getElementById(btnId);
-    el.addEventListener('mousedown', () => adapter?.setInput(board, pinName, false));
+    el.addEventListener('mousedown', () => {
+        console.log(`[btn] ${pinName} mousedown`);
+        const gpio = board?.hardware('gpio');
+        const pinDef = adapter?.resolvePin(pinName);
+        const id = pinDef?.id;
+        console.log(`[btn] resolved ${pinName} → GPIO${id}`);
+        console.log(`[btn] gpio module pins[${id}]:`, gpio?.getPin(id));
+
+        // Check raw MEMFS before
+        const before = board?._wasi?.readFile('/hal/gpio');
+        if (before && id !== undefined) {
+            const off = id * 8;
+            console.log(`[btn] MEMFS before:`, off < before.length
+                ? Array.from(before.slice(off, off + 8)) : 'file too short (' + before.length + ')');
+        }
+
+        adapter?.setInput(board, pinName, false);
+
+        // Check raw MEMFS after
+        const after = board?._wasi?.readFile('/hal/gpio');
+        if (after && id !== undefined) {
+            const off = id * 8;
+            console.log(`[btn] MEMFS after:`, off < after.length
+                ? Array.from(after.slice(off, off + 8)) : 'file too short (' + after.length + ')');
+        }
+    });
     el.addEventListener('mouseup', () => adapter?.setInput(board, pinName, true));
     el.addEventListener('mouseleave', () => adapter?.setInput(board, pinName, true));
 }
@@ -464,6 +500,14 @@ function renderBoardSvg() {
         label.classList.add('pin-label');
         label.textContent = pin.displayName || pin.name;
         g.appendChild(label);
+
+        // Make input-capable pins interactive (buttons, switches)
+        if (pin.capabilities.digital && v.side === 'internal') {
+            g.style.cursor = 'pointer';
+            g.addEventListener('mousedown', () => adapter?.setInput(board, pin.name, false));
+            g.addEventListener('mouseup', () => adapter?.setInput(board, pin.name, true));
+            g.addEventListener('mouseleave', () => adapter?.setInput(board, pin.name, true));
+        }
 
         $svg.appendChild(g);
     }

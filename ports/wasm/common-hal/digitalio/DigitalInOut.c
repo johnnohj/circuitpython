@@ -91,6 +91,13 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
     _read_pin(self->pin->number, slot);
     slot[1] = 0;  /* direction = input */
     slot[3] = (uint8_t)pull;
+    /* Simulate pull resistor: pull-up reads HIGH, pull-down reads LOW
+     * until an external source (JS setInputValue) drives it otherwise. */
+    if (pull == PULL_UP) {
+        slot[2] = 1;
+    } else if (pull == PULL_DOWN) {
+        slot[2] = 0;
+    }
     _write_pin(self->pin->number, slot);
     return DIGITALINOUT_OK;
 }
@@ -133,6 +140,11 @@ digitalinout_result_t common_hal_digitalio_digitalinout_set_pull(
     uint8_t slot[GPIO_SLOT_SIZE];
     _read_pin(self->pin->number, slot);
     slot[3] = (uint8_t)pull;
+    if (pull == PULL_UP) {
+        slot[2] = 1;
+    } else if (pull == PULL_DOWN) {
+        slot[2] = 0;
+    }
     _write_pin(self->pin->number, slot);
     return DIGITALINOUT_OK;
 }
