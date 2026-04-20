@@ -265,6 +265,16 @@ function setMode(m) {
     mode = m;
     const labels = { loading: 'Loading', ready: 'Ready', code: 'Running', repl: 'REPL' };
     $status.textContent = labels[m] || m;
+
+    // Cursor blink: only in REPL mode
+    const dc = board?.displayContext;
+    if (dc) {
+        if (m === 'repl') {
+            dc.startCursorBlink();
+        } else {
+            dc.stopCursorBlink();
+        }
+    }
 }
 
 // ── Actions ──
@@ -476,10 +486,7 @@ function renderLoop() {
             }
         }
 
-        // Cursor: show only in REPL mode when VM is ready (waiting for input)
-        if (board._display && mode === 'repl' && board.state === 'ready') {
-            board._display.drawCursor();
-        }
+        // Cursor is managed by DisplayContext (blink timer independent of rAF)
     }
 
     requestAnimationFrame(renderLoop);

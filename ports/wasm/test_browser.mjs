@@ -1323,6 +1323,9 @@ print("configured")
 
     assertContains(r.stdout, 'configured');
 
+    // Sync hardware state from MEMFS before cleanup clears it
+    r.board._hw.postStep(r.board._wasi, performance.now());
+
     const snap = adapter.getSnapshot(r.board);
 
     // D13 (LED) should show as output

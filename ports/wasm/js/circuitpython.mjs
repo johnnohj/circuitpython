@@ -28,6 +28,7 @@ import { Display } from './display.mjs';
 import { Readline } from './readline.mjs';
 import { HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
 import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';
+import { VMContext, DisplayContext, HardwareContext, IOContext } from './context-managers.mjs';
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
@@ -97,9 +98,12 @@ export class CircuitPython {
         this._ctxCallbacks = new Map();  // context id → onDone callback
         this._autoReloadTimer = null;
         this._autoReloadEnabled = false;
-        this._prevState = 0;     // for cp_state() transition detection
+        this._prevState = 0;     // for cp_state() transition detection (legacy)
         this._ctx0IsCode = false; // true when ctx0 is running a file (vs expr)
         this._idb = null;        // saved for _printCodePyLastEdited
+
+        // Context managers — initialized after _init sets up exports
+        this._managers = null;
         this._target = null;     // external hardware target
         this._pollCounter = 0;   // input polling throttle
     }
@@ -147,9 +151,11 @@ export class CircuitPython {
     stop() {
         this.ctrlC();
         this._exports.cp_cleanup?.();
-        // Reset JS-side hardware modules
-        for (const mod of this._hw._modules) {
-            if (mod.reset) mod.reset(this._wasi);
+        // Reset all context managers (each resets its own domain)
+        if (this._managers) {
+            for (const mgr of this._managers) {
+                mgr.reset();
+            }
         }
         this._waitingForKey = false;
         this._codeDoneFired = false;
@@ -243,6 +249,9 @@ export class CircuitPython {
     get canvas() { return this._display?._canvas; }
     get displayWidth() { return this._display?.width || 0; }
     get displayHeight() { return this._display?.height || 0; }
+
+    /** Access context managers for fine-grained control. */
+    get displayContext() { return this._displayCtx; }
 
     /**
      * Register a hardware module.  Modules get preStep/postStep hooks
@@ -704,8 +713,14 @@ export class CircuitPython {
         // When autoLifecycle=false, JS manages execution directly.
         this._autoReloadEnabled = (options.autoLifecycle !== false);
 
-        // Start frame loop BEFORE kicking off lifecycle so cp_step ticks
-        // boot.py / code.py forward.
+        // Initialize context managers
+        this._vmCtx = new VMContext(this);
+        this._displayCtx = new DisplayContext(this);
+        this._hwCtx = new HardwareContext(this);
+        this._ioCtx = new IOContext(this);
+        this._managers = [this._vmCtx, this._displayCtx, this._hwCtx, this._ioCtx];
+
+        // Start frame loop
         this._raf = env.requestFrame(() => this._loop());
 
         // Kick off the traditional board lifecycle (banner → boot → code → REPL).
@@ -802,70 +817,19 @@ export class CircuitPython {
     _loop() {
         const nowMs = performance.now() | 0;
 
-        // Pre-step: let hardware modules inject fresh data
-        this._hw.preStep(this._wasi, nowMs);
-
-        // VM + VH step (cp_step calls cp_hw_step internally)
-        this._exports.cp_step(nowMs);
-
-        // Post-step: let hardware modules read output state
-        this._hw.postStep(this._wasi, nowMs);
-
-        // Forward state to external hardware target (if connected)
-        if (this._target && this._target.connected) {
-            this._target.applyState(this._wasi, nowMs);
-            if (++this._pollCounter >= 20) {
-                this._pollCounter = 0;
-                this._target.pollInputs();
+        // Step each context manager that has work
+        for (const mgr of this._managers) {
+            if (mgr.needsWork) {
+                mgr.step(nowMs);
             }
-        }
-
-        // Display rendering
-        if (this._display) {
-            this._display.paint();
         }
 
         this._frameCount++;
 
-        // State transition detection via cp_state()
-        const st = this._exports.cp_state();
-
-        // EXECUTING/SUSPENDED → READY: execution just finished
-        if (this._prevState > 0 && st === 0) {
-            // Show prompt if readline is waiting for a result
-            if (this._readline?.waitingForResult) {
-                this._readline.onResult();
-            }
-            // Fire onCodeDone callback (if registered and this was a code run)
-            if (this._onCodeDone && !this._codeDoneFired && this._ctx0IsCode) {
-                this._codeDoneFired = true;
-                this._onCodeDone();
-            }
-        }
-        this._prevState = st;
-
-        // Background context lifecycle: detect done contexts, fire callbacks
-        for (let i = 1; i < this._ctxMax; i++) {
-            const m = this._readContextMeta(i);
-            if (!m || m.status !== 6) continue;  // only DONE contexts
-
-            const cb = this._ctxCallbacks.get(i);
-            if (cb) {
-                this._ctxCallbacks.delete(i);
-                cb(i, null);
-            }
-
-            const active = this._exports.cp_context_active();
-            if (active === i) {
-                this._exports.cp_context_save(i);
-                this._exports.cp_context_restore(0);
-            }
-            this._exports.cp_context_destroy(i);
-        }
-
         // Status bar update (every ~1 second)
         if (this._statusEl && this._frameCount % 60 === 0) {
             const STATE_NAMES = ['READY', 'EXEC', 'SUSPEND'];
+            const st = this._exports?.cp_state?.() ?? 0;
             this._statusEl.textContent = `${STATE_NAMES[st] || '?'} | frame:${this._frameCount}`;
         }
 
@@ -886,14 +850,14 @@ export class CircuitPython {
      *               battery on mobile — no work, no ticks.
      */
     _scheduleNext(nowMs) {
-        const wake = this._exports.cp_next_wake_ms(nowMs);
-        // WASM i32: C's 0xFFFFFFFF arrives as -1 in JS
-        if (wake === -1) {
-            // Idle indefinitely — don't schedule; _kick() will restart
-            this._raf = null;
-        } else {
-            // Runnable or sleeping — keep ticking for HAL + display
+        // Check if any manager needs work
+        const anyWork = this._managers?.some(m => m.needsWork) ?? false;
+        if (anyWork) {
+            // At least one manager has work — keep ticking
             this._raf = env.requestFrame(() => this._loop());
+        } else {
+            // All idle — stop loop; _kick() restarts on external event
+            this._raf = null;
         }
     }
 
