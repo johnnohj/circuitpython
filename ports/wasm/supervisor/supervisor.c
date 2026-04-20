@@ -684,25 +684,32 @@ int cp_run(int src_kind, int src_len, int ctx, int priority) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Legacy run-entry shims — thin wrappers around cp_run.                */
-/* Kept as exports for JS callers that haven't migrated yet; scheduled  */
-/* for removal once all consumers use cp_run directly.                  */
+/* cp_exec — unified execution entry point (ctx0).                     */
+/*                                                                     */
+/* Source-agnostic: it doesn't matter where the Python comes from.     */
+/*                                                                     */
+/*   kind:                                                             */
+/*     0 = CP_EXEC_STRING — compile+run buffer as expression/statement */
+/*     1 = CP_EXEC_FILE   — buffer contains file path; compile+run it */
+/*                                                                     */
+/*   Returns: 0 = started, -1 = busy, -2 = compile error              */
 /* ------------------------------------------------------------------ */
 
+#define CP_EXEC_STRING 0
+#define CP_EXEC_FILE   1
+
 __attribute__((export_name("cp_exec")))
-int cp_exec(int len) {
-    /* Legacy return codes: 0=ok, 1=compile error, 2=busy.
-     * cp_run returns: 0=ok (ctx0), -1=busy, -2=compile error, -4=bad args. */
-    int r = cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
-    if (r == 0) return 0;
-    if (r == -1) return 2;
-    return 1;
+int cp_exec(int kind, int len) {
+    int r = cp_run(kind, len, CP_CTX_MAIN, 0);
+    if (r == 0) return 0;    /* started on ctx0 */
+    if (r == -1) return -1;  /* ctx0 busy */
+    return -2;               /* compile error or bad args */
 }
+
+/* ── Background context entry points (unchanged API) ── */
 
 __attribute__((export_name("cp_context_exec")))
 int cp_context_exec(int len, int priority) {
-    /* Legacy: ≥1 ctx id, -1 no slots, -2 compile error.
-     * cp_run:  ≥1 ctx id, -3 no slots, -2 compile error. */
     int r = cp_run(CP_SRC_EXPR, len, CP_CTX_NEW, priority);
     if (r >= 0) return r;
     if (r == -3) return -1;

@@ -35,10 +35,13 @@ const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
-// cp_run() kind/ctx constants (must match supervisor.c)
+// cp_exec() kind constants (must match supervisor.c)
+const CP_EXEC_STRING = 0;
+const CP_EXEC_FILE   = 1;
+
+// cp_run() ctx constants (background contexts, must match supervisor.c)
 const CP_SRC_EXPR = 0;
 const CP_SRC_FILE = 1;
-const CP_CTX_MAIN = -1;
 const CP_CTX_NEW  = -2;
 
 // Auto-reload message — printed between boot.py and code.py by runBoardLifecycle
@@ -102,15 +105,42 @@ export class CircuitPython {
 
     // ── Public API ──
 
-    /** Execute a REPL expression on ctx0. */
+    /** Execute a Python string on ctx0. Source-agnostic. */
     exec(code) {
         if (!this._readline) return;
         // Auto-enter REPL if waiting for keypress
         if (this._waitingForKey) this._enterRepl();
         const len = this._readline.writeInputBuf(code);
-        this._exports.cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
+        this._exports.cp_exec(CP_EXEC_STRING, len);
         this._readline._waitingForResult = true;
         this._kick();
+    }
+
+    /** Execute a .py file from MEMFS on ctx0.
+     *  @param {string} path — e.g. '/code.py'
+     *  @returns {number} 0=started, -1=busy, -2=compile error */
+    execFile(path) {
+        const len = this._writeInputBuf(path);
+        const r = this._exports.cp_exec(CP_EXEC_FILE, len);
+        if (r === 0 && this._readline) {
+            this._readline._waitingForResult = true;
+        }
+        this._kick();
+        return r;
+    }
+
+    /** Stop execution + reset to READY state.
+     *  Interrupts running code, kills background contexts, resets
+     *  hardware (pins, buses, display). After this, state === 'ready'. */
+    stop() {
+        this.ctrlC();
+        this._exports.cp_cleanup?.();
+        // Reset JS-side hardware modules
+        for (const mod of this._hw._modules.values()) {
+            if (mod.reset) mod.reset(this._wasi);
+        }
+        this._waitingForKey = false;
+        this._codeDoneFired = false;
     }
 
     /** Send Ctrl-C: interrupt running code + kill background contexts. */
@@ -285,10 +315,10 @@ export class CircuitPython {
         return len;
     }
 
-    /** Start /<path>.py on ctx0 via cp_run(CP_SRC_FILE, CP_CTX_MAIN). */
+    /** Start a .py file on ctx0 via cp_exec(CP_EXEC_FILE). */
     _runMainFile(path) {
         const len = this._writeInputBuf(path);
-        const r = this._exports.cp_run(CP_SRC_FILE, len, CP_CTX_MAIN, 0);
+        const r = this._exports.cp_exec(CP_EXEC_FILE, len);
         this._kick();
         return r;
     }
