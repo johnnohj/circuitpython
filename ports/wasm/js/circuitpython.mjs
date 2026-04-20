@@ -660,10 +660,19 @@ export class CircuitPython {
             };
             document.addEventListener('keydown', this._keyHandler);
 
-            // Tab visibility — pause when hidden, resume when visible
+            // Tab visibility — notify managers + pause/resume loop
             this._visibilityHandler = () => {
-                if (document.hidden) this.pause();
-                else this.resume();
+                if (document.hidden) {
+                    if (this._managers) {
+                        for (const mgr of this._managers) mgr.onHidden();
+                    }
+                    this.pause();
+                } else {
+                    if (this._managers) {
+                        for (const mgr of this._managers) mgr.onVisible();
+                    }
+                    this.resume();
+                }
             };
             document.addEventListener('visibilitychange', this._visibilityHandler);
         }

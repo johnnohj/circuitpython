@@ -8,12 +8,12 @@
  *   wake(event) — something happened in this domain
  *   reset()     — clean state for this domain
  *
- * Context managers submit events to the semihosting ring and read state
- * from MEMFS/exports. They don't call C exports directly (except through
- * the step protocol). circuitpython.mjs orchestrates time allocation
- * across managers.
- *
- * Phase 1: wraps existing code, same behavior, cleaner structure.
+ * Phase 2: independent timing per manager.
+ *   - VMContext only steps when executing (drives cp_step which includes cp_hw_step)
+ *   - DisplayContext always runs when display exists (calls cp_hw_step when VM idle)
+ *   - HardwareContext syncs on VM activity or pending changes
+ *   - IOContext polls connected devices independently
+ *   - Visibility API: onVisible/onHidden for throttling
  */
 
 // cp_state() return values
@@ -28,6 +28,7 @@ export class ContextManager {
     constructor(board) {
         /** @type {import('./circuitpython.mjs').CircuitPython} */
         this._board = board;
+        this._visible = true;
     }
 
     /** Does this domain have pending work? */
@@ -41,12 +42,19 @@ export class ContextManager {
 
     /** Clean state for this domain (Layer 3 teardown). */
     reset() {}
+
+    /** Tab became visible — resume full-rate work. */
+    onVisible() { this._visible = true; }
+
+    /** Tab became hidden — throttle or pause. */
+    onHidden() { this._visible = false; }
 }
 
 /**
  * VMContext — owns Python execution.
  *
- * Calls cp_step (which includes cp_hw_step internally for now).
+ * Drives cp_step (which includes cp_hw_step internally) when VM is active.
+ * When VM is READY, does nothing — DisplayContext handles VH updates.
  * Tracks state transitions, fires callbacks on completion.
  */
 export class VMContext extends ContextManager {
@@ -64,7 +72,7 @@ export class VMContext extends ContextManager {
         const exports = this._board._exports;
         if (!exports) return;
 
-        // cp_step drives VM + VH (backward compat: cp_step calls cp_hw_step)
+        // cp_step drives both VM and VH when executing
         exports.cp_step(nowMs);
 
         // State transition detection
@@ -96,7 +104,7 @@ export class VMContext extends ContextManager {
         const board = this._board;
         for (let i = 1; i < board._ctxMax; i++) {
             const m = board._readContextMeta(i);
-            if (!m || m.status !== 6) continue;  // only DONE
+            if (!m || m.status !== 6) continue;
 
             const cb = board._ctxCallbacks.get(i);
             if (cb) {
@@ -117,7 +125,12 @@ export class VMContext extends ContextManager {
 /**
  * DisplayContext — owns the framebuffer, terminal, and cursor.
  *
- * Calls display.paint() each step. Manages cursor blink independently.
+ * Always runs when a display exists. When the VM is idle, calls
+ * cp_hw_step directly to keep the display framebuffer fresh
+ * (background callbacks, terminal refresh, cursor info update).
+ * When the VM is executing, cp_step already calls cp_hw_step.
+ *
+ * Cursor blink runs on its own setInterval, independent of rAF.
  */
 export class DisplayContext extends ContextManager {
     constructor(board) {
@@ -125,24 +138,31 @@ export class DisplayContext extends ContextManager {
         this._cursorVisible = false;
         this._cursorTimer = null;
         this._cursorBlinkMs = 530;
-        this._showCursor = false;  // set by circuitpython.mjs based on mode
+        this._showCursor = false;
     }
 
     get needsWork() {
-        // Display always needs work if it exists (framebuffer may have changed)
         return !!this._board._display;
     }
 
     step(nowMs) {
-        if (this._board._display) {
-            this._board._display.paint();
-            if (this._showCursor && this._cursorVisible) {
-                this._board._display.drawCursor();
-            }
+        const board = this._board;
+        if (!board._display) return;
+
+        // When VM is idle, we need to drive cp_hw_step ourselves
+        // so the display framebuffer stays fresh (terminal, cursor info).
+        // When VM is executing, cp_step already called cp_hw_step.
+        const st = board._exports?.cp_state?.() ?? CP_STATE_READY;
+        if (st === CP_STATE_READY) {
+            board._exports.cp_hw_step(nowMs);
+        }
+
+        board._display.paint();
+        if (this._showCursor && this._cursorVisible) {
+            board._display.drawCursor();
         }
     }
 
-    /** Start blinking the cursor (REPL mode, focused). */
     startCursorBlink() {
         this._showCursor = true;
         this._cursorVisible = true;
@@ -152,7 +172,6 @@ export class DisplayContext extends ContextManager {
         }, this._cursorBlinkMs);
     }
 
-    /** Stop cursor blink (code running, or no focus). */
     stopCursorBlink() {
         this._showCursor = false;
         this._cursorVisible = false;
@@ -160,6 +179,11 @@ export class DisplayContext extends ContextManager {
             clearInterval(this._cursorTimer);
             this._cursorTimer = null;
         }
+    }
+
+    onHidden() {
+        super.onHidden();
+        this.stopCursorBlink();
     }
 
     reset() {
@@ -170,7 +194,9 @@ export class DisplayContext extends ContextManager {
 /**
  * HardwareContext — owns pin/neopixel/analog/I2C state.
  *
- * Runs hardware module preStep/postStep hooks each frame.
+ * Runs hardware module preStep/postStep hooks. Needs work when VM
+ * is active (state is being produced), when a final sync is pending
+ * (VM just finished), or when a display exists (continuous rendering).
  */
 export class HardwareContext extends ContextManager {
     constructor(board) {
@@ -179,10 +205,6 @@ export class HardwareContext extends ContextManager {
     }
 
     get needsWork() {
-        // Hardware needs syncing when:
-        // - VM is active (executing/suspended)
-        // - A final sync is pending (VM just finished)
-        // - A display exists (display needs continuous hw state for rendering)
         if (this._pendingSync) return true;
         if (this._board._display) return true;
         const st = this._board._exports?.cp_state?.() ?? CP_STATE_READY;
@@ -208,13 +230,13 @@ export class HardwareContext extends ContextManager {
 /**
  * IOContext — owns external hardware targets (WebUSB, WebSerial).
  *
- * Polls connected devices at a reduced rate.
+ * Polls connected devices at a reduced rate (~3/sec).
  */
 export class IOContext extends ContextManager {
     constructor(board) {
         super(board);
         this._pollCounter = 0;
-        this._pollInterval = 20;  // every 20 frames (~3/sec at 60fps)
+        this._pollInterval = 20;
     }
 
     get needsWork() {
@@ -231,6 +253,17 @@ export class IOContext extends ContextManager {
             this._pollCounter = 0;
             target.pollInputs();
         }
+    }
+
+    onHidden() {
+        super.onHidden();
+        // Reduce polling rate when hidden
+        this._pollInterval = 60;
+    }
+
+    onVisible() {
+        super.onVisible();
+        this._pollInterval = 20;
     }
 
     reset() {
