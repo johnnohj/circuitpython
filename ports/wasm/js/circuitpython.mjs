@@ -637,14 +637,24 @@ export class CircuitPython {
             ctxMax: this._ctxMax,
             readContextMeta: (id) => this._readContextMeta(id),
             onExec: (len) => {
-                // Route readline exec through the CircuitPython class
-                // so state tracking (_ctx0IsCode, _kick) stays in sync.
                 const r = this._exports.cp_exec(CP_EXEC_STRING, len);
                 if (r === 0) {
                     this._ctx0IsCode = false;
                     this._kick();
                 }
                 return r;
+            },
+            onCtrlC: () => this.ctrlC(),
+            onCtrlD: () => this.ctrlD(),
+            onRunCode: (code, priority) => this.runCode(code, { priority }),
+            onRunFile: (path, priority) => this.runFile(path, { priority }),
+            onDestroyContext: (id) => {
+                const active = this._exports.cp_context_active();
+                if (active === id) {
+                    this._exports.cp_context_save(id);
+                    this._exports.cp_context_restore(0);
+                }
+                this._exports.cp_context_destroy(id);
             },
         });
 

@@ -17,6 +17,8 @@ export class Readline {
      * @param {function} options.readContextMeta
      * @param {function} [options.onExec] — called with (len) when readline
      *        wants to execute. If not provided, falls back to cp_exec(0, len).
+     * @param {function} [options.onCtrlC] — called on Ctrl+C. Falls back to cp_ctrl_c().
+     * @param {function} [options.onCtrlD] — called on Ctrl+D. Falls back to cp_ctrl_d().
      */
     constructor(exports, options = {}) {
         this._exports = exports;
@@ -24,6 +26,11 @@ export class Readline {
         this._ctxMax = options.ctxMax || 8;
         this._readContextMeta = options.readContextMeta;
         this._onExec = options.onExec || null;
+        this._onCtrlC = options.onCtrlC || null;
+        this._onCtrlD = options.onCtrlD || null;
+        this._onRunCode = options.onRunCode || null;
+        this._onRunFile = options.onRunFile || null;
+        this._onDestroyContext = options.onDestroyContext || null;
 
         this._inputBufAddr = exports.cp_input_buf_addr();
         this._inputBufSize = exports.cp_input_buf_size();
@@ -88,7 +95,8 @@ export class Readline {
 
         // Ctrl+C
         if (ctrl && key === 'c') {
-            exports.cp_ctrl_c();
+            if (this._onCtrlC) this._onCtrlC();
+            else exports.cp_ctrl_c();
             this.handleInterrupt();
             return true;
         }
@@ -96,7 +104,8 @@ export class Readline {
         // Ctrl+D
         if (ctrl && key === 'd') {
             if (!this._line && !this._lines) {
-                exports.cp_ctrl_d();
+                if (this._onCtrlD) this._onCtrlD();
+                else exports.cp_ctrl_d();
                 this.termWrite('\r\n');
                 this._waitingForResult = true;
             }
@@ -114,6 +123,9 @@ export class Readline {
                 readline: this,
                 ctxMax: this._ctxMax,
                 readContextMeta: this._readContextMeta,
+                runCode: this._onRunCode || null,
+                runFile: this._onRunFile || null,
+                destroyContext: this._onDestroyContext || null,
             })) {
                 if (this._line.trim()) {
                     this._history.unshift(this._line.trimEnd());

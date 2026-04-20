@@ -5,13 +5,16 @@
  * reach cp_exec.  Pure logic — no DOM dependencies.
  *
  * @param {string} line — the raw input line
- * @param {object} ctx — context object with exports, fwip, readline, ctxMax, readContextMeta
+ * @param {object} ctx — context object:
+ *   exports, fwip, readline, ctxMax, readContextMeta,
+ *   runCode(code, priority), runFile(path, priority), destroyContext(id)
  * @returns {boolean} true if the line was handled as a shell command
  */
 
 const CTX_STATUSES = ['FREE', 'IDLE', 'RUNNABLE', 'RUNNING', 'YIELDED', 'SLEEPING', 'DONE'];
 
-export function tryShellCommand(line, { exports, fwip, readline, ctxMax, readContextMeta }) {
+export function tryShellCommand(line, { exports, fwip, readline, ctxMax, readContextMeta,
+    runCode, runFile, destroyContext }) {
     const trimmed = line.trim();
     if (!trimmed) return false;
 
@@ -30,8 +33,9 @@ export function tryShellCommand(line, { exports, fwip, readline, ctxMax, readCon
                 prompt();
                 return true;
             }
-            const len = readline.writeInputBuf(code);
-            const id = exports.cp_context_exec(len, 200);
+            const id = runCode
+                ? runCode(code, 200)
+                : (() => { const l = readline.writeInputBuf(code); return exports.cp_context_exec(l, 200); })();
             if (id >= 0) write(`[ctx] started context ${id}\r\n`);
             else if (id === -1) write('[ctx] error: no free context slots\r\n');
             else write('[ctx] error: compile failed\r\n');
@@ -46,8 +50,9 @@ export function tryShellCommand(line, { exports, fwip, readline, ctxMax, readCon
                 prompt();
                 return true;
             }
-            const len = readline.writeInputBuf(path);
-            const id = exports.cp_context_exec_file(len, 200);
+            const id = runFile
+                ? runFile(path, 200)
+                : (() => { const l = readline.writeInputBuf(path); return exports.cp_context_exec_file(l, 200); })();
             if (id >= 0) write(`[ctx] started context ${id} from ${path}\r\n`);
             else if (id === -1) write('[ctx] error: no free context slots\r\n');
             else write(`[ctx] error: compile failed for ${path}\r\n`);
@@ -72,7 +77,8 @@ export function tryShellCommand(line, { exports, fwip, readline, ctxMax, readCon
         if (sub === 'kill') {
             const id = parseInt(parts[2]);
             if (id > 0 && id < ctxMax) {
-                exports.cp_context_destroy(id);
+                if (destroyContext) destroyContext(id);
+                else exports.cp_context_destroy(id);
                 write(`[ctx] killed context ${id}\r\n`);
             } else {
                 write('Usage: ctx kill <id>  (id > 0)\r\n');
