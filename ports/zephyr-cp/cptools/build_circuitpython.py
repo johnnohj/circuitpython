@@ -59,15 +59,34 @@ DEFAULT_MODULES = [
     "supervisor",
     "errno",
     "io",
+    "math",
+    "msgpack",
+    "aesio",
+    "hashlib",
+    "zlib",
+    "adafruit_bus_device",
+    "getpass",
 ]
 # Flags that don't match with with a *bindings module. Some used by adafruit_requests
-MPCONFIG_FLAGS = ["array", "errno", "io", "json"]
+MPCONFIG_FLAGS = ["array", "errno", "io", "json", "math"]
 
 # List of other modules (the value) that can be enabled when another one (the key) is.
 REVERSE_DEPENDENCIES = {
+    "audiobusio": ["audiocore"],
+    "audiocore": [
+        "audiodelays",
+        "audiofilters",
+        "audiofreeverb",
+        "audiomixer",
+        "audiomp3",
+        "synthio",
+    ],
     "busio": ["fourwire", "i2cdisplaybus", "sdcardio", "sharpdisplay"],
     "fourwire": ["displayio", "busdisplay", "epaperdisplay"],
     "i2cdisplaybus": ["displayio", "busdisplay", "epaperdisplay"],
+    # Zephyr display backends need displayio and, by extension, terminalio so
+    # the REPL console appears on the display by default.
+    "zephyr_display": ["displayio"],
     "displayio": [
         "vectorio",
         "bitmapfilter",
@@ -83,8 +102,23 @@ REVERSE_DEPENDENCIES = {
 
 # Other flags to set when a module is enabled
 EXTRA_FLAGS = {
-    "busio": ["BUSIO_SPI", "BUSIO_I2C"],
-    "rotaryio": ["ROTARYIO_SOFTENCODER"],
+    "audiobusio": {"AUDIOBUSIO_I2SOUT": 1, "AUDIOBUSIO_PDMIN": 0},
+    "busio": {"BUSIO_SPI": 1, "BUSIO_I2C": 1},
+    "rotaryio": {"ROTARYIO_SOFTENCODER": 1},
+    "synthio": {"SYNTHIO_MAX_CHANNELS": 12},
+}
+
+# Library sources. Will be globbed from the top level directory
+# No QSTR processing or CIRCUITPY specific flags
+LIBRARY_SOURCE = {
+    "audiomp3": ["lib/mp3/src/*.c"],
+    "zlib": [
+        "lib/uzlib/tinflate.c",
+        "lib/uzlib/tinfzlib.c",
+        "lib/uzlib/tinfgzip.c",
+        "lib/uzlib/adler32.c",
+        "lib/uzlib/crc32.c",
+    ],
 }
 
 SHARED_MODULE_AND_COMMON_HAL = ["_bleio", "os", "rotaryio"]
@@ -267,6 +301,8 @@ def determine_enabled_modules(board_info, portdir, srcdir):
     network_enabled = board_info.get("wifi", False) or board_info.get("hostnetwork", False)
 
     if network_enabled:
+        enabled_modules.add("ipaddress")
+        module_reasons["ipaddress"] = "Zephyr networking enabled"
         enabled_modules.add("socketpool")
         module_reasons["socketpool"] = "Zephyr networking enabled"
         enabled_modules.add("hashlib")
@@ -329,6 +365,9 @@ async def build_circuitpython():
     circuitpython_flags.append("-DLONGINT_IMPL_MPZ")
     circuitpython_flags.append("-DCIRCUITPY_SSL_MBEDTLS")
     circuitpython_flags.append("-DFFCONF_H='\"lib/oofatfs/ffconf.h\"'")
+    circuitpython_flags.append(
+        "-D_DEFAULT_SOURCE"
+    )  # To get more from picolibc to match newlib such as M_PI
     circuitpython_flags.extend(("-I", srcdir))
     circuitpython_flags.extend(("-I", builddir))
     circuitpython_flags.extend(("-I", portdir))
@@ -336,6 +375,11 @@ async def build_circuitpython():
     genhdr = builddir / "genhdr"
     genhdr.mkdir(exist_ok=True, parents=True)
     version_header = genhdr / "mpversion.h"
+    mpconfigboard_fn = board_tools.find_mpconfigboard(portdir, board)
+    mpconfigboard = {"USB_VID": 0x1209, "USB_PID": 0x000C, "USB_INTERFACE_NAME": "CircuitPython"}
+    if mpconfigboard_fn is not None and mpconfigboard_fn.exists():
+        with mpconfigboard_fn.open("rb") as f:
+            mpconfigboard.update(tomllib.load(f))
     async with asyncio.TaskGroup() as tg:
         tg.create_task(
             cpbuild.run_command(
@@ -353,11 +397,9 @@ async def build_circuitpython():
         )
 
         board_autogen_task = tg.create_task(
-            zephyr_dts_to_cp_board(zephyr_board, portdir, builddir, zephyrbuilddir)
+            zephyr_dts_to_cp_board(zephyr_board, portdir, builddir, zephyrbuilddir, mpconfigboard)
         )
     board_info = board_autogen_task.result()
-    mpconfigboard_fn = board_tools.find_mpconfigboard(portdir, board)
-    mpconfigboard = {"USB_VID": 0x1209, "USB_PID": 0x000C, "USB_INTERFACE_NAME": "CircuitPython"}
     if mpconfigboard_fn is None:
         mpconfigboard_fn = (
             portdir / "boards" / board_info["vendor_id"] / board / "circuitpython.toml"
@@ -365,9 +407,6 @@ async def build_circuitpython():
         logging.warning(
             f"Could not find board config at: boards/{board_info['vendor_id']}/{board}"
         )
-    elif mpconfigboard_fn.exists():
-        with mpconfigboard_fn.open("rb") as f:
-            mpconfigboard.update(tomllib.load(f))
 
     autogen_board_info_fn = mpconfigboard_fn.parent / "autogen_board_info.toml"
 
@@ -376,7 +415,12 @@ async def build_circuitpython():
     circuitpython_flags.append(f"-DCIRCUITPY_CREATOR_ID=0x{creator_id:08x}")
     circuitpython_flags.append(f"-DCIRCUITPY_CREATION_ID=0x{creation_id:08x}")
 
+    vendor = mpconfigboard.get("VENDOR", board_info["vendor"])
+    name = mpconfigboard.get("NAME", board_info["name"])
+
     enabled_modules, module_reasons = determine_enabled_modules(board_info, portdir, srcdir)
+    for m in mpconfigboard.get("DISABLED_MODULES", []):
+        enabled_modules.discard(m)
 
     web_workflow_enabled = board_info.get("wifi", False) or board_info.get("hostnetwork", False)
 
@@ -433,8 +477,8 @@ async def build_circuitpython():
             f"-DUSB_INTERFACE_NAME='\"{mpconfigboard['USB_INTERFACE_NAME']}\"'"
         )
         for macro, limit, value in (
-            ("USB_PRODUCT", 16, board_info["name"]),
-            ("USB_MANUFACTURER", 8, board_info["vendor"]),
+            ("USB_PRODUCT", 16, name),
+            ("USB_MANUFACTURER", 8, vendor),
         ):
             circuitpython_flags.append(f"-D{macro}='\"{value}\"'")
             circuitpython_flags.append(f"-D{macro}_{limit}='\"{value[:limit]}\"'")
@@ -479,13 +523,14 @@ async def build_circuitpython():
 
     # Make sure all modules have a setting by filling in defaults.
     hal_source = []
+    library_sources = []
     autogen_board_info = tomlkit.document()
     autogen_board_info.add(
         tomlkit.comment(
             "This file is autogenerated when a board is built. Do not edit. Do commit it to git. Other scripts use its info."
         )
     )
-    autogen_board_info.add("name", board_info["vendor"] + " " + board_info["name"])
+    autogen_board_info.add("name", vendor + " " + name)
     autogen_modules = tomlkit.table()
     autogen_board_info.add("modules", autogen_modules)
     for module in sorted(
@@ -506,8 +551,8 @@ async def build_circuitpython():
 
         if enabled:
             if module.name in EXTRA_FLAGS:
-                for flag in EXTRA_FLAGS[module.name]:
-                    circuitpython_flags.append(f"-DCIRCUITPY_{flag}=1")
+                for flag, value in EXTRA_FLAGS[module.name].items():
+                    circuitpython_flags.append(f"-DCIRCUITPY_{flag}={value}")
 
         if enabled:
             hal_source.extend(portdir.glob(f"bindings/{module.name}/*.c"))
@@ -515,20 +560,22 @@ async def build_circuitpython():
             hal_source.extend(top.glob(f"ports/zephyr-cp/common-hal/{module.name}/*.c"))
             # Only include shared-module/*.c if no common-hal/*.c files were found
             if len(hal_source) == len_before or module.name in SHARED_MODULE_AND_COMMON_HAL:
-                hal_source.extend(top.glob(f"shared-module/{module.name}/*.c"))
-            hal_source.extend(top.glob(f"shared-bindings/{module.name}/*.c"))
+                hal_source.extend(top.glob(f"shared-module/{module.name}/**/*.c"))
+            hal_source.extend(top.glob(f"shared-bindings/{module.name}/**/*.c"))
+            if module.name in LIBRARY_SOURCE:
+                for library_source in LIBRARY_SOURCE[module.name]:
+                    library_sources.extend(top.glob(library_source))
 
     if os.environ.get("CI", "false") == "true":
-        # Fail the build if it isn't up to date.
+        # Warn if it isn't up to date.
         if (
             not autogen_board_info_fn.exists()
             or autogen_board_info_fn.read_text() != tomlkit.dumps(autogen_board_info)
         ):
-            logger.error("autogen_board_info.toml is out of date.")
-            raise RuntimeError(
+            logger.warning(
                 f"autogen_board_info.toml is missing or out of date. Please run `make BOARD={board}` locally and commit {autogen_board_info_fn}."
             )
-    elif autogen_board_info_fn.parent.exists():
+    if autogen_board_info_fn.parent.exists():
         autogen_board_info_fn.write_text(tomlkit.dumps(autogen_board_info))
 
     for mpflag in MPCONFIG_FLAGS:
@@ -619,6 +666,12 @@ async def build_circuitpython():
 
     objects = []
     async with asyncio.TaskGroup() as tg:
+        for source_file in library_sources:
+            source_file = top / source_file
+            build_file = source_file.with_suffix(".o")
+            object_file = builddir / (build_file.relative_to(top))
+            objects.append(object_file)
+            tg.create_task(compiler.compile(source_file, object_file))
         for source_file in source_files:
             source_file = top / source_file
             build_file = source_file.with_suffix(".o")

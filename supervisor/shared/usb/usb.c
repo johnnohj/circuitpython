@@ -7,6 +7,7 @@
 #include "py/objstr.h"
 #include "supervisor/background_callback.h"
 #include "supervisor/linker.h"
+#include "supervisor/port.h"
 #include "supervisor/shared/tick.h"
 #include "supervisor/usb.h"
 #include "shared/readline/readline.h"
@@ -160,9 +161,8 @@ void usb_background(void) {
         tuh_task();
         #endif
         #elif CFG_TUSB_OS == OPT_OS_FREERTOS
-        // Yield to FreeRTOS in case TinyUSB runs in a separate task. Don't use
-        // port_yield() because it has a longer delay.
-        vTaskDelay(0);
+        // TinyUSB may run in a separate task, at the same priority as CircuitPython.
+        port_task_yield();
         #endif
         // No need to flush if there's no REPL.
         #if CIRCUITPY_USB_DEVICE && CIRCUITPY_USB_CDC

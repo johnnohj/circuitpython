@@ -339,10 +339,8 @@ safe_mode_t port_init(void) {
     init_shared_dma();
 
     // Reset everything into a known state before board_init.
+    // Pins are reset in main() after this routine returns.
     reset_port();
-
-    // Reset the pins too.
-    reset_all_pins();
 
     #ifdef SAMD21
     if (PM->RCAUSE.bit.BOD33 == 1 || PM->RCAUSE.bit.BOD12 == 1) {
@@ -687,7 +685,7 @@ void port_idle_until_interrupt(void) {
 /**
  * \brief Default interrupt handler for unused IRQs.
  */
-__attribute__((used)) NORETURN void HardFault_Handler(void) {
+__attribute__((used)) MP_NORETURN void HardFault_Handler(void) {
     #ifdef ENABLE_MICRO_TRACE_BUFFER
     // Turn off the micro trace buffer so we don't fill it up in the infinite
     // loop below.

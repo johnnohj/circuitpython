@@ -8,6 +8,7 @@
 
 #include <string.h>
 
+#include "py/mphal.h"
 #include "py/runtime.h"
 #include "py/gc.h"
 
@@ -26,7 +27,11 @@ MP_WEAK void port_wake_main_task(void) {
 MP_WEAK void port_wake_main_task_from_isr(void) {
 }
 
-MP_WEAK void port_yield(void) {
+MP_WEAK void port_task_yield(void) {
+}
+
+MP_WEAK void port_task_sleep_ms(uint32_t msecs) {
+    mp_hal_delay_ms(msecs);
 }
 
 MP_WEAK void port_boot_info(void) {

@@ -59,7 +59,8 @@ static mp_obj_t bitbangio_i2c_make_new(const mp_obj_type_t *type, size_t n_args,
 
     bitbangio_i2c_obj_t *self = mp_obj_malloc_with_finaliser(bitbangio_i2c_obj_t, &bitbangio_i2c_type);
     shared_module_bitbangio_i2c_construct(self, args[ARG_scl].u_obj, args[ARG_sda].u_obj, args[ARG_frequency].u_int, args[ARG_timeout].u_int);
-    return (mp_obj_t)self;
+
+    return MP_OBJ_FROM_PTR(self);
 }
 
 //|     def deinit(self) -> None:

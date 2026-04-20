@@ -96,9 +96,6 @@ static mp_obj_t audiobusio_pdmin_make_new(const mp_obj_type_t *type, size_t n_ar
     const mcu_pin_obj_t *clock_pin = validate_obj_is_free_pin(args[ARG_clock_pin].u_obj, MP_QSTR_clock_pin);
     const mcu_pin_obj_t *data_pin = validate_obj_is_free_pin(args[ARG_data_pin].u_obj, MP_QSTR_data_pin);
 
-    // create PDMIn object from the given pin
-    audiobusio_pdmin_obj_t *self = mp_obj_malloc_with_finaliser(audiobusio_pdmin_obj_t, &audiobusio_pdmin_type);
-
     uint32_t sample_rate = args[ARG_sample_rate].u_int;
     uint8_t bit_depth = args[ARG_bit_depth].u_int;
     if (bit_depth % 8 != 0) {
@@ -115,6 +112,7 @@ static mp_obj_t audiobusio_pdmin_make_new(const mp_obj_type_t *type, size_t n_ar
         : mp_obj_get_float(args[ARG_startup_delay].u_obj);
     mp_arg_validate_float_range(startup_delay, 0.0f, 1.0f, MP_QSTR_startup_delay);
 
+    audiobusio_pdmin_obj_t *self = mp_obj_malloc_with_finaliser(audiobusio_pdmin_obj_t, &audiobusio_pdmin_type);
     common_hal_audiobusio_pdmin_construct(self, clock_pin, data_pin, sample_rate,
         bit_depth, mono, oversample);
 

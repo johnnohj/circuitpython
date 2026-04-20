@@ -80,6 +80,11 @@ msgid ""
 "%d address pins, %d rgb pins and %d tiles indicate a height of %d, not %d"
 msgstr ""
 
+#: py/emitinlinextensa.c
+#, c-format
+msgid "%d is not a multiple of %d"
+msgstr ""
+
 #: shared-bindings/microcontroller/Pin.c
 msgid "%q and %q contain duplicate pins"
 msgstr ""
@@ -101,6 +106,7 @@ msgid "%q contains duplicate pins"
 msgstr ""
 
 #: ports/atmel-samd/common-hal/sdioio/SDCard.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c
 msgid "%q failure: %d"
 msgstr ""
 
@@ -114,6 +120,7 @@ msgstr ""
 
 #: ports/espressif/common-hal/espulp/ULP.c
 #: ports/espressif/common-hal/mipidsi/Bus.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c
 #: ports/mimxrt10xx/common-hal/audiobusio/__init__.c
 #: ports/mimxrt10xx/common-hal/usb_host/Port.c
 #: ports/raspberrypi/common-hal/picodvi/Framebuffer_RP2040.c
@@ -136,6 +143,7 @@ msgstr ""
 
 #: ports/analog/common-hal/busio/SPI.c ports/analog/common-hal/busio/UART.c
 #: shared-bindings/digitalio/DigitalInOutProtocol.c
+#: shared-module/busdisplay/BusDisplay.c
 msgid "%q init failed"
 msgstr ""
 
@@ -167,8 +175,8 @@ msgstr ""
 msgid "%q must be %d"
 msgstr ""
 
-#: py/argcheck.c shared-bindings/busdisplay/BusDisplay.c
-#: shared-bindings/displayio/Bitmap.c
+#: ports/zephyr-cp/bindings/zephyr_display/Display.c py/argcheck.c
+#: shared-bindings/busdisplay/BusDisplay.c shared-bindings/displayio/Bitmap.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
 #: shared-bindings/is31fl3741/FrameBuffer.c
 #: shared-bindings/rgbmatrix/RGBMatrix.c
@@ -259,10 +267,6 @@ msgstr ""
 #: shared-bindings/bitmaptools/__init__.c shared-bindings/canio/Match.c
 #: shared-bindings/time/__init__.c
 msgid "%q out of range"
-msgstr ""
-
-#: py/objmodule.c
-msgid "%q renamed %q"
 msgstr ""
 
 #: py/objrange.c py/objslice.c shared-bindings/random/__init__.c
@@ -460,6 +464,7 @@ msgstr ""
 msgid ", in %q\n"
 msgstr ""
 
+#: ports/zephyr-cp/bindings/zephyr_display/Display.c
 #: shared-bindings/busdisplay/BusDisplay.c
 #: shared-bindings/epaperdisplay/EPaperDisplay.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
@@ -478,7 +483,7 @@ msgstr ""
 msgid "AP could not be started"
 msgstr ""
 
-#: shared-bindings/_bleio/Address.c shared-bindings/ipaddress/IPv4Address.c
+#: shared-bindings/ipaddress/IPv4Address.c
 #, c-format
 msgid "Address must be %d bytes long"
 msgstr ""
@@ -623,6 +628,7 @@ msgstr ""
 
 #: ports/raspberrypi/common-hal/audiobusio/I2SOut.c
 #: ports/raspberrypi/common-hal/audiopwmio/PWMAudioOut.c
+#: ports/raspberrypi/common-hal/mcp4822/MCP4822.c
 msgid "Audio source error"
 msgstr ""
 
@@ -648,6 +654,7 @@ msgstr ""
 msgid "Baudrate not supported by peripheral"
 msgstr ""
 
+#: ports/zephyr-cp/common-hal/zephyr_display/Display.c
 #: shared-module/busdisplay/BusDisplay.c
 #: shared-module/framebufferio/FramebufferDisplay.c
 msgid "Below minimum frame rate"
@@ -670,14 +677,10 @@ msgstr ""
 msgid "Both RX and TX required for flow control"
 msgstr ""
 
+#: ports/zephyr-cp/bindings/zephyr_display/Display.c
 #: shared-bindings/busdisplay/BusDisplay.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
 msgid "Brightness not adjustable"
-msgstr ""
-
-#: shared-bindings/_bleio/UUID.c
-#, c-format
-msgid "Buffer + offset too small %d %d %d"
 msgstr ""
 
 #: ports/raspberrypi/bindings/rp2pio/StateMachine.c
@@ -720,10 +723,6 @@ msgstr ""
 #: ports/raspberrypi/common-hal/paralleldisplaybus/ParallelBus.c
 #, c-format
 msgid "Bus pin %d is already in use"
-msgstr ""
-
-#: shared-bindings/_bleio/UUID.c
-msgid "Byte buffer must be 16 bytes."
 msgstr ""
 
 #: shared-bindings/aesio/aes.c
@@ -866,7 +865,7 @@ msgstr ""
 msgid "Coordinate arrays types have different sizes"
 msgstr ""
 
-#: shared-module/usb/core/Device.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c shared-module/usb/core/Device.c
 msgid "Could not allocate DMA capable buffer"
 msgstr ""
 
@@ -967,8 +966,17 @@ msgstr ""
 msgid "ECB only operates on 16 bytes at a time"
 msgstr ""
 
+#: py/asmxtensa.c
+msgid "ERROR: %q %q not word-aligned"
+msgstr ""
+
+#: py/asmxtensa.c
+msgid "ERROR: xtensa %q out of range"
+msgstr ""
+
 #: ports/espressif/common-hal/busio/SPI.c
 #: ports/espressif/common-hal/canio/CAN.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c
 msgid "ESP-IDF memory allocation failed"
 msgstr ""
 
@@ -1033,10 +1041,12 @@ msgstr ""
 
 #: ports/espressif/common-hal/_bleio/Adapter.c
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "Failed to connect: internal error"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
+#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "Failed to connect: timeout"
 msgstr ""
 
@@ -1146,6 +1156,7 @@ msgstr ""
 msgid "Generic Failure"
 msgstr ""
 
+#: ports/zephyr-cp/bindings/zephyr_display/Display.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
 #: shared-module/busdisplay/BusDisplay.c
 #: shared-module/framebufferio/FramebufferDisplay.c
@@ -1244,7 +1255,8 @@ msgstr ""
 msgid "Internal define error"
 msgstr ""
 
-#: shared-bindings/pwmio/PWMOut.c supervisor/shared/settings.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c shared-bindings/pwmio/PWMOut.c
+#: supervisor/shared/settings.c
 msgid "Internal error"
 msgstr ""
 
@@ -1300,6 +1312,7 @@ msgstr ""
 msgid "Invalid %q"
 msgstr ""
 
+#: ports/raspberrypi/common-hal/mcp4822/MCP4822.c
 #: ports/raspberrypi/common-hal/picodvi/Framebuffer_RP2350.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
 msgid "Invalid %q and %q"
@@ -1519,7 +1532,7 @@ msgstr ""
 #: ports/stm/common-hal/busio/UART.c shared-bindings/fourwire/FourWire.c
 #: shared-bindings/i2cdisplaybus/I2CDisplayBus.c
 #: shared-bindings/paralleldisplaybus/ParallelBus.c
-#: shared-module/bitbangio/SPI.c
+#: shared-bindings/qspibus/QSPIBus.c shared-module/bitbangio/SPI.c
 msgid "No %q pin"
 msgstr ""
 
@@ -1537,6 +1550,7 @@ msgstr ""
 #: ports/atmel-samd/common-hal/audioio/AudioOut.c
 #: ports/raspberrypi/common-hal/audiobusio/I2SOut.c
 #: ports/raspberrypi/common-hal/audiopwmio/PWMAudioOut.c
+#: ports/raspberrypi/common-hal/mcp4822/MCP4822.c
 msgid "No DMA channel found"
 msgstr ""
 
@@ -1651,7 +1665,7 @@ msgid "Not connected"
 msgstr ""
 
 #: shared-bindings/audiobusio/I2SOut.c shared-bindings/audioio/AudioOut.c
-#: shared-bindings/audiopwmio/PWMAudioOut.c
+#: shared-bindings/audiopwmio/PWMAudioOut.c shared-bindings/mcp4822/MCP4822.c
 msgid "Not playing"
 msgstr ""
 
@@ -1748,6 +1762,7 @@ msgid "Operation or feature not supported"
 msgstr ""
 
 #: ports/espressif/common-hal/espidf/__init__.c
+#: ports/espressif/common-hal/qspibus/QSPIBus.c
 msgid "Operation timed out"
 msgstr ""
 
@@ -2167,6 +2182,7 @@ msgid "Too many channels in sample"
 msgstr ""
 
 #: ports/raspberrypi/common-hal/audiobusio/I2SOut.c
+#: ports/raspberrypi/common-hal/mcp4822/MCP4822.c
 msgid "Too many channels in sample."
 msgstr ""
 
@@ -2250,10 +2266,6 @@ msgid "USB error"
 msgstr ""
 
 #: shared-bindings/_bleio/UUID.c
-msgid "UUID integer value must be 0-0xffff"
-msgstr ""
-
-#: shared-bindings/_bleio/UUID.c
 msgid "UUID string not 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'"
 msgstr ""
 
@@ -2269,6 +2281,7 @@ msgstr ""
 #: ports/atmel-samd/common-hal/audioio/AudioOut.c
 #: ports/raspberrypi/common-hal/audiobusio/I2SOut.c
 #: ports/raspberrypi/common-hal/audiopwmio/PWMAudioOut.c
+#: ports/raspberrypi/common-hal/mcp4822/MCP4822.c
 msgid "Unable to allocate buffers for signed conversion"
 msgstr ""
 
@@ -2409,6 +2422,7 @@ msgstr ""
 msgid "Update failed"
 msgstr ""
 
+#: ports/zephyr-cp/common-hal/audiobusio/I2SOut.c
 #: ports/zephyr-cp/common-hal/busio/I2C.c
 #: ports/zephyr-cp/common-hal/busio/SPI.c
 #: ports/zephyr-cp/common-hal/busio/UART.c
@@ -2624,10 +2638,6 @@ msgstr ""
 msgid "array/bytes required on right side"
 msgstr ""
 
-#: py/asmxtensa.c
-msgid "asm overflow"
-msgstr ""
-
 #: py/compile.c
 msgid "async for/with outside async function"
 msgstr ""
@@ -2841,6 +2851,10 @@ msgstr ""
 msgid "can't create '%q' instances"
 msgstr ""
 
+#: py/objtype.c
+msgid "can't create instance"
+msgstr ""
+
 #: py/compile.c
 msgid "can't declare nonlocal in outer code"
 msgstr ""
@@ -2939,12 +2953,12 @@ msgstr ""
 msgid "cannot convert complex type"
 msgstr ""
 
-#: py/objtype.c
-msgid "cannot create instance"
-msgstr ""
-
 #: extmod/ulab/code/ndarray.c
 msgid "cannot delete array elements"
+msgstr ""
+
+#: py/compile.c
+msgid "cannot emit native code for this architecture"
 msgstr ""
 
 #: extmod/ulab/code/ndarray.c
@@ -3101,7 +3115,7 @@ msgstr ""
 msgid "div/mod not implemented for uint"
 msgstr ""
 
-#: extmod/ulab/code/numpy/create.c
+#: extmod/ulab/code/numpy/create.c py/objint_longlong.c py/objint_mpz.c
 msgid "divide by zero"
 msgstr ""
 
@@ -3240,10 +3254,6 @@ msgstr ""
 msgid "float unsupported"
 msgstr ""
 
-#: shared-bindings/_stage/Text.c
-msgid "font must be 2048 bytes long"
-msgstr ""
-
 #: extmod/moddeflate.c
 msgid "format"
 msgstr ""
@@ -3325,10 +3335,6 @@ msgstr ""
 msgid "generator raised StopIteration"
 msgstr ""
 
-#: shared-bindings/_stage/Layer.c
-msgid "graphic must be 2048 bytes long"
-msgstr ""
-
 #: extmod/modhashlib.c
 msgid "hash is final"
 msgstr ""
@@ -3393,10 +3399,6 @@ msgstr ""
 
 #: extmod/ulab/code/scipy/optimize/optimize.c
 msgid "initial values must be iterable"
-msgstr ""
-
-#: shared-bindings/_bleio/Characteristic.c shared-bindings/_bleio/Descriptor.c
-msgid "initial_value length is wrong"
 msgstr ""
 
 #: py/compile.c
@@ -3487,6 +3489,10 @@ msgstr ""
 #: shared-bindings/_bleio/Adapter.c
 #, c-format
 msgid "interval must be in range %s-%s"
+msgstr ""
+
+#: py/emitinlinerv32.c
+msgid "invalid RV32 instruction '%q'"
 msgstr ""
 
 #: py/compile.c
@@ -3683,6 +3689,10 @@ msgstr ""
 msgid "mode must be complete, or reduced"
 msgstr ""
 
+#: py/runtime.c
+msgid "module '%q' has no attribute '%q'"
+msgstr ""
+
 #: py/builtinimport.c
 msgid "module not found"
 msgstr ""
@@ -3731,10 +3741,6 @@ msgstr ""
 msgid "native code in .mpy unsupported"
 msgstr ""
 
-#: py/asmthumb.c
-msgid "native method too big"
-msgstr ""
-
 #: py/emitnative.c
 msgid "native yield"
 msgstr ""
@@ -3756,7 +3762,7 @@ msgstr ""
 msgid "negative power with no float support"
 msgstr ""
 
-#: py/objint_mpz.c py/runtime.c
+#: py/objint_longlong.c py/objint_mpz.c py/runtime.c
 msgid "negative shift count"
 msgstr ""
 
@@ -3810,7 +3816,6 @@ msgid "non-hex digit"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
-#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "non-zero timeout must be > 0.01"
 msgstr ""
 
@@ -4055,10 +4060,6 @@ msgstr ""
 msgid "pack expected %d items for packing (got %d)"
 msgstr ""
 
-#: shared-bindings/_stage/Layer.c shared-bindings/_stage/Text.c
-msgid "palette must be 32 bytes long"
-msgstr ""
-
 #: py/emitinlinerv32.c
 msgid "parameters must be registers in sequence a0 to a3"
 msgstr ""
@@ -4116,6 +4117,10 @@ msgstr ""
 msgid "real and imaginary parts must be of equal length"
 msgstr ""
 
+#: extmod/modre.c
+msgid "regex too complex"
+msgstr ""
+
 #: py/builtinimport.c
 msgid "relative import"
 msgstr ""
@@ -4123,6 +4128,10 @@ msgstr ""
 #: py/obj.c
 #, c-format
 msgid "requested length %d but object has length %d"
+msgstr ""
+
+#: py/objint_longlong.c py/parsenum.c
+msgid "result overflows long long storage"
 msgstr ""
 
 #: extmod/ulab/code/ndarray_operators.c
@@ -4294,7 +4303,6 @@ msgid "timeout duration exceeded the maximum supported value"
 msgstr ""
 
 #: ports/nordic/common-hal/_bleio/Adapter.c
-#: ports/zephyr-cp/common-hal/_bleio/Adapter.c
 msgid "timeout must be < 655.35 secs"
 msgstr ""
 
@@ -4390,10 +4398,6 @@ msgstr ""
 msgid "type takes 1 or 3 arguments"
 msgstr ""
 
-#: py/objint_longlong.c
-msgid "ulonglong too large"
-msgstr ""
-
 #: py/parse.c
 msgid "unexpected indent"
 msgstr ""
@@ -4413,10 +4417,6 @@ msgstr ""
 
 #: py/parse.c
 msgid "unindent doesn't match any outer indent level"
-msgstr ""
-
-#: py/emitinlinerv32.c
-msgid "unknown RV32 instruction '%q'"
 msgstr ""
 
 #: py/objstr.c

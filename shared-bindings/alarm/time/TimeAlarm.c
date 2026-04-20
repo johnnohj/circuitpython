@@ -46,8 +46,6 @@ mp_obj_t MP_WEAK rtc_get_time_source_time(void) {
 //|
 static mp_obj_t alarm_time_timealarm_make_new(const mp_obj_type_t *type,
     size_t n_args, size_t n_kw, const mp_obj_t *all_args) {
-    alarm_time_timealarm_obj_t *self = mp_obj_malloc(alarm_time_timealarm_obj_t, &alarm_time_timealarm_type);
-
     enum { ARG_monotonic_time, ARG_epoch_time };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_monotonic_time, MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
@@ -92,6 +90,7 @@ static mp_obj_t alarm_time_timealarm_make_new(const mp_obj_type_t *type,
         mp_raise_ValueError(MP_ERROR_TEXT("Time is in the past."));
     }
 
+    alarm_time_timealarm_obj_t *self = mp_obj_malloc(alarm_time_timealarm_obj_t, &alarm_time_timealarm_type);
     common_hal_alarm_time_timealarm_construct(self, monotonic_time);
 
     return MP_OBJ_FROM_PTR(self);

@@ -103,7 +103,7 @@ static esp_timer_handle_t _sleep_timer;
 
 TaskHandle_t circuitpython_task = NULL;
 
-extern void esp_restart(void) NORETURN;
+extern void esp_restart(void) MP_NORETURN;
 
 static void tick_on_cp_core(void *arg) {
     supervisor_tick();
@@ -251,12 +251,12 @@ safe_mode_t port_init(void) {
     #define pin_GPIOn(n) pin_GPIO##n
     #define pin_GPIOn_EXPAND(x) pin_GPIOn(x)
 
-    #ifdef CONFIG_CONSOLE_UART_TX_GPIO
-    common_hal_never_reset_pin(&pin_GPIOn_EXPAND(CONFIG_CONSOLE_UART_TX_GPIO));
+    #ifdef CONFIG_ESP_CONSOLE_UART_TX_GPIO
+    common_hal_never_reset_pin(&pin_GPIOn_EXPAND(CONFIG_ESP_CONSOLE_UART_TX_GPIO));
     #endif
 
-    #ifdef CONFIG_CONSOLE_UART_RX_GPIO
-    common_hal_never_reset_pin(&pin_GPIOn_EXPAND(CONFIG_CONSOLE_UART_RX_GPIO));
+    #ifdef CONFIG_ESP_CONSOLE_UART_RX_GPIO
+    common_hal_never_reset_pin(&pin_GPIOn_EXPAND(CONFIG_ESP_CONSOLE_UART_RX_GPIO));
     #endif
 
     #ifndef ENABLE_JTAG
@@ -404,8 +404,8 @@ void reset_port(void) {
     watchdog_reset();
     #endif
 
-    // Yield so the idle task can run and do any IDF cleanup needed.
-    port_yield();
+    // Yield so the idle task, at priority 0, can run and do any IDF cleanup needed.
+    port_task_sleep_ms(4);
 }
 
 void reset_to_bootloader(void) {
@@ -483,8 +483,13 @@ void port_wake_main_task_from_isr(void) {
     }
 }
 
-void port_yield(void) {
-    vTaskDelay(4);
+// Yield to other tasks at the same priority.
+void port_task_yield(void) {
+    vTaskDelay(0);
+}
+
+void port_task_sleep_ms(uint32_t msecs) {
+    vTaskDelay(pdMS_TO_TICKS(msecs));
 }
 
 void sleep_timer_cb(void *arg) {

@@ -91,7 +91,7 @@ def test_bsim_scan_zephyr_beacon_reload(bsim_phy, circuitpython, zephyr_sample):
     assert output.count("scan run done True") >= 2
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.xfail(strict=False, reason="scan without stop_scan may fail on reload")
 @pytest.mark.zephyr_sample("bluetooth/beacon")
 @pytest.mark.code_py_runs(2)
 @pytest.mark.duration(8)

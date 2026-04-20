@@ -67,7 +67,7 @@ static MP_DEFINE_ATTRTUPLE(
     );
 
 static mp_obj_t os_uname(void) {
-    return (mp_obj_t)&os_uname_info_obj;
+    return MP_OBJ_FROM_PTR(&os_uname_info_obj);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(os_uname_obj, os_uname);
 

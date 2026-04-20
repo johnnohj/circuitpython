@@ -94,8 +94,18 @@ static mp_obj_t audiodelays_pitch_shift_make_new(const mp_obj_type_t *type, size
         mp_raise_ValueError(MP_ERROR_TEXT("bits_per_sample must be 8 or 16"));
     }
 
-    audiodelays_pitch_shift_obj_t *self = mp_obj_malloc(audiodelays_pitch_shift_obj_t, &audiodelays_pitch_shift_type);
-    common_hal_audiodelays_pitch_shift_construct(self, args[ARG_semitones].u_obj, args[ARG_mix].u_obj, args[ARG_window].u_int, args[ARG_overlap].u_int, args[ARG_buffer_size].u_int, bits_per_sample, args[ARG_samples_signed].u_bool, channel_count, sample_rate);
+    audiodelays_pitch_shift_obj_t *self =
+        mp_obj_malloc(audiodelays_pitch_shift_obj_t, &audiodelays_pitch_shift_type);
+    common_hal_audiodelays_pitch_shift_construct(self,
+        args[ARG_semitones].u_obj,
+        args[ARG_mix].u_obj,
+        args[ARG_window].u_int,
+        args[ARG_overlap].u_int,
+        args[ARG_buffer_size].u_int,
+        bits_per_sample,
+        args[ARG_samples_signed].u_bool,
+        channel_count,
+        sample_rate);
 
     return MP_OBJ_FROM_PTR(self);
 }

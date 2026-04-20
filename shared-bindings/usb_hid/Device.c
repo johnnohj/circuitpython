@@ -75,7 +75,6 @@
 //|
 
 static mp_obj_t usb_hid_device_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *all_args) {
-    usb_hid_device_obj_t *self = mp_obj_malloc(usb_hid_device_obj_t, &usb_hid_device_type);
     enum { ARG_report_descriptor, ARG_usage_page, ARG_usage, ARG_report_ids, ARG_in_report_lengths, ARG_out_report_lengths };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_report_descriptor, MP_ARG_KW_ONLY | MP_ARG_REQUIRED | MP_ARG_OBJ },
@@ -141,9 +140,10 @@ static mp_obj_t usb_hid_device_make_new(const mp_obj_type_t *type, size_t n_args
         mp_raise_ValueError_varg(MP_ERROR_TEXT("%q length must be %d"), MP_QSTR_report_id_space_0, 1);
     }
 
+    usb_hid_device_obj_t *self = mp_obj_malloc(usb_hid_device_obj_t, &usb_hid_device_type);
     common_hal_usb_hid_device_construct(
         self, descriptor, usage_page, usage, report_ids_count, report_ids_array, in_report_lengths_array, out_report_lengths_array);
-    return (mp_obj_t)self;
+    return MP_OBJ_FROM_PTR(self);
 }
 
 

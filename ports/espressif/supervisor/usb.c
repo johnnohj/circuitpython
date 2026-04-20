@@ -56,7 +56,8 @@ static void usb_device_task(void *param) {
             tud_task();
             tud_cdc_write_flush();
         }
-        vTaskDelay(1);
+        // Yield with zero delay to switch to any other tasks at same priority.
+        port_task_yield();
     }
 }
 #endif // CIRCUITPY_USB_DEVICE
@@ -112,7 +113,7 @@ void init_usb_hardware(void) {
         "usbd",
         USBD_STACK_SIZE,
         NULL,
-        5,
+        1,
         usb_device_stack,
         &usb_device_taskdef,
         xPortGetCoreID());

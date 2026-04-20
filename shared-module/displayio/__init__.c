@@ -45,6 +45,9 @@
 #if CIRCUITPY_MIPIDSI
 #include "shared-bindings/mipidsi/Display.h"
 #endif
+#if CIRCUITPY_ZEPHYR_DISPLAY
+#include "bindings/zephyr_display/Display.h"
+#endif
 
 #ifdef BOARD_USE_INTERNAL_SPI
 #include "supervisor/spi_flash_api.h"
@@ -112,6 +115,10 @@ void displayio_background(void) {
         } else if (display_type == &epaperdisplay_epaperdisplay_type) {
             epaperdisplay_epaperdisplay_background(&displays[i].epaper_display);
         #endif
+        #if CIRCUITPY_ZEPHYR_DISPLAY
+        } else if (display_type == &zephyr_display_display_type) {
+            zephyr_display_display_background(&displays[i].zephyr_display);
+        #endif
         }
     }
 
@@ -142,10 +149,17 @@ static void common_hal_displayio_release_displays_impl(bool keep_primary) {
         } else if (display_type == &framebufferio_framebufferdisplay_type) {
             release_framebufferdisplay(&displays[i].framebuffer_display);
         #endif
+        #if CIRCUITPY_ZEPHYR_DISPLAY
+        } else if (display_type == &zephyr_display_display_type) {
+            release_zephyr_display(&displays[i].zephyr_display);
+        #endif
         }
         displays[i].display_base.type = &mp_type_NoneType;
     }
     for (uint8_t i = 0; i < CIRCUITPY_DISPLAY_LIMIT; i++) {
+        if (i == primary_display_number) {
+            continue;
+        }
         mp_const_obj_t bus_type = display_buses[i].bus_base.type;
         if (bus_type == NULL || bus_type == &mp_type_NoneType) {
             continue;
@@ -189,11 +203,17 @@ static void common_hal_displayio_release_displays_impl(bool keep_primary) {
         } else if (bus_type == &mipidsi_display_type) {
             common_hal_mipidsi_display_deinit(&display_buses[i].mipidsi);
         #endif
+        #if CIRCUITPY_QSPIBUS
+        } else if (bus_type == &qspibus_qspibus_type) {
+            common_hal_qspibus_qspibus_deinit(&display_buses[i].qspi_bus);
+        #endif
         }
         display_buses[i].bus_base.type = &mp_type_NoneType;
     }
 
-    supervisor_stop_terminal();
+    if (!keep_primary) {
+        supervisor_stop_terminal();
+    }
 }
 
 void common_hal_displayio_release_displays(void) {
@@ -201,8 +221,9 @@ void common_hal_displayio_release_displays(void) {
 }
 
 void reset_displays(void) {
-    // In CircuitPython 10, release secondary displays before doing anything else:
-    // common_hal_displayio_release_displays_impl(true);
+    // TODO: In CircuitPython 11, uncomment the call.
+    // Release secondary displays.
+    // common_hal_displayio_release_displays_impl(/*keep_primary*/ true);
 
     // The SPI buses used by FourWires may be allocated on the heap so we need to move them inline.
     for (uint8_t i = 0; i < CIRCUITPY_DISPLAY_LIMIT; i++) {
@@ -352,6 +373,10 @@ void reset_displays(void) {
         } else if (display_type == &framebufferio_framebufferdisplay_type) {
             framebufferio_framebufferdisplay_reset(&displays[i].framebuffer_display);
         #endif
+        #if CIRCUITPY_ZEPHYR_DISPLAY
+        } else if (display_type == &zephyr_display_display_type) {
+            zephyr_display_display_reset(&displays[i].zephyr_display);
+        #endif
         }
     }
 }
@@ -402,6 +427,10 @@ void displayio_gc_collect(void) {
         #if CIRCUITPY_EPAPERDISPLAY
         } else if (display_type == &epaperdisplay_epaperdisplay_type) {
             epaperdisplay_epaperdisplay_collect_ptrs(&displays[i].epaper_display);
+        #endif
+        #if CIRCUITPY_ZEPHYR_DISPLAY
+        } else if (display_type == &zephyr_display_display_type) {
+            zephyr_display_display_collect_ptrs(&displays[i].zephyr_display);
         #endif
         }
     }

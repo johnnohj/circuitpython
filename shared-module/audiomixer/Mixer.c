@@ -99,11 +99,11 @@ static inline uint32_t mult16signed(uint32_t val, int32_t mul[2]) {
     int32_t hi, lo;
     enum { bits = 16 }; // saturate to 16 bits
     enum { shift = 15 }; // shift is done automatically
-    asm volatile ("smulwb %0, %1, %2" : "=r" (lo) : "r" (mul[0]), "r" (val));
-    asm volatile ("smulwt %0, %1, %2" : "=r" (hi) : "r" (mul[1]), "r" (val));
-    asm volatile ("ssat %0, %1, %2, asr %3" : "=r" (lo) : "I" (bits), "r" (lo), "I" (shift));
-    asm volatile ("ssat %0, %1, %2, asr %3" : "=r" (hi) : "I" (bits), "r" (hi), "I" (shift));
-    asm volatile ("pkhbt %0, %1, %2, lsl #16" : "=r" (val) : "r" (lo), "r" (hi)); // pack
+    __asm__ volatile ("smulwb %0, %1, %2" : "=r" (lo) : "r" (mul[0]), "r" (val));
+    __asm__ volatile ("smulwt %0, %1, %2" : "=r" (hi) : "r" (mul[1]), "r" (val));
+    __asm__ volatile ("ssat %0, %1, %2, asr %3" : "=r" (lo) : "I" (bits), "r" (lo), "I" (shift));
+    __asm__ volatile ("ssat %0, %1, %2, asr %3" : "=r" (hi) : "I" (bits), "r" (hi), "I" (shift));
+    __asm__ volatile ("pkhbt %0, %1, %2, lsl #16" : "=r" (val) : "r" (lo), "r" (hi)); // pack
     return val;
     #else
     uint32_t result = 0;

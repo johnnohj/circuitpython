@@ -67,7 +67,7 @@ static mp_obj_t bitbangio_spi_make_new(const mp_obj_type_t *type, size_t n_args,
 
     bitbangio_spi_obj_t *self = mp_obj_malloc(bitbangio_spi_obj_t, &bitbangio_spi_type);
     shared_module_bitbangio_spi_construct(self, args[ARG_clock].u_obj, args[ARG_MOSI].u_obj, args[ARG_MISO].u_obj);
-    return (mp_obj_t)self;
+    return MP_OBJ_FROM_PTR(self);
 }
 
 //|     def deinit(self) -> None:

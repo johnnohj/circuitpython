@@ -35,9 +35,9 @@
 static mp_obj_t socketpool_socketpool_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     mp_arg_check_num(n_args, n_kw, 1, 1, false);
 
-    socketpool_socketpool_obj_t *s = mp_obj_malloc_with_finaliser(socketpool_socketpool_obj_t, &socketpool_socketpool_type);
     mp_obj_t radio = args[0];
 
+    socketpool_socketpool_obj_t *s = mp_obj_malloc_with_finaliser(socketpool_socketpool_obj_t, &socketpool_socketpool_type);
     common_hal_socketpool_socketpool_construct(s, radio);
 
     return MP_OBJ_FROM_PTR(s);
@@ -189,7 +189,7 @@ MP_DEFINE_CONST_OBJ_TYPE(
     locals_dict, &socketpool_socketpool_locals_dict
     );
 
-MP_WEAK NORETURN
+MP_WEAK MP_NORETURN
 void common_hal_socketpool_socketpool_raise_gaierror_noname(void) {
     vstr_t vstr;
     mp_print_t print;

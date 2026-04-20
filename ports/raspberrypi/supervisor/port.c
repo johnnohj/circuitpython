@@ -588,7 +588,7 @@ void port_idle_until_interrupt(void) {
 /**
  * \brief Default interrupt handler for unused IRQs.
  */
-extern NORETURN void isr_hardfault(void); // provide a prototype to avoid a missing-prototypes diagnostic
+extern MP_NORETURN void isr_hardfault(void); // provide a prototype to avoid a missing-prototypes diagnostic
 __attribute__((used)) void __not_in_flash_func(isr_hardfault)(void) {
     // Only safe mode from core 0 which is running CircuitPython. Core 1 faulting
     // should not be fatal to CP. (Fingers crossed.)
@@ -600,7 +600,7 @@ __attribute__((used)) void __not_in_flash_func(isr_hardfault)(void) {
     }
 }
 
-void port_yield(void) {
+void port_task_yield(void) {
     #if CIRCUITPY_CYW43
     cyw43_arch_poll();
     #endif

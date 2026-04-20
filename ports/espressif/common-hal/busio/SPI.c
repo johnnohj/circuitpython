@@ -72,11 +72,6 @@ void common_hal_busio_spi_construct(busio_spi_obj_t *self,
         mp_raise_ValueError(MP_ERROR_TEXT("All SPI peripherals are in use"));
     }
 
-    self->mutex = xSemaphoreCreateMutex();
-    if (self->mutex == NULL) {
-        mp_raise_RuntimeError(MP_ERROR_TEXT("Unable to create lock"));
-    }
-
     esp_err_t result = spi_bus_initialize(self->host_id, &bus_config, SPI_DMA_CH_AUTO);
     if (result == ESP_ERR_NO_MEM) {
         mp_raise_msg(&mp_type_MemoryError, MP_ERROR_TEXT("ESP-IDF memory allocation failed"));
@@ -162,11 +157,17 @@ bool common_hal_busio_spi_configure(busio_spi_obj_t *self,
     return true;
 }
 
-bool common_hal_busio_spi_try_lock(busio_spi_obj_t *self) {
+// Wait as long as needed for the lock. This is used by SD card access from USB.
+// Overrides the default busy-wait implementation in shared-bindings/busio/SPI.c
+bool common_hal_busio_spi_wait_for_lock(busio_spi_obj_t *self, uint32_t timeout_ms) {
     if (common_hal_busio_spi_deinited(self)) {
         return false;
     }
-    return xSemaphoreTake(self->mutex, 1) == pdTRUE;
+    return xSemaphoreTake(self->mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+bool common_hal_busio_spi_try_lock(busio_spi_obj_t *self) {
+    return common_hal_busio_spi_wait_for_lock(self, 0);
 }
 
 bool common_hal_busio_spi_has_lock(busio_spi_obj_t *self) {

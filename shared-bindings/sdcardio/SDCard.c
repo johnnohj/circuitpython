@@ -43,6 +43,13 @@
 //|            Failure to do so can prevent the SD card from being recognized until it is
 //|            powered off or re-inserted.
 //|
+//|            Exception: on boards where another SPI peripheral has a floating CS
+//|            pin with no hardware pull-up (such as the Feather RP2040 RFM), that
+//|            peripheral's CS must be driven HIGH before SD card initialization.
+//|            Failure to do so will corrupt the SPI bus during SD card init. In
+//|            these cases, initialize and drive the other peripheral's CS high
+//|            first, then initialize the SD card.
+//|
 //|         Example usage:
 //|
 //|         .. code-block:: python
@@ -82,10 +89,9 @@ static mp_obj_t sdcardio_sdcard_make_new(const mp_obj_type_t *type, size_t n_arg
     const mcu_pin_obj_t *cs = validate_obj_is_free_pin(args[ARG_cs].u_obj, MP_QSTR_cs);
 
     sdcardio_sdcard_obj_t *self = mp_obj_malloc_with_finaliser(sdcardio_sdcard_obj_t, &sdcardio_SDCard_type);
-
     common_hal_sdcardio_sdcard_construct(self, spi, cs, args[ARG_baudrate].u_int);
 
-    return self;
+    return MP_OBJ_FROM_PTR(self);
 }
 
 

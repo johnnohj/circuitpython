@@ -67,7 +67,7 @@ static mp_obj_t busio_i2c_make_new(const mp_obj_type_t *type, size_t n_args, siz
 
     busio_i2c_obj_t *self = mp_obj_malloc_with_finaliser(busio_i2c_obj_t, &busio_i2c_type);
     common_hal_busio_i2c_construct(self, scl, sda, args[ARG_frequency].u_int, args[ARG_timeout].u_int);
-    return (mp_obj_t)self;
+    return MP_OBJ_FROM_PTR(self);
     #else
     mp_raise_NotImplementedError(NULL);
     #endif // CIRCUITPY_BUSIO_I2C
@@ -112,7 +112,7 @@ static void check_lock(busio_i2c_obj_t *self) {
     }
 }
 
-//|     def probe(self, address: int) -> List[int]:
+//|     def probe(self, address: int) -> bool:
 //|         """Check if a device at the specified address responds.
 //|
 //|         :param int address: 7-bit device address

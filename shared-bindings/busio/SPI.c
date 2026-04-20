@@ -9,17 +9,17 @@
 
 #include <string.h>
 
-#include "shared-bindings/microcontroller/Pin.h"
-#include "shared-bindings/busio/SPI.h"
-#include "shared-bindings/util.h"
-
-#include "shared/runtime/buffer_helper.h"
-#include "shared/runtime/context_manager_helpers.h"
 #include "py/binary.h"
 #include "py/mperrno.h"
 #include "py/objproperty.h"
 #include "py/runtime.h"
-
+#include "shared-bindings/microcontroller/Pin.h"
+#include "shared-bindings/busio/SPI.h"
+#include "shared-bindings/util.h"
+#include "shared/runtime/buffer_helper.h"
+#include "shared/runtime/context_manager_helpers.h"
+#include "shared/runtime/interrupt_char.h"
+#include "supervisor/shared/tick.h"
 
 //| class SPI:
 //|     """A 3-4 wire serial protocol
@@ -88,7 +88,6 @@
 // TODO(tannewt): Support LSB SPI.
 static mp_obj_t busio_spi_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *all_args) {
     #if CIRCUITPY_BUSIO_SPI
-    busio_spi_obj_t *self = mp_obj_malloc_with_finaliser(busio_spi_obj_t, &busio_spi_type);
     enum { ARG_clock, ARG_MOSI, ARG_MISO, ARG_half_duplex };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_clock, MP_ARG_REQUIRED | MP_ARG_OBJ },
@@ -107,6 +106,7 @@ static mp_obj_t busio_spi_make_new(const mp_obj_type_t *type, size_t n_args, siz
         mp_raise_ValueError(MP_ERROR_TEXT("Must provide MISO or MOSI pin"));
     }
 
+    busio_spi_obj_t *self = mp_obj_malloc_with_finaliser(busio_spi_obj_t, &busio_spi_type);
     common_hal_busio_spi_construct(self, clock, mosi, miso, args[ARG_half_duplex].u_bool);
     return MP_OBJ_FROM_PTR(self);
     #else
@@ -493,4 +493,18 @@ MP_DEFINE_CONST_OBJ_TYPE(
 
 busio_spi_obj_t *validate_obj_is_spi_bus(mp_obj_t obj, qstr arg_name) {
     return mp_arg_validate_type(obj, &busio_spi_type, arg_name);
+}
+
+// Wait as long as needed for the lock. This is used by SD card access from USB.
+// The default implementation is to busy-wait while running the background tasks. espressif is different.
+bool common_hal_busio_spi_wait_for_lock(busio_spi_obj_t *self, uint32_t timeout_ms) {
+    uint64_t deadline = supervisor_ticks_ms64() + timeout_ms;
+    while (supervisor_ticks_ms64() < deadline &&
+           !mp_hal_is_interrupted()) {
+        if (common_hal_busio_spi_try_lock(self)) {
+            return true;
+        }
+        RUN_BACKGROUND_TASKS;
+    }
+    return false;
 }

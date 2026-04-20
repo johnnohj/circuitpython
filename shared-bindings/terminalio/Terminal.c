@@ -176,8 +176,8 @@ static mp_obj_t terminalio_terminal_make_new(const mp_obj_type_t *type, size_t n
     mp_arg_validate_int_min(scroll_area->width_in_tiles * scroll_area->height_in_tiles, 2, MP_QSTR_scroll_area_area);
 
     terminalio_terminal_obj_t *self = mp_obj_malloc(terminalio_terminal_obj_t, &terminalio_terminal_type);
-
     common_hal_terminalio_terminal_construct(self, scroll_area, font, status_bar);
+
     return MP_OBJ_FROM_PTR(self);
 }
 

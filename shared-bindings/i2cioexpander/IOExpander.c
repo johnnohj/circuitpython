@@ -72,8 +72,6 @@ static mp_obj_t i2cioexpander_ioexpander_make_new(const mp_obj_type_t *type, siz
         mp_raise_ValueError(MP_ERROR_TEXT("num_pins must be 8 or 16"));
     }
 
-    i2cioexpander_ioexpander_obj_t *self = mp_obj_malloc(i2cioexpander_ioexpander_obj_t, &i2cioexpander_ioexpander_type);
-
     // Convert and validate register parameters
     uint16_t set_value_reg = NO_REGISTER;
     if (args[ARG_set_value_reg].u_obj != mp_const_none) {
@@ -96,6 +94,8 @@ static mp_obj_t i2cioexpander_ioexpander_make_new(const mp_obj_type_t *type, siz
         set_direction_reg = reg;
     }
 
+    i2cioexpander_ioexpander_obj_t *self =
+        mp_obj_malloc(i2cioexpander_ioexpander_obj_t, &i2cioexpander_ioexpander_type);
     common_hal_i2cioexpander_ioexpander_construct(
         self,
         i2c,

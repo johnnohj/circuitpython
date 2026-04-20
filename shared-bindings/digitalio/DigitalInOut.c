@@ -71,9 +71,9 @@ static mp_obj_t digitalio_digitalinout_make_new(const mp_obj_type_t *type,
     size_t n_args, size_t n_kw, const mp_obj_t *args) {
     mp_arg_check_num(n_args, n_kw, 1, 1, false);
 
-    digitalio_digitalinout_obj_t *self = mp_obj_malloc(digitalio_digitalinout_obj_t, &digitalio_digitalinout_type);
-
     const mcu_pin_obj_t *pin = common_hal_digitalio_validate_pin(args[0]);
+
+    digitalio_digitalinout_obj_t *self = mp_obj_malloc(digitalio_digitalinout_obj_t, &digitalio_digitalinout_type);
     common_hal_digitalio_digitalinout_construct(self, pin);
 
     return MP_OBJ_FROM_PTR(self);
@@ -191,9 +191,9 @@ static mp_obj_t digitalio_digitalinout_obj_get_direction(mp_obj_t self_in) {
     check_for_deinit(self);
     digitalio_direction_t direction = common_hal_digitalio_digitalinout_get_direction(self);
     if (direction == DIRECTION_INPUT) {
-        return (mp_obj_t)&digitalio_direction_input_obj;
+        return MP_OBJ_FROM_PTR(&digitalio_direction_input_obj);
     }
-    return (mp_obj_t)&digitalio_direction_output_obj;
+    return MP_OBJ_FROM_PTR(&digitalio_direction_output_obj);
 }
 MP_DEFINE_CONST_FUN_OBJ_1(digitalio_digitalinout_get_direction_obj, digitalio_digitalinout_obj_get_direction);
 
@@ -255,9 +255,9 @@ static mp_obj_t digitalio_digitalinout_obj_get_drive_mode(mp_obj_t self_in) {
     }
     digitalio_drive_mode_t drive_mode = common_hal_digitalio_digitalinout_get_drive_mode(self);
     if (drive_mode == DRIVE_MODE_PUSH_PULL) {
-        return (mp_obj_t)&digitalio_drive_mode_push_pull_obj;
+        return MP_OBJ_FROM_PTR(&digitalio_drive_mode_push_pull_obj);
     }
-    return (mp_obj_t)&digitalio_drive_mode_open_drain_obj;
+    return MP_OBJ_FROM_PTR(&digitalio_drive_mode_open_drain_obj);
 }
 MP_DEFINE_CONST_FUN_OBJ_1(digitalio_digitalinout_get_drive_mode_obj, digitalio_digitalinout_obj_get_drive_mode);
 
