@@ -281,17 +281,33 @@ static void _core_init(void) {
     }
     #endif
 
-    /* Initialize the display + supervisor terminal (Blinka logo + REPL).
-     * Must come after mp_init() and GC setup — allocates displayio objects. */
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_hw_init — Layer 2b: Virtual Hardware initialization              */
+/*                                                                     */
+/* Sets up the display framebuffer + supervisor terminal.  Must be     */
+/* called after _core_init / cp_init (needs mp_init + GC for alloc).  */
+/* Separate from cp_init so JS can control when hardware comes up.     */
+/* ------------------------------------------------------------------ */
+
+static bool _hw_initialized = false;
+
+__attribute__((export_name("cp_hw_init")))
+void cp_hw_init(void) {
+    if (_hw_initialized) return;
+    _hw_initialized = true;
+
     #if CIRCUITPY_DISPLAYIO
     board_display_init();
     #endif
 
-    /* Initialize and start the status bar (renders to terminal top row). */
     #if CIRCUITPY_STATUS_BAR
     supervisor_status_bar_init();
     supervisor_status_bar_start();
     #endif
+
+    SUP_DEBUG("cp_hw_init complete (display + terminal ready)");
 }
 
 /* ------------------------------------------------------------------ */
@@ -306,6 +322,7 @@ int main(int argc, char **argv) {
 
     wasm_cli_mode = true;
     _core_init();
+    cp_hw_init();
 
     /* Boot sequence: run boot.py if present. */
     {
@@ -352,15 +369,13 @@ __attribute__((export_name("cp_init")))
 int cp_init(void) {
     if (_state != SUP_UNINITIALIZED) return 0;
 
-    _core_init();
+    _core_init();    /* Layer 2a: VM (mp_init, GC, pystack, HAL fds) */
+    cp_hw_init();    /* Layer 2b: VH (display, terminal) */
 
     #if MICROPY_VM_YIELD_ENABLED
     vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
     #endif
 
-    /* cp_init no longer runs boot.py / code.py — JS orchestrates the
-     * lifecycle via runBoardLifecycle().  We come up in REPL state with
-     * ctx0 idle; JS calls cp_banner() and cp_run() as needed. */
     _state = SUP_REPL;
     _ctx0_is_code = false;
     _code_header_printed = false;
@@ -392,93 +407,30 @@ int cp_init(void) {
 extern void hal_step(void);
 extern void hal_export_dirty(void);
 
-__attribute__((export_name("cp_step")))
-int cp_step(uint32_t now_ms) {
-    if (_state == SUP_UNINITIALIZED) {
-        cp_init();
-    }
+/* ------------------------------------------------------------------ */
+/* cp_hw_step — VH work: display refresh, HAL sync, background tasks.  */
+/*                                                                     */
+/* Must be called EVERY frame regardless of VM state.                  */
+/* In READY: refreshes supervisor terminal + cursor.                   */
+/* In EXECUTING: refreshes user's displayio output.                    */
+/* In SUSPENDED: keeps display alive while VM sleeps.                  */
+/* ------------------------------------------------------------------ */
 
+__attribute__((export_name("cp_hw_step")))
+void cp_hw_step(uint32_t now_ms) {
     wasm_js_now_ms = (uint64_t)now_ms;
     _frame_count++;
 
-    #if MICROPY_VM_YIELD_ENABLED
-    vm_yield_set_frame_start(wasm_js_now_ms);
-    #endif
-
-    /* ── Phase 1: HAL step ── */
+    /* HAL step — drive simulated hardware (poll /hal/ endpoints) */
     hal_step();
 
-    /* ── Phase 2: Tick catchup + background callbacks ── */
-    /* background_callback_run_all() calls port_background_task() first
-     * (which simulates elapsed ms via supervisor_tick), then drains
-     * the callback queue (supervisor_background_tick, etc). */
+    /* Tick catchup + background callbacks */
     RUN_BACKGROUND_TASKS;
 
-    /* ── Phase 3: Python VM ── */
-    #if MICROPY_VM_YIELD_ENABLED
-    if (wasm_cli_mode) {
-        /* CLI mode: feed queued keystrokes via pyexec. */
-        #if MICROPY_REPL_EVENT_DRIVEN
-        while (serial_bytes_available() > 0) {
-            char c = serial_read();
-            int ret = pyexec_event_repl_process_char(c);
-            if (ret & PYEXEC_FORCED_EXIT) {
-                pyexec_event_repl_init();
-            }
-        }
-        #endif
-    } else {
-        /* Browser mode: scheduler-driven context dispatch.
-         * Pick the highest-priority runnable context and step it. */
-        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
-
-        if (ctx_id >= 0) {
-            int prev_id = cp_context_active();
-            if (ctx_id != prev_id) {
-                cp_context_save(prev_id);
-                cp_context_restore(ctx_id);
-            }
-
-            cp_context_set_status(ctx_id, CTX_RUNNING);
-            int ret = vm_yield_step();
-
-            if (ret == 0 || ret == 2) {
-                /* Normal completion or exception — context is done */
-                cp_context_set_status(ctx_id, CTX_DONE);
-                SUP_DEBUG("ctx%d done", ctx_id);
-                /* JS's runBoardLifecycle awaits ctx0 idle to advance stages;
-                 * no edge-trigger latch needed here. */
-            } else {
-                /* Yielded — sleeping or budget exhausted.
-                 * mp_hal_delay_ms already set CTX_SLEEPING if applicable;
-                 * otherwise mark as yielded for next frame. */
-                if (cp_context_get_status(ctx_id) != CTX_SLEEPING) {
-                    cp_context_set_status(ctx_id, CTX_YIELDED);
-                }
-            }
-        }
-
-        /* Update _state from context 0.  JS-triggered transitions
-         * (cp_run, cp_ctrl_d) set the initial _state; this block handles
-         * ongoing transitions (e.g. expression finishes → CTX_DONE → SUP_REPL). */
-        uint8_t ctx0 = cp_context_get_status(0);
-        if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
-            /* Whatever ctx0 was running, it's done.  Default to REPL;
-             * no "waiting for key" substate — JS owns that UX now. */
-            _state = SUP_REPL;
-            _ctx0_is_code = false;
-        } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
-            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
-        }
-    }
-    #endif
-
-    /* ── Phase 4: Post-VM background callbacks ── */
-    RUN_BACKGROUND_TASKS;
-
-    /* ── Phase 5: HAL export + state export ── */
+    /* HAL export — flush hw_state changes to /hal/ endpoints */
     hal_export_dirty();
 
+    /* State export for JS-side debugging */
     {
         uint32_t yr = 0, ya = 0, depth = 0;
         #if MICROPY_VM_YIELD_ENABLED
@@ -494,6 +446,75 @@ int cp_step(uint32_t now_ms) {
     /* Update cursor info for JS-side rendering */
     #if CIRCUITPY_DISPLAYIO
     wasm_cursor_info_update();
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_step — VM work: bytecode stepping within frame budget.           */
+/*                                                                     */
+/* Only meaningful when cp_state() == EXECUTING.                       */
+/* No-op when READY or SUSPENDED.                                      */
+/* Call cp_hw_step() separately (before or after) for display/HW.      */
+/*                                                                     */
+/* For backward compat, cp_step also calls cp_hw_step internally so    */
+/* existing JS that calls only cp_step still works.                    */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_step")))
+int cp_step(uint32_t now_ms) {
+    if (_state == SUP_UNINITIALIZED) {
+        cp_init();
+    }
+
+    /* VH work — always runs */
+    cp_hw_step(now_ms);
+
+    #if MICROPY_VM_YIELD_ENABLED
+    vm_yield_set_frame_start(wasm_js_now_ms);
+
+    /* VM work — only when there's code to execute */
+    if (wasm_cli_mode) {
+        #if MICROPY_REPL_EVENT_DRIVEN
+        while (serial_bytes_available() > 0) {
+            char c = serial_read();
+            int ret = pyexec_event_repl_process_char(c);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                pyexec_event_repl_init();
+            }
+        }
+        #endif
+    } else {
+        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
+
+        if (ctx_id >= 0) {
+            int prev_id = cp_context_active();
+            if (ctx_id != prev_id) {
+                cp_context_save(prev_id);
+                cp_context_restore(ctx_id);
+            }
+
+            cp_context_set_status(ctx_id, CTX_RUNNING);
+            int ret = vm_yield_step();
+
+            if (ret == 0 || ret == 2) {
+                cp_context_set_status(ctx_id, CTX_DONE);
+                SUP_DEBUG("ctx%d done", ctx_id);
+            } else {
+                if (cp_context_get_status(ctx_id) != CTX_SLEEPING) {
+                    cp_context_set_status(ctx_id, CTX_YIELDED);
+                }
+            }
+        }
+
+        /* Update legacy _state from context 0. */
+        uint8_t ctx0 = cp_context_get_status(0);
+        if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
+            _state = SUP_REPL;
+            _ctx0_is_code = false;
+        } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
+            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+        }
+    }
     #endif
 
     return (int)_state;
@@ -933,6 +954,45 @@ int cp_get_state(void) {
 /* Stage 3; runBoardLifecycle awaits ctx0 idle directly and owns the   */
 /* "Code done running. / Press any key ..." UX itself.)                */
 /* ------------------------------------------------------------------ */
+
+/* cp_state — unified state query for JS.
+ *
+ *   0 = CP_STATE_READY      — not executing, hardware at initial state
+ *   1 = CP_STATE_EXECUTING  — vm_yield_step running (may be between yields)
+ *   2 = CP_STATE_SUSPENDED  — paused (sleep, WFE, await)
+ *
+ * This replaces the combination of cp_is_runnable() + cp_get_yield_reason()
+ * with a single query that JS can use for all state decisions. */
+
+#define CP_STATE_READY      0
+#define CP_STATE_EXECUTING  1
+#define CP_STATE_SUSPENDED  2
+
+__attribute__((export_name("cp_state")))
+int cp_state(void) {
+    /* Check ctx0 first — it's the primary execution context. */
+    uint8_t s0 = cp_context_get_status(0);
+
+    if (s0 == CTX_SLEEPING) {
+        return CP_STATE_SUSPENDED;
+    }
+    if (s0 == CTX_RUNNABLE || s0 == CTX_RUNNING || s0 == CTX_YIELDED) {
+        return CP_STATE_EXECUTING;
+    }
+
+    /* Check background contexts (1..N) */
+    for (int i = 1; i < CP_MAX_CONTEXTS; i++) {
+        uint8_t s = cp_context_get_status(i);
+        if (s == CTX_SLEEPING) return CP_STATE_SUSPENDED;
+        if (s == CTX_RUNNABLE || s == CTX_RUNNING || s == CTX_YIELDED) {
+            return CP_STATE_EXECUTING;
+        }
+    }
+
+    return CP_STATE_READY;
+}
+
+/* ── Legacy exports (kept for existing tests/JS until migration) ──── */
 
 __attribute__((export_name("cp_is_runnable")))
 int cp_is_runnable(void) {
