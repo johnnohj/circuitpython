@@ -130,7 +130,7 @@ void mp_vm_request_yield(int reason, uint32_t arg) {
 /* background tasks are guaranteed to have run right before any yield. */
 /* ------------------------------------------------------------------ */
 
-/* Forward declaration — implemented in wasm_supervisor.c */
+/* Forward declaration — implemented in supervisor.c */
 extern void wasm_background_tasks(void);
 
 /* CLI mode flag — set by main() in supervisor.c */

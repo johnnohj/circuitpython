@@ -45,6 +45,7 @@
 
 #if CIRCUITPY_DISPLAYIO
 #include "board_display.h"
+#include "shared-module/displayio/__init__.h"
 #endif
 
 #include "supervisor/hal.h"
@@ -789,35 +790,64 @@ void cp_banner(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* cp_soft_reboot — stop ctx0 + print "soft reboot" + return to REPL   */
+/* cp_cleanup — tear down Layer 3 (user session), keep Layer 2 (VM).   */
 /*                                                                     */
-/* Does NOT auto-restart boot.py / code.py.  JS observes the state     */
-/* transition and decides what to run next (typically, a fresh call    */
-/* to runBoardLifecycle()).                                            */
+/* Layer 3 = claimed pins, bus singletons, display root_group, running */
+/* bytecode, GC-managed Python objects from the user's code.           */
+/*                                                                     */
+/* Layer 2 = mp runtime, GC heap (structure), pystack pool, HAL fds,   */
+/* display framebuffer, supervisor terminal.  These survive cleanup.   */
+/*                                                                     */
+/* Called by JS at every mode transition (Run, REPL, Stop).            */
+/* Idempotent — safe to call when already clean.                       */
 /* ------------------------------------------------------------------ */
 
-__attribute__((export_name("cp_soft_reboot")))
-void cp_soft_reboot(void) {
+__attribute__((export_name("cp_cleanup")))
+void cp_cleanup(void) {
     #if MICROPY_VM_YIELD_ENABLED
-    _print_soft_reboot();
+
+    /* 1. Stop any running bytecode (frees pystack frame for ctx0). */
     vm_yield_stop();
     cp_context_set_status(0, CTX_IDLE);
-    _ctx0_is_code = false;
-    _code_header_printed = false;
-    _state = SUP_REPL;
 
-    /* Release all claimed pins and bus singletons so the next code.py /
-     * REPL session starts clean.  On real boards, reset_port() does this;
-     * we call the pieces directly since our port has no reset_port(). */
-    #if CIRCUITPY_MICROCONTROLLER
-    reset_all_pins();
+    /* 2. Reset hardware in dependency order.
+     *    Displays first (may inline heap-allocated bus objects).
+     *    Board buses next (releases pins from never_reset).
+     *    Pins last (clears .claimed flags). */
+    #if CIRCUITPY_DISPLAYIO
+    reset_displays();
     #endif
     #if CIRCUITPY_BOARD_I2C || CIRCUITPY_BOARD_SPI || CIRCUITPY_BOARD_UART
     reset_board_buses();
     #endif
-
-    SUP_DEBUG("soft reboot — ctx0 stopped, pins released, JS owns next step");
+    #if CIRCUITPY_MICROCONTROLLER
+    reset_all_pins();
     #endif
+
+    /* 3. Collect garbage — frees unreachable heap objects from previous
+     *    session while preserving Layer 2 state (VFS mounts, display
+     *    objects, etc.) which remain reachable from MP_STATE_VM roots.
+     *    gc_collect() (not gc_sweep_all!) does a mark+sweep that only
+     *    frees objects no longer referenced. */
+    gc_collect();
+
+    /* 4. Reset supervisor state machine. */
+    _ctx0_is_code = false;
+    _code_header_printed = false;
+    _state = SUP_REPL;
+
+    SUP_DEBUG("cleanup — Layer 3 torn down, Layer 2 intact");
+    #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* cp_soft_reboot — backward compat wrapper around cp_cleanup.         */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_soft_reboot")))
+void cp_soft_reboot(void) {
+    _print_soft_reboot();
+    cp_cleanup();
 }
 
 /* ------------------------------------------------------------------ */

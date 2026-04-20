@@ -105,6 +105,8 @@ export class CircuitPython {
     /** Execute a REPL expression on ctx0. */
     exec(code) {
         if (!this._readline) return;
+        // Auto-enter REPL if waiting for keypress
+        if (this._waitingForKey) this._enterRepl();
         const len = this._readline.writeInputBuf(code);
         this._exports.cp_run(CP_SRC_EXPR, len, CP_CTX_MAIN, 0);
         this._readline._waitingForResult = true;
@@ -773,7 +775,10 @@ export class CircuitPython {
 
         if (this._display) {
             this._display.paint();
-            this._display.drawCursor();
+            // Only show cursor when in REPL or waiting for key, not during code.py
+            if (!this._exports.cp_is_runnable()) {
+                this._display.drawCursor();
+            }
         }
 
         this._frameCount++;

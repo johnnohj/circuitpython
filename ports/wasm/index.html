@@ -91,19 +91,6 @@ header .status {
     height: 100%;
 }
 
-/* ── Output sub-panel ── */
-#output {
-    font-family: var(--font);
-    font-size: 12px;
-    padding: 8px;
-    overflow-y: auto;
-    max-height: 120px;
-    border-top: 1px solid var(--border);
-    color: var(--green);
-    white-space: pre-wrap;
-    word-break: break-all;
-}
-
 /* ── Editor panel (top-right) ── */
 #editor-panel {
     grid-column: 2;
@@ -124,43 +111,65 @@ header .status {
     min-height: 0;
 }
 
-/* ── REPL panel (bottom, full width) ── */
-#repl-panel {
+/* ── Console panel (bottom, full width) ── */
+#console-panel {
     grid-column: 1 / -1;
     grid-row: 3;
 }
-#repl-output {
+#console-body {
     flex: 1;
+    min-height: 0;
+    position: relative;
+}
+#display-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #000;
+}
+#display-canvas {
+    image-rendering: pixelated;
+    max-width: 100%;
+    max-height: 100%;
+}
+#text-output {
+    position: absolute;
+    inset: 0;
     font-family: var(--font);
     font-size: 13px;
     padding: 8px 12px;
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-all;
-    min-height: 0;
     color: var(--text);
+    background: var(--surface);
 }
-#repl-input-row {
+/* Display area accepts focus for keyboard REPL input */
+#display-wrap:focus {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+/* Show/hide layers */
+#console-body[data-view="display"] #display-wrap { display: flex; }
+#console-body[data-view="display"] #text-output { display: none; }
+#console-body[data-view="text"] #display-wrap { display: none; }
+#console-body[data-view="text"] #text-output { display: block; }
+
+/* ── Loading overlay ── */
+#loading-overlay {
+    grid-column: 1 / -1;
+    grid-row: 2 / -1;
     display: flex;
+    justify-content: center;
     align-items: center;
-    padding: 4px 12px 8px;
-    border-top: 1px solid var(--border);
-    gap: 4px;
+    background: var(--bg);
+    color: var(--dim);
+    font-size: 14px;
+    z-index: 10;
 }
-#repl-prompt {
-    color: var(--accent);
-    font-weight: 600;
-    user-select: none;
-}
-#repl-input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 13px;
-}
+#loading-overlay.hidden { display: none; }
 
 /* ── Settings ── */
 .setting {
@@ -218,14 +227,17 @@ button.primary { background: var(--accent); color: var(--bg); }
 
 <header>
     <h1>CircuitPython</h1>
-    <span id="board-name">Loading...</span>
+    <span id="board-name"></span>
     <label class="setting">
         <input type="checkbox" id="opt-verbose"> Verbose
     </label>
-    <span class="status" id="status">Initializing</span>
+    <span class="status" id="status">Loading</span>
 </header>
 
-<!-- Board + Output (top-left) -->
+<!-- Loading overlay — covers board+editor+console until cp_init returns -->
+<div id="loading-overlay">Loading CircuitPython WASM, please wait...</div>
+
+<!-- Board (top-left) -->
 <div class="panel" id="board-panel">
     <div class="panel-title">
         Board
@@ -237,7 +249,6 @@ button.primary { background: var(--accent); color: var(--bg); }
     <div id="board-canvas">
         <svg id="board-svg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
-    <div id="output"></div>
 </div>
 
 <!-- Editor (top-right) -->
@@ -246,50 +257,27 @@ button.primary { background: var(--accent); color: var(--bg); }
         code.py
         <div class="actions">
             <button id="btn-run" class="primary" title="Save & Run (Ctrl+S)">Run</button>
-            <button id="btn-stop" class="danger" title="Stop (Ctrl+C)">Stop</button>
-            <button id="btn-reboot" title="Soft Reboot (Ctrl+D)">Reboot</button>
+            <button id="btn-repl" title="Enter REPL">REPL</button>
+            <button id="btn-stop" class="danger" title="Stop & Reset">Stop</button>
         </div>
     </div>
-    <textarea id="editor" spellcheck="false">import board
-import neopixel
-import time
-
-pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, brightness=1.0)
-
-def wheel(pos):
-    """Color wheel: 0-255 cycles through red, green, blue."""
-    pos = pos % 256
-    if pos < 85:
-        return (255 - pos * 3, pos * 3, 0)
-    elif pos < 170:
-        pos -= 85
-        return (0, 255 - pos * 3, pos * 3)
-    else:
-        pos -= 170
-        return (pos * 3, 0, 255 - pos * 3)
-
-offset = 0
-while True:
-    for i in range(10):
-        pixels[i] = wheel((i * 256 // 10 + offset) % 256)
-    pixels.show()
-    offset = (offset + 2) % 256
-    time.sleep(0.03)
-</textarea>
+    <textarea id="editor" spellcheck="false"></textarea>
 </div>
 
-<!-- REPL (bottom) -->
-<div class="panel" id="repl-panel">
+<!-- Console (bottom) -->
+<div class="panel" id="console-panel">
     <div class="panel-title">
-        REPL
+        <button id="btn-view-display" class="primary" title="Show display">Display</button>
+        <button id="btn-view-text" title="Show serial output">Serial</button>
         <div class="actions">
-            <button id="btn-clear-repl">Clear</button>
+            <button id="btn-clear">Clear</button>
         </div>
     </div>
-    <div id="repl-output"></div>
-    <div id="repl-input-row">
-        <span id="repl-prompt">&gt;&gt;&gt;</span>
-        <input id="repl-input" type="text" autocomplete="off" placeholder="Type Python here...">
+    <div id="console-body" data-view="display">
+        <div id="display-wrap" tabindex="0">
+            <canvas id="display-canvas" width="480" height="360"></canvas>
+        </div>
+        <div id="text-output"></div>
     </div>
 </div>
 
@@ -300,50 +288,73 @@ import { BoardAdapter, loadBoardAdapter } from './js/board-adapter.mjs';
 // ── DOM elements ──
 const $status = document.getElementById('status');
 const $boardName = document.getElementById('board-name');
-const $output = document.getElementById('output');
+const $textOutput = document.getElementById('text-output');
 const $editor = document.getElementById('editor');
-const $replOutput = document.getElementById('repl-output');
-const $replInput = document.getElementById('repl-input');
 const $svg = document.getElementById('board-svg');
+const $consoleBody = document.getElementById('console-body');
+const $canvas = document.getElementById('display-canvas');
+const $loading = document.getElementById('loading-overlay');
+const $displayWrap = document.getElementById('display-wrap');
 
 // ── State ──
 let board = null;
 let adapter = null;
-let codeRunning = false;
+let mode = 'loading'; // loading | ready | editor | repl
+
+function setMode(m) {
+    mode = m;
+    $status.textContent = {
+        loading: 'Loading',
+        ready: 'Ready',
+        editor: 'Running',
+        repl: 'REPL',
+    }[m] || m;
+}
 
 // ── Initialize ──
+// Layer 1: instantiate WASM, create MEMFS, restore IDB, seed defaults.
+// Layer 2: cp_init (mp_init, GC, pystack, HAL, display).
+// Does NOT auto-run code — user picks Run or REPL.
 async function init() {
-    $status.textContent = 'Loading adapter...';
+    $status.textContent = 'Loading...';
+
     adapter = await loadBoardAdapter(
         'boards/wasm_browser/definition.json',
         'boards/wasm_browser/magic.json',
     );
     $boardName.textContent = adapter.displayName;
 
-    $status.textContent = 'Loading WASM...';
     board = await CircuitPython.create({
         wasmUrl: 'build-browser/circuitpython.wasm',
-        codePy: $editor.value,
+        canvas: $canvas,
+        persist: true,   // IDB persistence for /CIRCUITPY/
         onStdout: handleStdout,
         onStderr: (text) => {
-            // [sup] debug goes to stderr; only show if verbose
             if (text.startsWith('[sup]') && !$verbose.checked) return;
-            appendOutput(text, 'var(--red)');
+            appendText(text);
         },
         onCodeDone: () => {
-            codeRunning = false;
-            $status.textContent = 'Ready';
+            // code.py finished — cleanup Layer 3, return to ready
+            board._exports.cp_cleanup();
+            setMode('ready');
         },
     });
 
     // Disable supervisor debug output by default
     board._exports.cp_set_debug(0);
 
-    codeRunning = true;
-    $status.textContent = 'Running';
+    // Populate editor from MEMFS (may have come from IDB or seedDrive default)
+    const codePy = board._wasi.readFile('/CIRCUITPY/code.py');
+    if (codePy) {
+        $editor.value = new TextDecoder().decode(codePy);
+    }
 
     // Build board SVG
     renderBoardSvg();
+
+    // Hide loading overlay, show panels
+    $loading.classList.add('hidden');
+    setMode('ready');
 
     // Start render loop for board visualization
     requestAnimationFrame(renderLoop);
@@ -356,98 +367,86 @@ $verbose.addEventListener('change', () => {
 });
 
 // ── Stdout handling ──
-// During code.py execution, stdout goes to the output panel.
-// During REPL, stdout goes to the REPL panel.
 function handleStdout(text) {
-    if (codeRunning) {
-        appendOutput(text);
-    } else {
-        appendRepl(text);
-    }
+    appendText(text);
 }
 
-function appendOutput(text, color) {
-    $output.textContent += text;
-    $output.scrollTop = $output.scrollHeight;
+function appendText(text) {
+    $textOutput.textContent += text;
+    $textOutput.scrollTop = $textOutput.scrollHeight;
 }
 
-function appendRepl(text) {
-    $replOutput.textContent += text;
-    $replOutput.scrollTop = $replOutput.scrollHeight;
+// ── Actions ──
+
+// Layer 3 cleanup: tear down user session (pins, buses, display, GC),
+// clear serial output. Layer 2 (VM, pystack, HAL) stays intact.
+function cleanup() {
+    board._exports.cp_cleanup();
+    $textOutput.textContent = '';
 }
 
-// ── Editor actions ──
-document.getElementById('btn-run').addEventListener('click', runCode);
-document.getElementById('btn-stop').addEventListener('click', () => board?.ctrlC());
-document.getElementById('btn-reboot').addEventListener('click', () => {
-    $output.textContent = '';
-    board?.ctrlD();
-    codeRunning = true;
-    $status.textContent = 'Rebooting...';
-});
+// Run: cleanup → write editor to code.py → start execution
+document.getElementById('btn-run').addEventListener('click', startEditor);
 
-function runCode() {
+function startEditor() {
     if (!board) return;
-    $output.textContent = '';
+    cleanup();
     const code = $editor.value;
-    // Write to MEMFS and trigger auto-reload
     const enc = new TextEncoder();
     board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode(code));
-    codeRunning = true;
-    $status.textContent = 'Running';
+    setMode('editor');
+    setView('display');
 }
 
-// Ctrl+S to run
+// REPL: cleanup → enter REPL (display shows terminal)
+document.getElementById('btn-repl').addEventListener('click', startRepl);
+
+function startRepl() {
+    if (!board) return;
+    cleanup();
+    board._enterRepl();
+    setMode('repl');
+    setView('display');
+    $displayWrap.focus();
+}
+
+// Stop: cleanup → idle (user picks next action)
+document.getElementById('btn-stop').addEventListener('click', stopAndReset);
+
+function stopAndReset() {
+    if (!board) return;
+    cleanup();
+    setMode('ready');
+    setView('display');
+}
+
+// Ctrl+S to run from editor
 document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 's') {
         e.preventDefault();
-        runCode();
+        startEditor();
     }
 });
 
-// ── REPL ──
-$replInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        const line = $replInput.value;
-        $replInput.value = '';
-        appendRepl('>>> ' + line + '\n');
-        board?.exec(line);
-    }
-});
+// ── View toggle ──
+const $btnDisplay = document.getElementById('btn-view-display');
+const $btnSerial = document.getElementById('btn-view-text');
 
-document.getElementById('btn-clear-repl').addEventListener('click', () => {
-    $replOutput.textContent = '';
+function setView(view) {
+    $consoleBody.dataset.view = view;
+    $btnDisplay.classList.toggle('primary', view === 'display');
+    $btnSerial.classList.toggle('primary', view === 'text');
+}
+$btnDisplay.addEventListener('click', () => setView('display'));
+$btnSerial.addEventListener('click', () => setView('text'));
+document.getElementById('btn-clear').addEventListener('click', () => {
+    $textOutput.textContent = '';
 });
 
 // ── Button controls ──
 function setupButton(btnId, pinName) {
     const el = document.getElementById(btnId);
-    el.addEventListener('mousedown', () => {
-        console.log(`[btn] ${pinName} mousedown`);
-        const gpio = board?.hardware('gpio');
-        const pinDef = adapter?.resolvePin(pinName);
-        const id = pinDef?.id;
-        console.log(`[btn] resolved ${pinName} → GPIO${id}`);
-        console.log(`[btn] gpio module pins[${id}]:`, gpio?.getPin(id));
-
-        // Check raw MEMFS before
-        const before = board?._wasi?.readFile('/hal/gpio');
-        if (before && id !== undefined) {
-            const off = id * 8;
-            console.log(`[btn] MEMFS before:`, off < before.length
-                ? Array.from(before.slice(off, off + 8)) : 'file too short (' + before.length + ')');
-        }
-
-        adapter?.setInput(board, pinName, false);
-
-        // Check raw MEMFS after
-        const after = board?._wasi?.readFile('/hal/gpio');
-        if (after && id !== undefined) {
-            const off = id * 8;
-            console.log(`[btn] MEMFS after:`, off < after.length
-                ? Array.from(after.slice(off, off + 8)) : 'file too short (' + after.length + ')');
-        }
-    });
+    el.addEventListener('mousedown', () => adapter?.setInput(board, pinName, false));
     el.addEventListener('mouseup', () => adapter?.setInput(board, pinName, true));
     el.addEventListener('mouseleave', () => adapter?.setInput(board, pinName, true));
 }
@@ -625,12 +624,6 @@ function renderLoop() {
         }
     }
 
-    // Update status
-    const yr = board._exports?.cp_get_yield_reason?.() ?? 0;
-    if (codeRunning) {
-        $status.textContent = yr === 1 ? 'Sleeping' : 'Running';
-    }
-
     requestAnimationFrame(renderLoop);
 }
 
@@ -647,6 +640,7 @@ $editor.addEventListener('keydown', (e) => {
 // ── Boot ──
 init().catch(err => {
     $status.textContent = 'Error: ' + err.message;
+    $loading.textContent = 'Error: ' + err.message;
     console.error(err);
 });
 </script>

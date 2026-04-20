@@ -2,4 +2,79 @@ include("$(PORT_DIR)/variants/manifest.py")
 
 # Adafruit NeoPixel library (wraps neopixel_write common-hal).
 # Use the frozen Adafruit version, not micropython-lib (which imports `machine`).
-module("neopixel.py", "../../../../frozen/Adafruit_CircuitPython_NeoPixel", opt=3)
+module("neopixel.py", "../../../../frozen/Adafruit_CircuitPython_NeoPixel", opt=3),
+module("adafruit_framebuf.py", "../../../../frozen/Adafruit_CircuitPython_framebuf", opt=3),
+module("adafruit_ticks.py", "../../../../frozen/Adafruit_CircuitPython_Ticks", opt=3),
+package(
+    "adafruit_bus_device",
+    (
+        "__init__.py",
+        "i2c_device.py",
+        "spi_device.py",
+    ),
+    base_path="../../../../frozen/Adafruit_CircuitPython_BusDevice",
+    opt=3,
+),
+package(
+    "adafruit_display_shapes",
+    (
+        "__init__.py",
+        "arc.py",
+        "circle.py",
+        "filled_polygon.py",
+        "line.py",
+        "multisparkline.py",
+        "polygon.py",
+        "rect.py",
+        "roundrect.py",
+        "sparkline.py",
+        "triangle.py",
+    ),
+    base_path="../../../../frozen/Adafruit_CircuitPython_Display_Shapes",
+    opt=3,
+),
+package(
+    "adafruit_display_text",
+    (
+        "__init__.py",
+        "bitmap_label.py",
+        "label.py",
+        "outlined_label.py",
+        "scrolling_label.py",
+        "text_box.py",
+    ),
+    base_path="../../../../frozen/Adafruit_CircuitPython_Display_Text",
+    opt=3,
+),
+package(
+    "adafruit_hid",
+    (
+        "__init__.py",
+        "consumer_control_code.py",
+        "consumer_control.py",
+        "keyboard_layout_base.py",
+        "keyboard_layout_us.py",
+        "keyboard.py",
+        "keycode.py",
+        "mouse.py",
+    ),
+    base_path="../../../../frozen/Adafruit_CircuitPython_HID",
+    opt=3,
+),
+package(
+    "adafruit_register",
+    (
+        "__init__.py",
+        "i2c_bcd_alarm.py",
+        "i2c_bcd_datetime.py",
+        "i2c_bit.py",
+        "i2c_bits.py",
+        "i2c_struct_array.py",
+        "i2c_struct.py",
+        "register_accessor.py",
+        "register_bit.py",
+        "register_bits.py",
+    ),
+    base_path="../../../../frozen/Adafruit_CircuitPython_Register",
+    opt=3,
+)

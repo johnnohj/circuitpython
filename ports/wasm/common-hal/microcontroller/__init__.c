@@ -35,7 +35,7 @@ const mcu_processor_obj_t common_hal_mcu_processor_obj = {
 
 /* ---- Pin table for the `microcontroller.pin` module ---- */
 /* Maps GPION names to pin objects. Board-level names (D0, A0, LED, etc.)
- * are in board/__init__.c / peripherals/pins.c. */
+ * are in board/__init__.c. */
 
 static const mp_rom_map_elem_t mcu_pin_global_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_GPIO0),  MP_ROM_PTR(&pin_GPIO0) },
