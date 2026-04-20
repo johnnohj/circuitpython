@@ -72,13 +72,17 @@ export class VMContext extends ContextManager {
         const exports = this._board._exports;
         if (!exports) return;
 
+        // Check state BEFORE stepping — captures the EXECUTING state
+        // even if the VM finishes within this single cp_step call.
+        const stBefore = exports.cp_state();
+
         // cp_step drives both VM and VH when executing
         exports.cp_step(nowMs);
 
-        // State transition detection
+        // State transition detection: EXECUTING/SUSPENDED → READY
         const st = exports.cp_state();
 
-        if (this._prevState > 0 && st === CP_STATE_READY) {
+        if (stBefore > 0 && st === CP_STATE_READY) {
             // Execution just finished — force display refresh so terminal
             // output from the final VM step is visible immediately.
             // Without this, the auto-refresh rate limit (16ms) may skip
@@ -95,7 +99,6 @@ export class VMContext extends ContextManager {
                 this._board._onCodeDone();
             }
         }
-        this._prevState = st;
 
         // Background context lifecycle
         this._cleanupDoneContexts();
