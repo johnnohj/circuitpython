@@ -225,8 +225,10 @@ export class CircuitPython {
 
     get state() {
         if (!this._exports) return 'loading';
-        if (this._waitingForKey) return 'waiting';
-        return this._exports.cp_is_runnable() ? 'running' : 'repl';
+        const s = this._exports.cp_state();
+        if (s === 1) return 'executing';
+        if (s === 2) return 'suspended';
+        return 'ready';  // 0
     }
 
     get frameCount() { return this._frameCount; }
@@ -690,8 +692,9 @@ export class CircuitPython {
             process.stdin.on('data', this._stdinHandler);
         }
 
-        // Enable auto-reload now that init is complete
-        this._autoReloadEnabled = true;
+        // Enable auto-reload — only when using runBoardLifecycle.
+        // When autoLifecycle=false, JS manages execution directly.
+        this._autoReloadEnabled = (options.autoLifecycle !== false);
 
         // Start frame loop BEFORE kicking off lifecycle so cp_step ticks
         // boot.py / code.py forward.

@@ -41,16 +41,8 @@ header {
     gap: 12px;
     border-bottom: 1px solid var(--border);
 }
-header h1 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--accent);
-}
-header .status {
-    color: var(--dim);
-    font-size: 12px;
-    margin-left: auto;
-}
+header h1 { font-size: 14px; font-weight: 600; color: var(--accent); }
+header .status { color: var(--dim); font-size: 12px; margin-left: auto; }
 
 /* ── Panels ── */
 .panel {
@@ -71,87 +63,44 @@ header .status {
     align-items: center;
     gap: 8px;
 }
-.panel-title .actions {
-    margin-left: auto;
-    display: flex;
-    gap: 4px;
-}
+.panel-title .actions { margin-left: auto; display: flex; gap: 4px; }
 
-/* ── Board panel (top-left) ── */
-#board-panel {
-    grid-column: 1;
-    grid-row: 2;
-}
-#board-canvas {
-    flex: 1;
-    min-height: 0;
-}
-#board-svg {
-    width: 100%;
-    height: 100%;
-}
+/* ── Board panel ── */
+#board-panel { grid-column: 1; grid-row: 2; }
+#board-canvas { flex: 1; min-height: 0; }
+#board-svg { width: 100%; height: 100%; }
 
-/* ── Editor panel (top-right) ── */
-#editor-panel {
-    grid-column: 2;
-    grid-row: 2;
-}
+/* ── Editor panel ── */
+#editor-panel { grid-column: 2; grid-row: 2; }
 #editor {
-    flex: 1;
-    resize: none;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.5;
-    padding: 8px 12px;
-    border: none;
-    outline: none;
-    tab-size: 4;
-    min-height: 0;
+    flex: 1; resize: none;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 13px; line-height: 1.5;
+    padding: 8px 12px; border: none; outline: none;
+    tab-size: 4; min-height: 0;
 }
 
-/* ── Console panel (bottom, full width) ── */
-#console-panel {
-    grid-column: 1 / -1;
-    grid-row: 3;
-}
-#console-body {
-    flex: 1;
-    min-height: 0;
-    position: relative;
-}
+/* ── Console panel ── */
+#console-panel { grid-column: 1 / -1; grid-row: 3; }
+#console-body { flex: 1; min-height: 0; position: relative; }
+
 #display-wrap {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    position: absolute; inset: 0;
+    display: flex; justify-content: center; align-items: center;
     background: #000;
 }
-#display-canvas {
-    image-rendering: pixelated;
-    max-width: 100%;
-    max-height: 100%;
-}
+#display-wrap:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+#display-canvas { image-rendering: pixelated; max-width: 100%; max-height: 100%; }
+
 #text-output {
-    position: absolute;
-    inset: 0;
-    font-family: var(--font);
-    font-size: 13px;
-    padding: 8px 12px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--text);
-    background: var(--surface);
+    position: absolute; inset: 0;
+    font-family: var(--font); font-size: 13px;
+    padding: 8px 12px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+    color: var(--text); background: var(--surface);
 }
-/* Display area accepts focus for keyboard REPL input */
-#display-wrap:focus {
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
-}
-/* Show/hide layers */
+
+/* View toggle */
 #console-body[data-view="display"] #display-wrap { display: flex; }
 #console-body[data-view="display"] #text-output { display: none; }
 #console-body[data-view="text"] #display-wrap { display: none; }
@@ -159,68 +108,35 @@ header .status {
 
 /* ── Loading overlay ── */
 #loading-overlay {
-    grid-column: 1 / -1;
-    grid-row: 2 / -1;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background: var(--bg);
-    color: var(--dim);
-    font-size: 14px;
+    grid-column: 1 / -1; grid-row: 2 / -1;
+    display: flex; justify-content: center; align-items: center;
+    background: var(--bg); color: var(--dim); font-size: 14px;
     z-index: 10;
 }
 #loading-overlay.hidden { display: none; }
 
-/* ── Settings ── */
+/* ── Misc ── */
 .setting {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--dim);
-    cursor: pointer;
-    user-select: none;
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--dim); cursor: pointer; user-select: none;
 }
-.setting input[type="checkbox"] {
-    accent-color: var(--accent);
-}
+.setting input[type="checkbox"] { accent-color: var(--accent); }
 
-/* ── Buttons ── */
 button {
-    background: var(--border);
-    color: var(--text);
-    border: none;
-    padding: 3px 10px;
-    border-radius: 3px;
-    font-family: var(--font);
-    font-size: 11px;
-    cursor: pointer;
+    background: var(--border); color: var(--text); border: none;
+    padding: 3px 10px; border-radius: 3px;
+    font-family: var(--font); font-size: 11px; cursor: pointer;
 }
 button:hover { background: var(--accent); color: var(--bg); }
 button.danger:hover { background: var(--red); }
 button.primary { background: var(--accent); color: var(--bg); }
 
-/* ── Board visualization ── */
-.pin-circle {
-    transition: fill 0.1s;
-}
+.pin-circle { transition: fill 0.1s; }
 .pin-label {
-    font-size: 9px;
-    fill: var(--dim);
-    text-anchor: middle;
-    pointer-events: none;
-    font-family: var(--font);
+    font-size: 9px; fill: var(--dim); text-anchor: middle;
+    pointer-events: none; font-family: var(--font);
 }
-.neopixel-led {
-    transition: fill 0.05s;
-    filter: url(#neopixel-glow);
-}
-.component-label {
-    font-size: 8px;
-    fill: var(--dim);
-    text-anchor: middle;
-    font-family: var(--font);
-}
+.neopixel-led { transition: fill 0.05s; filter: url(#neopixel-glow); }
 </style>
 </head>
 <body>
@@ -234,10 +150,9 @@ button.primary { background: var(--accent); color: var(--bg); }
     <span class="status" id="status">Loading</span>
 </header>
 
-<!-- Loading overlay — covers board+editor+console until cp_init returns -->
 <div id="loading-overlay">Loading CircuitPython WASM, please wait...</div>
 
-<!-- Board (top-left) -->
+<!-- Board -->
 <div class="panel" id="board-panel">
     <div class="panel-title">
         Board
@@ -251,7 +166,7 @@ button.primary { background: var(--accent); color: var(--bg); }
     </div>
 </div>
 
-<!-- Editor (top-right) -->
+<!-- Editor -->
 <div class="panel" id="editor-panel">
     <div class="panel-title">
         code.py
@@ -264,11 +179,11 @@ button.primary { background: var(--accent); color: var(--bg); }
     <textarea id="editor" spellcheck="false"></textarea>
 </div>
 
-<!-- Console (bottom) -->
+<!-- Console -->
 <div class="panel" id="console-panel">
     <div class="panel-title">
-        <button id="btn-view-display" class="primary" title="Show display">Display</button>
-        <button id="btn-view-text" title="Show serial output">Serial</button>
+        <button id="btn-view-display" class="primary">Display</button>
+        <button id="btn-view-text">Serial</button>
         <div class="actions">
             <button id="btn-clear">Clear</button>
         </div>
@@ -285,39 +200,24 @@ button.primary { background: var(--accent); color: var(--bg); }
 import { CircuitPython } from './js/circuitpython.mjs';
 import { BoardAdapter, loadBoardAdapter } from './js/board-adapter.mjs';
 
-// ── DOM elements ──
-const $status = document.getElementById('status');
+// ── DOM ──
+const $status    = document.getElementById('status');
 const $boardName = document.getElementById('board-name');
-const $textOutput = document.getElementById('text-output');
-const $editor = document.getElementById('editor');
-const $svg = document.getElementById('board-svg');
-const $consoleBody = document.getElementById('console-body');
-const $canvas = document.getElementById('display-canvas');
-const $loading = document.getElementById('loading-overlay');
-const $displayWrap = document.getElementById('display-wrap');
+const $text      = document.getElementById('text-output');
+const $editor    = document.getElementById('editor');
+const $svg       = document.getElementById('board-svg');
+const $console   = document.getElementById('console-body');
+const $canvas    = document.getElementById('display-canvas');
+const $loading   = document.getElementById('loading-overlay');
+const $display   = document.getElementById('display-wrap');
 
 // ── State ──
-let board = null;
+let board   = null;
 let adapter = null;
-let mode = 'loading'; // loading | ready | editor | repl
+let mode    = 'loading';   // loading | ready | code | repl
 
-function setMode(m) {
-    mode = m;
-    $status.textContent = {
-        loading: 'Loading',
-        ready: 'Ready',
-        editor: 'Running',
-        repl: 'REPL',
-    }[m] || m;
-}
-
-// ── Initialize ──
-// Layer 1: instantiate WASM, create MEMFS, restore IDB, seed defaults.
-// Layer 2: cp_init (mp_init, GC, pystack, HAL, display).
-// Does NOT auto-run code — user picks Run or REPL.
+// ── Init ──
 async function init() {
-    $status.textContent = 'Loading...';
-
     adapter = await loadBoardAdapter(
         'boards/wasm_browser/definition.json',
         'boards/wasm_browser/magic.json',
@@ -325,189 +225,160 @@ async function init() {
     $boardName.textContent = adapter.displayName;
 
     board = await CircuitPython.create({
-        wasmUrl: 'build-browser/circuitpython.wasm',
-        canvas: $canvas,
-        persist: true,   // IDB persistence for /CIRCUITPY/
-        onStdout: handleStdout,
+        wasmUrl:       'build-browser/circuitpython.wasm',
+        canvas:        $canvas,
+        persist:       true,
+        autoLifecycle: false,   // JS drives execution, not runBoardLifecycle
+        onStdout: (text) => {
+            $text.textContent += text;
+            $text.scrollTop = $text.scrollHeight;
+        },
         onStderr: (text) => {
             if (text.startsWith('[sup]') && !$verbose.checked) return;
-            appendText(text);
+            $text.textContent += text;
+            $text.scrollTop = $text.scrollHeight;
         },
         onCodeDone: () => {
-            // code.py finished — board is now in "waiting for key" state.
-            // Don't cleanup here — let the user see "Code done running"
-            // and choose Run/REPL/Stop.
+            // code.py finished — stay on display, show status
             setMode('ready');
         },
     });
 
-    // Disable supervisor debug output by default
     board._exports.cp_set_debug(0);
 
-    // Populate editor from MEMFS (may have come from IDB or seedDrive default)
+    // Populate editor from MEMFS (seeded from IDB or default)
     const codePy = board._wasi.readFile('/CIRCUITPY/code.py');
     if (codePy) {
         $editor.value = new TextDecoder().decode(codePy);
     }
 
-    // Build board SVG
     renderBoardSvg();
-
-    // Hide loading overlay, show panels
     $loading.classList.add('hidden');
     setMode('ready');
 
-    // Start render loop for board visualization
+    // Render loop — board visualization (SVG pins/neopixels)
     requestAnimationFrame(renderLoop);
 }
 
-// ── Verbose toggle ──
+// ── Mode management ──
+function setMode(m) {
+    mode = m;
+    const labels = { loading: 'Loading', ready: 'Ready', code: 'Running', repl: 'REPL' };
+    $status.textContent = labels[m] || m;
+}
+
+// ── Actions ──
+
+function startCode() {
+    if (!board) return;
+    board.stop();
+    $text.textContent = '';
+    // Write editor → MEMFS (persists to IDB automatically)
+    const enc = new TextEncoder();
+    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode($editor.value));
+    board.execFile('/code.py');
+    setMode('code');
+    setView('display');
+}
+
+function startRepl() {
+    if (!board) return;
+    board.stop();
+    $text.textContent = '';
+    // Show REPL prompt on the displayio terminal
+    board._readline.showPrompt();
+    setMode('repl');
+    setView('display');
+    $display.focus();
+}
+
+function stopAll() {
+    if (!board) return;
+    board.stop();
+    setMode('ready');
+}
+
+// ── Event wiring ──
+document.getElementById('btn-run').addEventListener('click', startCode);
+document.getElementById('btn-repl').addEventListener('click', startRepl);
+document.getElementById('btn-stop').addEventListener('click', stopAll);
+
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        startCode();
+    }
+});
+
+// ── Verbose ──
 const $verbose = document.getElementById('opt-verbose');
 $verbose.addEventListener('change', () => {
     if (board) board._exports.cp_set_debug($verbose.checked ? 1 : 0);
 });
 
-// ── Stdout handling ──
-function handleStdout(text) {
-    appendText(text);
-}
-
-function appendText(text) {
-    $textOutput.textContent += text;
-    $textOutput.scrollTop = $textOutput.scrollHeight;
-}
-
-// ── Actions ──
-
-// Run: write editor to code.py → auto-reload triggers runBoardLifecycle.
-// The writeFile auto-triggers _scheduleAutoReload (500ms debounce) which
-// does cp_soft_reboot + runBoardLifecycle — the same path a real board uses.
-document.getElementById('btn-run').addEventListener('click', startEditor);
-
-function startEditor() {
-    if (!board) return;
-    $textOutput.textContent = '';
-    const code = $editor.value;
-    const enc = new TextEncoder();
-    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode(code));
-    setMode('editor');
-    setView('display');
-}
-
-// REPL: stop code if running, enter REPL (display shows terminal).
-// If code just finished (waiting for key), _enterRepl handles it.
-// If code is still running, ctrlC stops it, then we enter REPL.
-document.getElementById('btn-repl').addEventListener('click', startRepl);
-
-function startRepl() {
-    if (!board) return;
-    if (board.state === 'running') {
-        board.ctrlC();
-    }
-    // _enterRepl handles the waiting-for-key → REPL transition,
-    // including resetting the display via cp_cleanup internally
-    if (board.state === 'waiting') {
-        board._enterRepl();
-    } else {
-        // Already in REPL or just stopped — enter directly
-        board._exports.cp_cleanup();
-        board._enterRepl();
-    }
-    setMode('repl');
-    setView('display');
-    $displayWrap.focus();
-}
-
-// Stop: interrupt running code, return to ready state.
-document.getElementById('btn-stop').addEventListener('click', stopAndReset);
-
-function stopAndReset() {
-    if (!board) return;
-    board.ctrlC();
-    $textOutput.textContent = '';
-    setMode('ready');
-}
-
-// Ctrl+S to run from editor
-document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 's') {
-        e.preventDefault();
-        startEditor();
-    }
-});
-
 // ── View toggle ──
-const $btnDisplay = document.getElementById('btn-view-display');
-const $btnSerial = document.getElementById('btn-view-text');
-
 function setView(view) {
-    $consoleBody.dataset.view = view;
-    $btnDisplay.classList.toggle('primary', view === 'display');
-    $btnSerial.classList.toggle('primary', view === 'text');
+    $console.dataset.view = view;
+    document.getElementById('btn-view-display').classList.toggle('primary', view === 'display');
+    document.getElementById('btn-view-text').classList.toggle('primary', view === 'text');
 }
-$btnDisplay.addEventListener('click', () => setView('display'));
-$btnSerial.addEventListener('click', () => setView('text'));
-document.getElementById('btn-clear').addEventListener('click', () => {
-    $textOutput.textContent = '';
-});
+document.getElementById('btn-view-display').addEventListener('click', () => setView('display'));
+document.getElementById('btn-view-text').addEventListener('click', () => setView('text'));
+document.getElementById('btn-clear').addEventListener('click', () => { $text.textContent = ''; });
 
-// ── Button controls ──
-function setupButton(btnId, pinName) {
-    const el = document.getElementById(btnId);
-    el.addEventListener('mousedown', () => adapter?.setInput(board, pinName, false));
-    el.addEventListener('mouseup', () => adapter?.setInput(board, pinName, true));
-    el.addEventListener('mouseleave', () => adapter?.setInput(board, pinName, true));
+// ── Board buttons ──
+function setupButton(id, pin) {
+    const el = document.getElementById(id);
+    el.addEventListener('mousedown', () => adapter?.setInput(board, pin, false));
+    el.addEventListener('mouseup',   () => adapter?.setInput(board, pin, true));
+    el.addEventListener('mouseleave',() => adapter?.setInput(board, pin, true));
 }
 setupButton('btn-a', 'BUTTON_A');
 setupButton('btn-b', 'BUTTON_B');
 
-// ── Board SVG rendering ──
+// ── Tab key in editor ──
+$editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = $editor.selectionStart;
+        $editor.value = $editor.value.substring(0, s) + '    ' + $editor.value.substring($editor.selectionEnd);
+        $editor.selectionStart = $editor.selectionEnd = s + 4;
+    }
+});
+
+// ── Board SVG ──
 function renderBoardSvg() {
     if (!adapter) return;
     const ns = 'http://www.w3.org/2000/svg';
 
-    // Glow filter for NeoPixel LEDs — simulates light emission
+    // NeoPixel glow filter
     const defs = document.createElementNS(ns, 'defs');
     const filter = document.createElementNS(ns, 'filter');
     filter.setAttribute('id', 'neopixel-glow');
-    filter.setAttribute('x', '-50%');
-    filter.setAttribute('y', '-50%');
-    filter.setAttribute('width', '200%');
-    filter.setAttribute('height', '200%');
+    filter.setAttribute('x', '-50%'); filter.setAttribute('y', '-50%');
+    filter.setAttribute('width', '200%'); filter.setAttribute('height', '200%');
     const blur = document.createElementNS(ns, 'feGaussianBlur');
-    blur.setAttribute('in', 'SourceGraphic');
-    blur.setAttribute('stdDeviation', '3');
+    blur.setAttribute('in', 'SourceGraphic'); blur.setAttribute('stdDeviation', '3');
     blur.setAttribute('result', 'blur');
     filter.appendChild(blur);
     const merge = document.createElementNS(ns, 'feMerge');
-    const m1 = document.createElementNS(ns, 'feMergeNode');
-    m1.setAttribute('in', 'blur');
-    merge.appendChild(m1);
-    const m2 = document.createElementNS(ns, 'feMergeNode');
-    m2.setAttribute('in', 'SourceGraphic');
-    merge.appendChild(m2);
-    filter.appendChild(merge);
-    defs.appendChild(filter);
-    $svg.appendChild(defs);
+    const m1 = document.createElementNS(ns, 'feMergeNode'); m1.setAttribute('in', 'blur');
+    const m2 = document.createElementNS(ns, 'feMergeNode'); m2.setAttribute('in', 'SourceGraphic');
+    merge.appendChild(m1); merge.appendChild(m2);
+    filter.appendChild(merge); defs.appendChild(filter); $svg.appendChild(defs);
 
     // Board background
     const bg = document.createElementNS(ns, 'rect');
-    bg.setAttribute('width', '400');
-    bg.setAttribute('height', '220');
-    bg.setAttribute('rx', '8');
-    bg.setAttribute('fill', '#1a3a2a');
-    bg.setAttribute('stroke', '#2a5a3a');
-    bg.setAttribute('stroke-width', '2');
+    bg.setAttribute('width', '400'); bg.setAttribute('height', '220');
+    bg.setAttribute('rx', '8'); bg.setAttribute('fill', '#1a3a2a');
+    bg.setAttribute('stroke', '#2a5a3a'); bg.setAttribute('stroke-width', '2');
     $svg.appendChild(bg);
 
-    // Title
+    // Board title
     const title = document.createElementNS(ns, 'text');
-    title.setAttribute('x', '200');
-    title.setAttribute('y', '115');
-    title.setAttribute('text-anchor', 'middle');
-    title.setAttribute('fill', '#3a6a4a');
-    title.setAttribute('font-size', '12');
-    title.setAttribute('font-family', 'var(--font)');
+    title.setAttribute('x', '200'); title.setAttribute('y', '115');
+    title.setAttribute('text-anchor', 'middle'); title.setAttribute('fill', '#3a6a4a');
+    title.setAttribute('font-size', '12'); title.setAttribute('font-family', 'var(--font)');
     title.textContent = adapter.boardName.toUpperCase();
     $svg.appendChild(title);
 
@@ -515,16 +386,13 @@ function renderBoardSvg() {
     for (const pin of adapter.pins) {
         const v = pin.visual;
         if (!v) continue;
-
         const g = document.createElementNS(ns, 'g');
         g.setAttribute('data-pin', pin.name);
 
         const circle = document.createElementNS(ns, 'circle');
-        circle.setAttribute('cx', v.x);
-        circle.setAttribute('cy', v.y);
+        circle.setAttribute('cx', v.x); circle.setAttribute('cy', v.y);
         circle.setAttribute('r', v.side === 'internal' ? 8 : 6);
-        circle.setAttribute('fill', '#333');
-        circle.setAttribute('stroke', '#555');
+        circle.setAttribute('fill', '#333'); circle.setAttribute('stroke', '#555');
         circle.setAttribute('stroke-width', '1');
         circle.classList.add('pin-circle');
         g.appendChild(circle);
@@ -536,27 +404,23 @@ function renderBoardSvg() {
         label.textContent = pin.displayName || pin.name;
         g.appendChild(label);
 
-        // Make input-capable pins interactive (buttons, switches)
         if (pin.capabilities.digital && v.side === 'internal') {
             g.style.cursor = 'pointer';
             g.addEventListener('mousedown', () => adapter?.setInput(board, pin.name, false));
-            g.addEventListener('mouseup', () => adapter?.setInput(board, pin.name, true));
-            g.addEventListener('mouseleave', () => adapter?.setInput(board, pin.name, true));
+            g.addEventListener('mouseup',   () => adapter?.setInput(board, pin.name, true));
+            g.addEventListener('mouseleave',() => adapter?.setInput(board, pin.name, true));
         }
-
         $svg.appendChild(g);
     }
 
-    // NeoPixel strip placeholder (10 LEDs near NEOPIXEL pin)
+    // NeoPixels
     const npPin = adapter.resolvePin('NEOPIXEL');
     if (npPin) {
         for (let i = 0; i < 10; i++) {
             const led = document.createElementNS(ns, 'circle');
             led.setAttribute('cx', 200 + (i - 4.5) * 18);
-            led.setAttribute('cy', 160);
-            led.setAttribute('r', 7);
-            led.setAttribute('fill', '#111');
-            led.setAttribute('stroke', '#333');
+            led.setAttribute('cy', 160); led.setAttribute('r', 7);
+            led.setAttribute('fill', '#111'); led.setAttribute('stroke', '#333');
             led.setAttribute('stroke-width', '1');
             led.classList.add('neopixel-led');
             led.setAttribute('data-np-index', i);
@@ -566,84 +430,60 @@ function renderBoardSvg() {
 
     // Power pins
     if (adapter.power) {
-        for (const p of [...(adapter.power.threeVolt || []), ...(adapter.power.fiveVolt || []), ...(adapter.power.ground || [])]) {
-            const label = document.createElementNS(ns, 'text');
-            label.setAttribute('x', p.x);
-            label.setAttribute('y', p.label === 'GND' ? (p.y > 100 ? p.y + 16 : p.y - 10) : p.y - 10);
-            label.classList.add('pin-label');
-            label.setAttribute('fill', p.label === 'GND' ? '#666' : (p.label === '3V3' ? 'var(--yellow)' : 'var(--red)'));
-            label.textContent = p.label;
-            $svg.appendChild(label);
+        for (const p of [...(adapter.power.threeVolt||[]), ...(adapter.power.fiveVolt||[]), ...(adapter.power.ground||[])]) {
+            const lbl = document.createElementNS(ns, 'text');
+            lbl.setAttribute('x', p.x);
+            lbl.setAttribute('y', p.label === 'GND' ? (p.y > 100 ? p.y + 16 : p.y - 10) : p.y - 10);
+            lbl.classList.add('pin-label');
+            lbl.setAttribute('fill', p.label === 'GND' ? '#666' : (p.label === '3V3' ? 'var(--yellow)' : 'var(--red)'));
+            lbl.textContent = p.label;
+            $svg.appendChild(lbl);
         }
     }
 }
 
-// ── Live state render loop ──
+// ── Render loop (board visualization + cursor) ──
 function renderLoop() {
-    if (!board || !adapter) {
-        requestAnimationFrame(renderLoop);
-        return;
-    }
+    if (board && adapter) {
+        const snap = adapter.getSnapshot(board);
 
-    const snap = adapter.getSnapshot(board);
-
-    // Update pin circles based on state
-    for (const [name, state] of Object.entries(snap.pins)) {
-        const g = $svg.querySelector(`[data-pin="${name}"]`);
-        if (!g) continue;
-        const circle = g.querySelector('.pin-circle');
-        if (!circle) continue;
-
-        if (!state.gpio || !state.gpio.enabled) {
-            circle.setAttribute('fill', '#333');
-            circle.setAttribute('stroke', '#555');
-        } else if (state.gpio.direction === 1) {
-            // Output pin
-            circle.setAttribute('fill', state.gpio.value ? '#a6e3a1' : '#45475a');
-            circle.setAttribute('stroke', state.gpio.value ? '#74c7a0' : '#555');
-        } else {
-            // Input pin
-            circle.setAttribute('fill', state.gpio.value ? '#89b4fa' : '#313244');
-            circle.setAttribute('stroke', '#555');
+        // Pin state
+        for (const [name, state] of Object.entries(snap.pins)) {
+            const g = $svg.querySelector(`[data-pin="${name}"]`);
+            if (!g) continue;
+            const c = g.querySelector('.pin-circle');
+            if (!c) continue;
+            if (!state.gpio?.enabled) {
+                c.setAttribute('fill', '#333'); c.setAttribute('stroke', '#555');
+            } else if (state.gpio.direction === 1) {
+                c.setAttribute('fill', state.gpio.value ? '#a6e3a1' : '#45475a');
+                c.setAttribute('stroke', state.gpio.value ? '#74c7a0' : '#555');
+            } else {
+                c.setAttribute('fill', state.gpio.value ? '#89b4fa' : '#313244');
+                c.setAttribute('stroke', '#555');
+            }
         }
 
-        // Analog overlay
-        if (state.analog && state.analog.enabled) {
-            const pct = state.analog.value / 65535;
-            circle.setAttribute('fill', `hsl(${120 * pct}, 60%, ${30 + 30 * pct}%)`);
+        // NeoPixels
+        const np = snap.neopixels['NEOPIXEL'];
+        if (np) {
+            for (let i = 0; i < np.numPixels && i < 10; i++) {
+                const el = $svg.querySelector(`[data-np-index="${i}"]`);
+                if (!el || !np.pixels[i]) continue;
+                const p = np.pixels[i];
+                el.setAttribute('fill', `rgb(${p.r},${p.g},${p.b})`);
+                el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
+            }
         }
 
-        // PWM overlay (brightness)
-        if (state.pwm && state.pwm.enabled) {
-            const b = state.pwm.brightness;
-            circle.setAttribute('fill', `rgb(${Math.round(b * 166)}, ${Math.round(b * 227)}, ${Math.round(b * 161)})`);
-        }
-    }
-
-    // Update NeoPixel LEDs
-    const npStrip = snap.neopixels['NEOPIXEL'];
-    if (npStrip) {
-        for (let i = 0; i < npStrip.numPixels && i < 10; i++) {
-            const el = $svg.querySelector(`[data-np-index="${i}"]`);
-            if (!el || !npStrip.pixels[i]) continue;
-            const p = npStrip.pixels[i];
-            el.setAttribute('fill', `rgb(${p.r},${p.g},${p.b})`);
-            el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
+        // Cursor: show only in REPL mode when VM is ready (waiting for input)
+        if (board._display && mode === 'repl' && board.state === 'ready') {
+            board._display.drawCursor();
         }
     }
 
     requestAnimationFrame(renderLoop);
 }
-
-// ── Tab key in editor ──
-$editor.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab') {
-        e.preventDefault();
-        const start = $editor.selectionStart;
-        $editor.value = $editor.value.substring(0, start) + '    ' + $editor.value.substring($editor.selectionEnd);
-        $editor.selectionStart = $editor.selectionEnd = start + 4;
-    }
-});
 
 // ── Boot ──
 init().catch(err => {
