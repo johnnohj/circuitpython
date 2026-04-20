@@ -859,7 +859,10 @@ void cp_cleanup(void) {
      *    frees objects no longer referenced. */
     gc_collect();
 
-    /* 4. Reset supervisor state machine. */
+    /* 4. Clear wake registrations for ctx0. */
+    cp_unregister_wake_all(0);
+
+    /* 5. Reset supervisor state machine. */
     _ctx0_is_code = false;
     _code_header_printed = false;
     _state = SUP_REPL;
@@ -957,6 +960,12 @@ int cp_continue(int len) {
 /* ------------------------------------------------------------------ */
 
 void sh_on_event(const sh_event_t *evt) {
+    /* Check all wake registrations for every event.
+     * This is the event-driven wake mechanism: Python code registers
+     * interest in specific events, and matching events wake contexts. */
+    cp_wake_check_event(evt->event_type, evt->event_data);
+
+    /* Route to specific handlers */
     switch (evt->event_type) {
     case SH_EVT_KEY_DOWN: {
         uint8_t c = (uint8_t)evt->event_data;
@@ -1001,8 +1010,24 @@ void sh_on_event(const sh_event_t *evt) {
     }
 }
 
-/* cp_run_file removed — zero consumers; superseded by
- * cp_run(CP_SRC_FILE, path_len, CP_CTX_MAIN, 0). */
+/* ------------------------------------------------------------------ */
+/* Wake registration exports                                           */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_register_wake")))
+int _cp_register_wake(int ctx_id, int event_type, int event_data, int one_shot) {
+    return cp_register_wake(ctx_id, (uint16_t)event_type, (uint16_t)event_data, one_shot != 0);
+}
+
+__attribute__((export_name("cp_unregister_wake")))
+void _cp_unregister_wake(int reg_id) {
+    cp_unregister_wake(reg_id);
+}
+
+__attribute__((export_name("cp_unregister_wake_all")))
+void _cp_unregister_wake_all(int ctx_id) {
+    cp_unregister_wake_all(ctx_id);
+}
 
 /* ------------------------------------------------------------------ */
 /* Exported: accessors                                                 */

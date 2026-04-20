@@ -395,3 +395,66 @@ __attribute__((export_name("cp_context_restore")))
 void _cp_context_restore(int id) {
     cp_context_restore(id);
 }
+
+/* ------------------------------------------------------------------ */
+/* Wake registrations                                                  */
+/*                                                                     */
+/* A context can register interest in specific semihosting events.     */
+/* When sh_on_event receives a matching event, the context is woken    */
+/* via cp_wake.  This enables event-driven suspend/resume:             */
+/*                                                                     */
+/*   Python: alarm.pin_alarm(board.BUTTON_A)                           */
+/*     → common-hal calls cp_register_wake(ctx, HW_CHANGE, pin)       */
+/*     → VM suspends                                                   */
+/*     → JS button press → SH_EVT_HW_CHANGE                          */
+/*     → cp_wake_check_event matches → cp_wake(ctx)                   */
+/*     → VM resumes                                                    */
+/* ------------------------------------------------------------------ */
+
+static cp_wake_reg_t _wake_regs[CP_MAX_WAKE_REGS];
+
+int cp_register_wake(int ctx_id, uint16_t event_type, uint16_t event_data, bool one_shot) {
+    for (int i = 0; i < CP_MAX_WAKE_REGS; i++) {
+        if (!_wake_regs[i].active) {
+            _wake_regs[i].ctx_id = (uint8_t)ctx_id;
+            _wake_regs[i].active = 1;
+            _wake_regs[i].event_type = event_type;
+            _wake_regs[i].event_data = event_data;
+            _wake_regs[i].flags = one_shot ? 1 : 0;
+            return i;
+        }
+    }
+    return -1;  /* no free slots */
+}
+
+void cp_unregister_wake(int reg_id) {
+    if (reg_id >= 0 && reg_id < CP_MAX_WAKE_REGS) {
+        _wake_regs[reg_id].active = 0;
+    }
+}
+
+void cp_unregister_wake_all(int ctx_id) {
+    for (int i = 0; i < CP_MAX_WAKE_REGS; i++) {
+        if (_wake_regs[i].active && _wake_regs[i].ctx_id == (uint8_t)ctx_id) {
+            _wake_regs[i].active = 0;
+        }
+    }
+}
+
+void cp_wake_check_event(uint16_t event_type, uint16_t event_data) {
+    for (int i = 0; i < CP_MAX_WAKE_REGS; i++) {
+        if (!_wake_regs[i].active) continue;
+        if (_wake_regs[i].event_type != event_type) continue;
+        if (_wake_regs[i].event_data != CP_WAKE_DATA_ANY &&
+            _wake_regs[i].event_data != event_data) continue;
+
+        /* Match — wake the context */
+        extern void cp_wake(int ctx_id);
+        cp_wake(_wake_regs[i].ctx_id);
+
+        /* One-shot: unregister after firing */
+        if (_wake_regs[i].flags & 1) {
+            _wake_regs[i].active = 0;
+        }
+    }
+}

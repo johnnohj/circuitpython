@@ -119,14 +119,43 @@ export class Semihosting {
         this.pushEvent(SH_EVT_TIMER_FIRE, ctxId & 0xFFFF, 0);
     }
 
-    /** Hardware state changed from JS. halType: gpio/neopixel/etc. */
-    submitHwChange(halType, pinOrChannel = 0) {
-        this.pushEvent(SH_EVT_HW_CHANGE, halType, pinOrChannel);
+    /** Hardware state changed from JS.
+     *  @param {number} pin — pin/channel that changed (matches wake registrations)
+     *  @param {number} [halType=0] — hal subsystem (gpio=1, neopixel=2, etc.)
+     */
+    submitHwChange(pin, halType = 0) {
+        this.pushEvent(SH_EVT_HW_CHANGE, pin, halType);
     }
 
     /** Display resize. */
     submitResize(width, height) {
         this.pushEvent(SH_EVT_RESIZE, width, height);
+    }
+
+    /* ---- Wake registrations ---- */
+
+    /** Register a wake condition: when event (type, data) arrives,
+     *  wake ctxId. Returns registration id (0-15) or -1 if full.
+     *  @param {number} ctxId
+     *  @param {number} eventType — SH_EVT_* constant
+     *  @param {number} eventData — specific data or 0xFFFF for any
+     *  @param {boolean} [oneShot=true] — auto-unregister after first match
+     */
+    registerWake(ctxId, eventType, eventData = 0xFFFF, oneShot = true) {
+        if (!this.instance) return -1;
+        return this.instance.exports.cp_register_wake(ctxId, eventType, eventData, oneShot ? 1 : 0);
+    }
+
+    /** Unregister a wake condition by id. */
+    unregisterWake(regId) {
+        if (!this.instance) return;
+        this.instance.exports.cp_unregister_wake(regId);
+    }
+
+    /** Unregister all wake conditions for a context. */
+    unregisterWakeAll(ctxId) {
+        if (!this.instance) return;
+        this.instance.exports.cp_unregister_wake_all(ctxId);
     }
 
     /* ---- State reading (JS reads C state) ---- */

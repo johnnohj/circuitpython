@@ -108,6 +108,40 @@ int cp_scheduler_pick(uint64_t now_ms);
 void cp_context_set_status(int id, uint8_t status);
 void cp_context_set_sleeping(int id, uint64_t delay_until);
 
+/* ── Wake registrations ── */
+
+/* A wake registration: when an event matching (event_type, event_data)
+ * arrives via sh_on_event, wake the associated context.
+ *
+ * event_data matching:
+ *   0xFFFF = wildcard (match any event_data for this type)
+ *   other  = exact match
+ */
+#define CP_MAX_WAKE_REGS 16
+#define CP_WAKE_DATA_ANY 0xFFFF
+
+typedef struct {
+    uint8_t  ctx_id;       /* context to wake */
+    uint8_t  active;       /* 1 = active, 0 = free slot */
+    uint16_t event_type;   /* SH_EVT_* to match */
+    uint16_t event_data;   /* specific data to match (or CP_WAKE_DATA_ANY) */
+    uint16_t flags;        /* 1 = one-shot (auto-unregister after fire) */
+} cp_wake_reg_t;
+
+/* Register a wake condition. Returns registration id (0..15) or -1 if full.
+ * one_shot: if true, registration is cleared after first match. */
+int cp_register_wake(int ctx_id, uint16_t event_type, uint16_t event_data, bool one_shot);
+
+/* Unregister a wake condition by id. */
+void cp_unregister_wake(int reg_id);
+
+/* Unregister all wake conditions for a context. */
+void cp_unregister_wake_all(int ctx_id);
+
+/* Check incoming event against all registrations. Wake matching contexts.
+ * Called by sh_on_event for every event. */
+void cp_wake_check_event(uint16_t event_type, uint16_t event_data);
+
 /* ── Exports for JS ── */
 /* These are declared here but defined with __attribute__((export_name)) in context.c */
 
