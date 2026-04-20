@@ -73,6 +73,9 @@ typedef struct {
 #define SH_EVT_PERSIST_DONE  0x30  /* data=0, arg=0                     */
 #define SH_EVT_RESIZE        0x40  /* data=width, arg=height            */
 #define SH_EVT_WAKE          0x50  /* data=ctx_id (-1=all), arg=reason  */
+#define SH_EVT_EXEC          0x60  /* data=kind (0=string,1=file), arg=len */
+#define SH_EVT_CTRL_C        0x70  /* data=0, arg=0                     */
+#define SH_EVT_CLEANUP       0x80  /* data=0, arg=0                     */
 
 /* Ring buffer layout in linear memory:
  *   [write_idx:u32] [read_idx:u32] [entries: SH_EVENT_MAX * sh_event_t]

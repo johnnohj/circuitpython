@@ -15,12 +15,15 @@ export class Readline {
      * @param {import('./fwip.js').Fwip} options.fwip
      * @param {number} options.ctxMax
      * @param {function} options.readContextMeta
+     * @param {function} [options.onExec] — called with (len) when readline
+     *        wants to execute. If not provided, falls back to cp_exec(0, len).
      */
     constructor(exports, options = {}) {
         this._exports = exports;
         this._fwip = options.fwip;
         this._ctxMax = options.ctxMax || 8;
         this._readContextMeta = options.readContextMeta;
+        this._onExec = options.onExec || null;
 
         this._inputBufAddr = exports.cp_input_buf_addr();
         this._inputBufSize = exports.cp_input_buf_size();
@@ -127,7 +130,9 @@ export class Readline {
             if (this._line === '' && this._lines) {
                 // Empty line in multi-line → execute compound statement
                 const len = this.writeInputBuf(fullInput);
-                const ret = exports.cp_exec(0, len);
+                const ret = this._onExec
+                    ? this._onExec(len)
+                    : exports.cp_exec(0, len);
                 if (ret === 0) {
                     this._waitingForResult = true;
                     if (fullInput.trim()) this._history.unshift(fullInput.trimEnd());
@@ -150,7 +155,9 @@ export class Readline {
             }
 
             // Complete expression — execute
-            const ret = exports.cp_exec(0, len);
+            const ret = this._onExec
+                    ? this._onExec(len)
+                    : exports.cp_exec(0, len);
             if (ret === 0) {
                 this._waitingForResult = true;
                 if (fullInput.trim()) this._history.unshift(fullInput.trimEnd());

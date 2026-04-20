@@ -981,6 +981,21 @@ void sh_on_event(const sh_event_t *evt) {
          * happened, but we may need to wake a context waiting on
          * this pin/device.  Future: match against WFE registrations. */
         break;
+    case SH_EVT_EXEC:
+        /* Execute code — data=kind (0=string, 1=file), arg=len.
+         * Input is already in the shared input buffer. */
+        cp_exec(evt->event_data, (int)evt->arg);
+        break;
+    case SH_EVT_CTRL_C:
+        /* Keyboard interrupt */
+        if (cp_is_runnable()) {
+            mp_sched_keyboard_interrupt();
+        }
+        break;
+    case SH_EVT_CLEANUP:
+        /* Layer 3 teardown */
+        cp_cleanup();
+        break;
     default:
         break;
     }

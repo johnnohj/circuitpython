@@ -636,6 +636,16 @@ export class CircuitPython {
             fwip: this._fwip,
             ctxMax: this._ctxMax,
             readContextMeta: (id) => this._readContextMeta(id),
+            onExec: (len) => {
+                // Route readline exec through the CircuitPython class
+                // so state tracking (_ctx0IsCode, _kick) stays in sync.
+                const r = this._exports.cp_exec(CP_EXEC_STRING, len);
+                if (r === 0) {
+                    this._ctx0IsCode = false;
+                    this._kick();
+                }
+                return r;
+            },
         });
 
         // DOM event listeners (browser only)

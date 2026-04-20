@@ -5,20 +5,19 @@
  * target.  This module provides the JS side of the shared-memory
  * communication layer.
  *
+ * The event ring is the single bus for all JS → C communication.
+ * Context managers submit events; the C supervisor drains and routes them.
+ *
  * Two mechanisms, both via WASM linear memory (no WASI fd round-trips):
  *
  *   Event injection (JS → C):
- *     pushEvent() / pushKey() write sh_event_t records into a circular
- *     buffer in WASM linear memory.  The supervisor drains them each
- *     cp_step() via sh_drain_event_ring().
+ *     pushEvent() writes sh_event_t records into a circular buffer in
+ *     WASM linear memory.  The supervisor drains them each cp_hw_step()
+ *     via sh_drain_event_ring() → sh_on_event().
  *
  *   State reading (JS → reads C state):
  *     readState() reads the sh_state_t struct that the supervisor
- *     writes at the end of each cp_step().  No WASM export call
- *     needed — just a DataView over linear memory.
- *
- * Future bidirectional FFI (Python ↔ JS object proxies) will use
- * the jsffi/proxy pattern from the MicroPython webassembly port.
+ *     writes at the end of each cp_hw_step().
  */
 
 /* ------------------------------------------------------------------ */
@@ -34,25 +33,29 @@ const SH_EVT_FETCH_DONE    = 0x11;
 const SH_EVT_HW_CHANGE     = 0x20;
 const SH_EVT_PERSIST_DONE  = 0x30;
 const SH_EVT_RESIZE        = 0x40;
+const SH_EVT_WAKE          = 0x50;
+const SH_EVT_EXEC          = 0x60;
+const SH_EVT_CTRL_C        = 0x70;
+const SH_EVT_CLEANUP       = 0x80;
 
 // Sizes
 const SH_STATE_SIZE  = 24;
 const SH_EVENT_SIZE  = 8;
 
 /* ------------------------------------------------------------------ */
-/* Semihosting handler                                                 */
+/* Semihosting class                                                   */
 /* ------------------------------------------------------------------ */
 
 export class Semihosting {
     constructor() {
-        this.instance = null;     // Set via setInstance()
+        this.instance = null;
     }
 
     setInstance(instance) {
         this.instance = instance;
     }
 
-    /* ---- Event injection (JS → Python) ---- */
+    /* ---- Low-level event injection ---- */
 
     /**
      * Write an event directly into the linear-memory event ring.
@@ -76,26 +79,62 @@ export class Semihosting {
         const entryOffset = ringAddr + 8 + (writeIdx % maxEvents) * SH_EVENT_SIZE;
         const entryView = new DataView(mem, entryOffset, SH_EVENT_SIZE);
         entryView.setUint16(0, eventType, true);
-        entryView.setUint16(2, eventData, true);
-        entryView.setUint32(4, arg, true);
+        entryView.setUint16(2, eventData & 0xFFFF, true);
+        entryView.setUint32(4, arg >>> 0, true);
 
         // Advance write_idx
         headerView.setUint32(0, writeIdx + 1, true);
     }
 
-    /**
-     * Push a keyboard event.
-     */
-    pushKey(keyCode, modifiers = 0) {
+    /* ---- Typed submit methods (context managers use these) ---- */
+
+    /** Keyboard input — single byte (ASCII or control code). */
+    submitKeyDown(keyCode, modifiers = 0) {
         this.pushEvent(SH_EVT_KEY_DOWN, keyCode, modifiers);
     }
 
-    /* ---- State reading (JS reads Python state) ---- */
+    /** Wake a suspended context. ctxId=-1 for broadcast. */
+    submitWake(ctxId = 0, reason = 0) {
+        this.pushEvent(SH_EVT_WAKE, ctxId & 0xFFFF, reason);
+    }
+
+    /** Execute code from the shared input buffer.
+     *  kind: 0=string, 1=file path. len: bytes in input buffer. */
+    submitExec(kind, len) {
+        this.pushEvent(SH_EVT_EXEC, kind, len);
+    }
+
+    /** Keyboard interrupt (Ctrl+C). */
+    submitCtrlC() {
+        this.pushEvent(SH_EVT_CTRL_C, 0, 0);
+    }
+
+    /** Layer 3 cleanup — reset pins, buses, display, GC. */
+    submitCleanup() {
+        this.pushEvent(SH_EVT_CLEANUP, 0, 0);
+    }
+
+    /** Timer fired — wake the associated context. */
+    submitTimerFire(ctxId = 0) {
+        this.pushEvent(SH_EVT_TIMER_FIRE, ctxId & 0xFFFF, 0);
+    }
+
+    /** Hardware state changed from JS. halType: gpio/neopixel/etc. */
+    submitHwChange(halType, pinOrChannel = 0) {
+        this.pushEvent(SH_EVT_HW_CHANGE, halType, pinOrChannel);
+    }
+
+    /** Display resize. */
+    submitResize(width, height) {
+        this.pushEvent(SH_EVT_RESIZE, width, height);
+    }
+
+    /* ---- State reading (JS reads C state) ---- */
 
     /**
      * Read VM state from WASM linear memory.
-     * C fills the struct each cp_step(); JS reads it directly via
-     * the exported sh_state_addr() pointer.  No WASI fd round-trip.
+     * C fills the struct each cp_hw_step(); JS reads it directly via
+     * the exported sh_state_addr() pointer.
      */
     readState() {
         if (!this.instance) return null;
@@ -115,10 +154,12 @@ export class Semihosting {
     }
 }
 
-/* ---- Exports for constants (useful for host code) ---- */
+/* ---- Exports for constants ---- */
 
 export {
-    SH_EVT_KEY_DOWN, SH_EVT_KEY_UP, SH_EVT_TIMER_FIRE,
-    SH_EVT_FETCH_DONE, SH_EVT_HW_CHANGE, SH_EVT_PERSIST_DONE,
-    SH_EVT_RESIZE,
+    SH_EVT_NONE, SH_EVT_KEY_DOWN, SH_EVT_KEY_UP,
+    SH_EVT_TIMER_FIRE, SH_EVT_FETCH_DONE,
+    SH_EVT_HW_CHANGE, SH_EVT_PERSIST_DONE,
+    SH_EVT_RESIZE, SH_EVT_WAKE,
+    SH_EVT_EXEC, SH_EVT_CTRL_C, SH_EVT_CLEANUP,
 };
