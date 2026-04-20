@@ -705,9 +705,9 @@ export class CircuitPython {
             if (!this._exports) return;
             this._waitingForKey = false;
             this._codeDoneFired = false;
-            // Soft-reboot (stops ctx0, prints "soft reboot"), then re-run
-            // the lifecycle — JS owns both halves now.
-            this._exports.cp_soft_reboot();
+            // Clean up Layer 3 (no "soft reboot" message — auto-reload
+            // is silent), then re-run the lifecycle.
+            this._exports.cp_cleanup();
             if (this._readline) {
                 this._readline._waitingForResult = true;
             }
@@ -721,6 +721,8 @@ export class CircuitPython {
      *  and show the prompt.  One "\r\n" separates the banner from the prompt. */
     _enterRepl() {
         this._waitingForKey = false;
+        // Reset display/pins/buses so REPL starts on a clean terminal
+        this._exports.cp_cleanup?.();
         this._handleStdout('\r\n');
         this._readline._waitingForResult = false;
         this._readline.showPrompt();

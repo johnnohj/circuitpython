@@ -228,7 +228,7 @@ test('auto-reload: writing code.py triggers reload', async () => {
     await new Promise(r => setTimeout(r, 700));
     await waitFrames(board, 60);
 
-    assertContains(output, 'soft reboot');
+    // Auto-reload uses cp_cleanup (silent) — check that new code ran
     assertContains(output, 'v2');
     board.destroy();
 });
@@ -236,10 +236,11 @@ test('auto-reload: writing code.py triggers reload', async () => {
 test('auto-reload: debounce coalesces rapid writes', async () => {
     const { board, stdout } = await createLiveBoard('print("v1")');
     let output = stdout;
-    let rebootCount = 0;
+    let reloadCount = 0;
     board._onStdout = (text) => {
         output += text;
-        rebootCount += (text.match(/soft reboot/g) || []).length;
+        // Count "code.py output:" lines as proxy for reload count
+        reloadCount += (text.match(/code\.py output:/g) || []).length;
     };
 
     // Rapid-fire writes — should coalesce into one reload
@@ -251,8 +252,8 @@ test('auto-reload: debounce coalesces rapid writes', async () => {
     await new Promise(r => setTimeout(r, 700));
     await waitFrames(board, 60);
 
-    // Should only have one soft reboot from the coalesced writes
-    if (rebootCount !== 1) throw new Error(`Expected 1 soft reboot, got ${rebootCount}`);
+    // Should only have one reload from the coalesced writes
+    if (reloadCount !== 1) throw new Error(`Expected 1 reload, got ${reloadCount}`);
     // Should see the last version
     assertContains(output, 'c');
     board.destroy();

@@ -334,8 +334,9 @@ async function init() {
             appendText(text);
         },
         onCodeDone: () => {
-            // code.py finished — cleanup Layer 3, return to ready
-            board._exports.cp_cleanup();
+            // code.py finished — board is now in "waiting for key" state.
+            // Don't cleanup here — let the user see "Code done running"
+            // and choose Run/REPL/Stop.
             setMode('ready');
         },
     });
@@ -378,19 +379,14 @@ function appendText(text) {
 
 // ── Actions ──
 
-// Layer 3 cleanup: tear down user session (pins, buses, display, GC),
-// clear serial output. Layer 2 (VM, pystack, HAL) stays intact.
-function cleanup() {
-    board._exports.cp_cleanup();
-    $textOutput.textContent = '';
-}
-
-// Run: cleanup → write editor to code.py → start execution
+// Run: write editor to code.py → auto-reload triggers runBoardLifecycle.
+// The writeFile auto-triggers _scheduleAutoReload (500ms debounce) which
+// does cp_soft_reboot + runBoardLifecycle — the same path a real board uses.
 document.getElementById('btn-run').addEventListener('click', startEditor);
 
 function startEditor() {
     if (!board) return;
-    cleanup();
+    $textOutput.textContent = '';
     const code = $editor.value;
     const enc = new TextEncoder();
     board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode(code));
@@ -398,26 +394,38 @@ function startEditor() {
     setView('display');
 }
 
-// REPL: cleanup → enter REPL (display shows terminal)
+// REPL: stop code if running, enter REPL (display shows terminal).
+// If code just finished (waiting for key), _enterRepl handles it.
+// If code is still running, ctrlC stops it, then we enter REPL.
 document.getElementById('btn-repl').addEventListener('click', startRepl);
 
 function startRepl() {
     if (!board) return;
-    cleanup();
-    board._enterRepl();
+    if (board.state === 'running') {
+        board.ctrlC();
+    }
+    // _enterRepl handles the waiting-for-key → REPL transition,
+    // including resetting the display via cp_cleanup internally
+    if (board.state === 'waiting') {
+        board._enterRepl();
+    } else {
+        // Already in REPL or just stopped — enter directly
+        board._exports.cp_cleanup();
+        board._enterRepl();
+    }
     setMode('repl');
     setView('display');
     $displayWrap.focus();
 }
 
-// Stop: cleanup → idle (user picks next action)
+// Stop: interrupt running code, return to ready state.
 document.getElementById('btn-stop').addEventListener('click', stopAndReset);
 
 function stopAndReset() {
     if (!board) return;
-    cleanup();
+    board.ctrlC();
+    $textOutput.textContent = '';
     setMode('ready');
-    setView('display');
 }
 
 // Ctrl+S to run from editor
