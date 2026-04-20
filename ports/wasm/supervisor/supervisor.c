@@ -869,6 +869,44 @@ void cp_cleanup(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* cp_wake — resume from SUSPENDED state.                              */
+/*                                                                     */
+/* Called by JS when a wake event occurs (Promise resolved, timer      */
+/* fired, I/O data arrived).  Transitions SLEEPING contexts to         */
+/* RUNNABLE so the next cp_step() picks them up.                       */
+/*                                                                     */
+/* Accepts a context id:                                               */
+/*   ≥ 0  — wake specific context                                     */
+/*   -1   — wake ALL sleeping contexts (broadcast wake)               */
+/*                                                                     */
+/* No-op if the target context isn't SLEEPING.                         */
+/*                                                                     */
+/* JS should call _kick() after cp_wake to schedule an immediate       */
+/* cp_step if the loop is idle.                                        */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("cp_wake")))
+void cp_wake(int ctx_id) {
+    if (ctx_id >= 0 && ctx_id < CP_MAX_CONTEXTS) {
+        /* Wake specific context */
+        if (cp_context_get_status(ctx_id) == CTX_SLEEPING) {
+            cp_context_set_delay(ctx_id, 0);  /* clear sleep deadline */
+            cp_context_set_status(ctx_id, CTX_RUNNABLE);
+            SUP_DEBUG("cp_wake → ctx%d RUNNABLE", ctx_id);
+        }
+    } else if (ctx_id == -1) {
+        /* Broadcast wake — all sleeping contexts */
+        for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
+            if (cp_context_get_status(i) == CTX_SLEEPING) {
+                cp_context_set_delay(i, 0);
+                cp_context_set_status(i, CTX_RUNNABLE);
+            }
+        }
+        SUP_DEBUG("cp_wake → broadcast, all sleeping → RUNNABLE");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* cp_soft_reboot — backward compat wrapper around cp_cleanup.         */
 /* ------------------------------------------------------------------ */
 
@@ -923,13 +961,26 @@ void sh_on_event(const sh_event_t *evt) {
     case SH_EVT_KEY_DOWN: {
         uint8_t c = (uint8_t)evt->event_data;
         if (c == 3) {
-            /* Ctrl-C: schedule interrupt immediately rather than
-             * waiting for background_tasks to scan the buffer. */
             mp_sched_keyboard_interrupt();
         }
         serial_push_byte(c);
         break;
     }
+    case SH_EVT_TIMER_FIRE:
+        /* Timer expired — wake the context that set it.
+         * data = ctx_id (or -1 for broadcast). */
+        cp_wake((int16_t)evt->event_data);
+        break;
+    case SH_EVT_WAKE:
+        /* Generic wake — JS resolved a Promise or I/O completed.
+         * data = ctx_id (or -1 for broadcast). */
+        cp_wake((int16_t)evt->event_data);
+        break;
+    case SH_EVT_HW_CHANGE:
+        /* Hardware state changed from JS — the MEMFS write already
+         * happened, but we may need to wake a context waiting on
+         * this pin/device.  Future: match against WFE registrations. */
+        break;
     default:
         break;
     }

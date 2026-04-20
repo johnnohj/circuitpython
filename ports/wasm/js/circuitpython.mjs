@@ -133,6 +133,14 @@ export class CircuitPython {
         return r;
     }
 
+    /** Wake a suspended context. Call after a Promise resolves (timer,
+     *  I/O, user event) to resume execution.
+     *  @param {number} [ctxId=0] — context to wake (-1 = all) */
+    wake(ctxId = 0) {
+        this._exports.cp_wake(ctxId);
+        this._kick();
+    }
+
     /** Stop execution + reset to READY state.
      *  Interrupts running code, kills background contexts, resets
      *  hardware (pins, buses, display). After this, state === 'ready'. */

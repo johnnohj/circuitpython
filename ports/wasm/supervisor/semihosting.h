@@ -72,6 +72,7 @@ typedef struct {
 #define SH_EVT_HW_CHANGE     0x20  /* data=hal_type, arg=pin/channel    */
 #define SH_EVT_PERSIST_DONE  0x30  /* data=0, arg=0                     */
 #define SH_EVT_RESIZE        0x40  /* data=width, arg=height            */
+#define SH_EVT_WAKE          0x50  /* data=ctx_id (-1=all), arg=reason  */
 
 /* Ring buffer layout in linear memory:
  *   [write_idx:u32] [read_idx:u32] [entries: SH_EVENT_MAX * sh_event_t]
