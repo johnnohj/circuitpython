@@ -91,6 +91,14 @@ export class HardwareModule {
      * @returns {Uint8Array|null}
      */
     onRead(path, offset) { return null; }
+
+    /**
+     * Reset hardware state to initial (Layer 3 teardown).
+     * Called by stop() between execution sessions.
+     * Subclasses should clear their MEMFS endpoints and internal state.
+     * @param {WasiMemfs} memfs
+     */
+    reset(memfs) {}
 }
 
 /**
@@ -134,6 +142,13 @@ export class GpioModule extends HardwareModule {
         const buf = new Uint8Array(data);
         buf[pin * GPIO_SLOT + 2] = value ? 1 : 0;
         memfs.updateHardwareState('/hal/gpio', buf);
+    }
+
+    reset(memfs) {
+        // Zero all GPIO state — all pins unclaimed
+        const data = memfs.readFile('/hal/gpio');
+        if (data) data.fill(0);
+        this._pins.fill(null);
     }
 
     postStep(memfs, nowMs) {
@@ -204,6 +219,12 @@ export class NeoPixelModule extends HardwareModule {
 
     /** Get all strips. */
     get strips() { return this._strips; }
+
+    reset(memfs) {
+        const data = memfs.readFile('/hal/neopixel');
+        if (data) data.fill(0);
+        this._strips.clear();
+    }
 
     postStep(memfs, nowMs) {
         const data = memfs.readFile('/hal/neopixel');
@@ -340,6 +361,12 @@ export class AnalogModule extends HardwareModule {
         memfs.updateHardwareState('/hal/analog', buf);
     }
 
+    reset(memfs) {
+        const data = memfs.readFile('/hal/analog');
+        if (data) data.fill(0);
+        this._pins.fill(null);
+    }
+
     postStep(memfs, nowMs) {
         const data = memfs.readFile('/hal/analog');
         if (!data) return;
@@ -407,6 +434,12 @@ export class PwmModule extends HardwareModule {
     getBrightness(pin) {
         const s = this._pins[pin];
         return s ? s.brightness : 0;
+    }
+
+    reset(memfs) {
+        const data = memfs.readFile('/hal/pwm');
+        if (data) data.fill(0);
+        this._pins.fill(null);
     }
 
     postStep(memfs, nowMs) {
@@ -521,6 +554,16 @@ export class I2cModule extends HardwareModule {
 
     get name() { return 'i2c'; }
     get paths() { return ['/hal/i2c']; }
+
+    reset(memfs) {
+        // Reset all device register files and device state
+        for (const [addr, dev] of this._devices) {
+            const path = `/hal/i2c/dev/${addr}`;
+            const data = memfs.readFile(path);
+            if (data) data.fill(0);
+            if (dev.reset) dev.reset();
+        }
+    }
 
     /**
      * Register a virtual I2C device at an address.

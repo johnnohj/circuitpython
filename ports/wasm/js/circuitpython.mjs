@@ -97,7 +97,8 @@ export class CircuitPython {
         this._ctxCallbacks = new Map();  // context id → onDone callback
         this._autoReloadTimer = null;
         this._autoReloadEnabled = false;
-        // (ex-_prevSupState — boot-transition detection removed in Stage 3)
+        this._prevState = 0;     // for cp_state() transition detection
+        this._ctx0IsCode = false; // true when ctx0 is running a file (vs expr)
         this._idb = null;        // saved for _printCodePyLastEdited
         this._target = null;     // external hardware target
         this._pollCounter = 0;   // input polling throttle
@@ -112,6 +113,7 @@ export class CircuitPython {
         if (this._waitingForKey) this._enterRepl();
         const len = this._readline.writeInputBuf(code);
         this._exports.cp_exec(CP_EXEC_STRING, len);
+        this._ctx0IsCode = false;
         this._readline._waitingForResult = true;
         this._kick();
     }
@@ -122,8 +124,10 @@ export class CircuitPython {
     execFile(path) {
         const len = this._writeInputBuf(path);
         const r = this._exports.cp_exec(CP_EXEC_FILE, len);
-        if (r === 0 && this._readline) {
-            this._readline._waitingForResult = true;
+        if (r === 0) {
+            this._ctx0IsCode = true;
+            this._codeDoneFired = false;
+            if (this._readline) this._readline._waitingForResult = true;
         }
         this._kick();
         return r;
@@ -136,7 +140,7 @@ export class CircuitPython {
         this.ctrlC();
         this._exports.cp_cleanup?.();
         // Reset JS-side hardware modules
-        for (const mod of this._hw._modules.values()) {
+        for (const mod of this._hw._modules) {
             if (mod.reset) mod.reset(this._wasi);
         }
         this._waitingForKey = false;
@@ -790,6 +794,7 @@ export class CircuitPython {
         // Pre-step: let hardware modules inject fresh data
         this._hw.preStep(this._wasi, nowMs);
 
+        // VM + VH step (cp_step calls cp_hw_step internally)
         this._exports.cp_step(nowMs);
 
         // Post-step: let hardware modules read output state
@@ -798,39 +803,37 @@ export class CircuitPython {
         // Forward state to external hardware target (if connected)
         if (this._target && this._target.connected) {
             this._target.applyState(this._wasi, nowMs);
-            // Poll inputs at reduced rate (~3 times/second)
             if (++this._pollCounter >= 20) {
                 this._pollCounter = 0;
                 this._target.pollInputs();
             }
         }
 
+        // Display rendering
         if (this._display) {
             this._display.paint();
-            // Only show cursor when in REPL or waiting for key, not during code.py
-            if (!this._exports.cp_is_runnable()) {
-                this._display.drawCursor();
-            }
         }
 
         this._frameCount++;
 
-        // Code-done UX is driven by runBoardLifecycle now (it awaits ctx0
-        // idle after code.py and fires "Code done running." / "Press any key"
-        // itself).  _loop no longer consumes cp_ctx0_completed_code — the
-        // orchestrator knows which file was code.py and which was boot.py.
+        // State transition detection via cp_state()
+        const st = this._exports.cp_state();
 
-        // When a REPL expression (or any ctx0 run) finishes and nothing else
-        // is runnable, show the prompt.  cp_needs_input() encapsulates the
-        // right condition: no runnable context + ctx0 idle/done/free.
-        if (!this._waitingForKey && this._readline.waitingForResult
-            && this._exports.cp_needs_input()) {
-            this._readline.onResult();
+        // EXECUTING/SUSPENDED → READY: execution just finished
+        if (this._prevState > 0 && st === 0) {
+            // Show prompt if readline is waiting for a result
+            if (this._readline?.waitingForResult) {
+                this._readline.onResult();
+            }
+            // Fire onCodeDone callback (if registered and this was a code run)
+            if (this._onCodeDone && !this._codeDoneFired && this._ctx0IsCode) {
+                this._codeDoneFired = true;
+                this._onCodeDone();
+            }
         }
+        this._prevState = st;
 
-        // Background context lifecycle: detect done contexts, fire callbacks, auto-cleanup.
-        // cp_context_destroy requires the target not be the active context,
-        // so save/restore around it if needed.
+        // Background context lifecycle: detect done contexts, fire callbacks
         for (let i = 1; i < this._ctxMax; i++) {
             const m = this._readContextMeta(i);
             if (!m || m.status !== 6) continue;  // only DONE contexts
@@ -841,7 +844,6 @@ export class CircuitPython {
                 cb(i, null);
             }
 
-            // Ensure we're not destroying the active context
             const active = this._exports.cp_context_active();
             if (active === i) {
                 this._exports.cp_context_save(i);
@@ -852,30 +854,8 @@ export class CircuitPython {
 
         // Status bar update (every ~1 second)
         if (this._statusEl && this._frameCount % 60 === 0) {
-            const state = this._sh.readState();
-            let activeCtxs = 0;
-            for (let i = 0; i < this._ctxMax; i++) {
-                const m = this._readContextMeta(i);
-                if (m && m.status > 0) activeCtxs++;
-            }
-            if (state) {
-                const yr = YIELD_REASONS[state.yieldReason] || '?';
-                const ctx0 = this._readContextMeta(0);
-                const ctxSt = ctx0 ? CTX_STATUSES[ctx0.status] || '?' : '?';
-                // Status derived purely from predicates — no raw SUP_* polling.
-                let sup;
-                if (this._waitingForKey) {
-                    sup = 'WAIT';
-                } else if (this._exports.cp_is_runnable()) {
-                    sup = 'RUN';
-                } else {
-                    sup = this._exports.cp_needs_input() ? 'REPL' : 'IDLE';
-                }
-                this._statusEl.textContent =
-                    `${sup} | ctx0:${ctxSt} | ctxs:${activeCtxs} | yield:${yr} | pystack:${state.vmDepth}B`;
-            } else {
-                this._statusEl.textContent = `Running (frame ${this._frameCount})`;
-            }
+            const STATE_NAMES = ['READY', 'EXEC', 'SUSPEND'];
+            this._statusEl.textContent = `${STATE_NAMES[st] || '?'} | frame:${this._frameCount}`;
         }
 
         this._scheduleNext(nowMs);
