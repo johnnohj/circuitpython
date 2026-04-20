@@ -216,6 +216,9 @@ let board   = null;
 let adapter = null;
 let mode    = 'loading';   // loading | ready | code | repl
 
+// Expose for DevTools debugging
+window._cp = { get board() { return board; }, get adapter() { return adapter; } };
+
 // ── Init ──
 async function init() {
     adapter = await loadBoardAdapter(

@@ -79,7 +79,12 @@ export class VMContext extends ContextManager {
         const st = exports.cp_state();
 
         if (this._prevState > 0 && st === CP_STATE_READY) {
-            // Execution just finished — notify hardware to do one more sync
+            // Execution just finished — force display refresh so terminal
+            // output from the final VM step is visible immediately.
+            // Without this, the auto-refresh rate limit (16ms) may skip
+            // the refresh on the same frame the VM wrote output.
+            exports.cp_display_refresh?.();
+            // Notify hardware to do one more sync
             if (this._board._hwCtx) this._board._hwCtx._pendingSync = true;
             // Show prompt if readline is waiting for a result
             if (this._board._readline?.waitingForResult) {

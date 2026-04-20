@@ -127,7 +127,7 @@ export class Readline {
             if (this._line === '' && this._lines) {
                 // Empty line in multi-line → execute compound statement
                 const len = this.writeInputBuf(fullInput);
-                const ret = exports.cp_exec(len);
+                const ret = exports.cp_exec(0, len);
                 if (ret === 0) {
                     this._waitingForResult = true;
                     if (fullInput.trim()) this._history.unshift(fullInput.trimEnd());
@@ -150,7 +150,7 @@ export class Readline {
             }
 
             // Complete expression — execute
-            const ret = exports.cp_exec(len);
+            const ret = exports.cp_exec(0, len);
             if (ret === 0) {
                 this._waitingForResult = true;
                 if (fullInput.trim()) this._history.unshift(fullInput.trimEnd());

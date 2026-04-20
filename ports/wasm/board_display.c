@@ -48,9 +48,11 @@ void board_display_init(void) {
         &supervisor_terminal_scroll_area_text_grid, 0, 0);
 }
 
+__attribute__((export_name("cp_display_refresh")))
 void board_display_refresh(void) {
-    // Force a manual refresh of the primary display.
-    // Called after terminal writes to ensure the framebuffer is updated.
+    // Force a manual refresh of the primary display, bypassing the
+    // native_ms_per_frame rate limit. Called after terminal writes
+    // to ensure the framebuffer is updated immediately.
     mp_obj_t primary = common_hal_displayio_get_primary_display();
     if (primary != mp_const_none) {
         framebufferio_framebufferdisplay_obj_t *display =
