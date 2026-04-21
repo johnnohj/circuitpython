@@ -102,5 +102,61 @@ void sh_export_state(uint32_t sup_state, uint32_t yield_reason,
     _export_buf.yield_arg    = yield_arg;
     _export_buf.frame_count  = frame_count;
     _export_buf.vm_depth     = vm_depth;
-    _export_buf.pending_call = 0;
+    /* bg_pending is managed by sh_set/clear_bg_pending — don't overwrite */
+    /* Trace fields are updated separately by sh_update_trace() */
+}
+
+void sh_update_trace(uint32_t line, uint32_t source_file, uint32_t call_depth) {
+    _export_buf.current_line = line;
+    _export_buf.source_file  = source_file;
+    _export_buf.call_depth   = call_depth;
+}
+
+void sh_set_frame_result(uint32_t result) {
+    _export_buf.frame_result = result;
+}
+
+void sh_set_bg_pending(void) {
+    _export_buf.bg_pending = 1;
+}
+
+void sh_clear_bg_pending(void) {
+    _export_buf.bg_pending = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Trace ring (C → JS) — lightweight coordination events               */
+/*                                                                     */
+/* C appends trace events (LINE, CALL, RETURN, EXCEPTION).            */
+/* JS reads via sh_trace_ring_addr().  Non-blocking; drops if full.    */
+/* ------------------------------------------------------------------ */
+
+static struct {
+    uint32_t write_idx;
+    uint32_t read_idx;
+    sh_trace_t entries[SH_TRACE_MAX];
+} _trace_ring;
+
+__attribute__((export_name("sh_trace_ring_addr")))
+uintptr_t sh_trace_ring_addr(void) {
+    return (uintptr_t)&_trace_ring;
+}
+
+__attribute__((export_name("sh_trace_ring_max")))
+uint32_t sh_trace_ring_max(void) {
+    return SH_TRACE_MAX;
+}
+
+void sh_trace_emit(uint16_t trace_type, uint16_t data, uint32_t arg) {
+    /* Drop if ring is full (JS hasn't drained yet) */
+    uint32_t next = _trace_ring.write_idx + 1;
+    if ((next - _trace_ring.read_idx) > SH_TRACE_MAX) {
+        return;  /* Ring full — drop event */
+    }
+
+    uint32_t idx = _trace_ring.write_idx % SH_TRACE_MAX;
+    _trace_ring.entries[idx].trace_type = trace_type;
+    _trace_ring.entries[idx].data = data;
+    _trace_ring.entries[idx].arg = arg;
+    _trace_ring.write_idx = next;
 }

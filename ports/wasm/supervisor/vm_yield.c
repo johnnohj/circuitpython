@@ -28,6 +28,7 @@
 #include "py/bc.h"
 #include "py/compile.h"
 #include "py/runtime.h"
+#include "py/objfun.h"
 #include "py/gc.h"
 #include "py/mphal.h"
 #include "py/objexcept.h"
@@ -35,6 +36,7 @@
 
 #include "mpthreadport.h"
 #include "supervisor/context.h"
+#include "supervisor/semihosting.h"
 
 /* ------------------------------------------------------------------ */
 /* Suspend sentinel                                                    */
@@ -139,11 +141,42 @@ extern bool wasm_cli_mode;
 /* JS time source — written by cp_step() each frame. */
 extern volatile uint64_t wasm_js_now_ms;
 
-void wasm_vm_hook_loop(void) {
+void wasm_vm_hook_loop(const void *code_state_ptr) {
+    const mp_code_state_t *code_state = (const mp_code_state_t *)code_state_ptr;
+
     /* 1. Run port background tasks (Ctrl-C check) */
     wasm_background_tasks();
 
-    /* 2. Check wall-clock budget (skip in CLI mode and atomic sections).
+    /* 2. Extract current line number for JS coordination.
+     *    This runs at every backwards branch — cheap enough to always do.
+     *    JS reads the result from sh_state via linear memory. */
+    if (code_state && code_state->fun_bc) {
+        /* Extract line number — same technique as vm.c exception handler */
+        const byte *ip = code_state->fun_bc->bytecode;
+        MP_BC_PRELUDE_SIG_DECODE(ip);
+        MP_BC_PRELUDE_SIZE_DECODE(ip);
+        const byte *line_info_top = ip + n_info;
+        const byte *bytecode_start = ip + n_info + n_cell;
+        size_t bc = code_state->ip - bytecode_start;
+
+        /* Skip simple_name + arg names (1 + n_pos_args + n_kwonly_args qstrs) */
+        for (size_t i = 0; i < 1 + n_pos_args + n_kwonly_args; ++i) {
+            ip = mp_decode_uint_skip(ip);
+        }
+        /* ip now points to line number info */
+        size_t source_line = mp_bytecode_get_source_line(ip, line_info_top, bc);
+
+        /* Get source file qstr */
+        uint32_t source_file = 0;
+        #if MICROPY_EMIT_BYTECODE_USES_QSTR_TABLE
+        source_file = (uint32_t)code_state->fun_bc->context->constants.qstr_table[0];
+        #endif
+
+        /* Update semihosting state — JS reads this each frame */
+        sh_update_trace((uint32_t)source_line, source_file, 0);
+    }
+
+    /* 3. Check wall-clock budget (skip in CLI mode and atomic sections).
      *    CLI mode uses blocking I/O — no frame budget, no yield.
      *    Browser mode yields when the frame budget is exhausted. */
     if (!wasm_cli_mode && !_yield_requested && !mp_thread_in_atomic_section()) {

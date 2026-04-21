@@ -14,6 +14,7 @@
 #include "py/mpconfig.h"
 #include "supervisor/background_callback.h"
 #include "supervisor/port.h"
+#include "supervisor/semihosting.h"
 
 #include "mpthreadport.h"
 
@@ -31,8 +32,12 @@
 static volatile background_callback_t *volatile callback_head;
 static volatile background_callback_t *volatile callback_tail;
 
-/* No-op on WASM — single-threaded, no sleeping main task to wake. */
+/* On real hardware, this unblocks the main RTOS task so it runs
+ * background callbacks immediately.  On WASM, JS is the main task —
+ * we set a flag in semihosting state so JS knows to call cp_hw_step()
+ * even when the VM is idle. */
 void port_wake_main_task(void) {
+    sh_set_bg_pending();
 }
 
 void background_callback_add_core(background_callback_t *cb) {

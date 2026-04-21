@@ -90,22 +90,13 @@ extern void *mp_vm_yield_state;
 /* Supervisor state (declared early for supervisor_execution_status)    */
 /* ------------------------------------------------------------------ */
 
-/* Supervisor states — exposed to JS via sh_export_state.
- * These map to context statuses but provide the legacy numbering
- * that test_browser.html expects in the status bar. */
-#define SUP_UNINITIALIZED    0
-#define SUP_REPL             1
-#define SUP_EXPR_RUNNING     2
-#define SUP_CODE_RUNNING     3  /* ctx0 is running a file (boot.py, code.py, or any) */
-#define SUP_CODE_FINISHED    4
-/* 5 (formerly SUP_WAITING_FOR_KEY) intentionally skipped — UX lives in JS.
- * 6 (formerly SUP_BOOT_RUNNING) intentionally skipped — C no longer
- *   distinguishes boot.py from code.py; JS knows which file it dispatched. */
+#include "supervisor/supervisor_internal.h"
 
-static int _state = SUP_UNINITIALIZED;
-static bool _ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
-static bool _code_header_printed = false;  /* deferred so JS can inject "last edited" */
-static uint32_t _frame_count = 0;
+/* Supervisor state — shared with port.c via supervisor_internal.h. */
+int sup_state = SUP_UNINITIALIZED;
+bool sup_ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
+bool sup_code_header_printed = false;  /* deferred so JS can inject "last edited" */
+uint32_t sup_frame_count = 0;
 
 /* Forward declarations for primitives used by cp_ctrl_c, etc. */
 int cp_is_runnable(void);
@@ -125,7 +116,7 @@ bool wasm_cli_mode = false;
 #include "supervisor/shared/serial.h"
 
 void supervisor_execution_status(void) {
-    switch (_state) {
+    switch (sup_state) {
         case SUP_REPL:
             serial_write("REPL");
             break;
@@ -162,11 +153,9 @@ void supervisor_execution_status(void) {
 /* Gated by a runtime flag so settings.toml or boot.py can silence it. */
 /* ------------------------------------------------------------------ */
 
-static bool _debug_enabled = true;  /* default on; JS or boot.py can turn off */
+bool sup_debug_enabled = true;  /* default on; JS or boot.py can turn off */
 
-#define SUP_DEBUG(fmt, ...) do { \
-    if (_debug_enabled) fprintf(stderr, "[sup] " fmt "\n", ##__VA_ARGS__); \
-} while (0)
+/* SUP_DEBUG macro defined in supervisor_internal.h */
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle messages — printed to stdout (serial/displayio terminal)   */
@@ -174,12 +163,12 @@ static bool _debug_enabled = true;  /* default on; JS or boot.py can turn off */
 /* These match real CircuitPython board messages where applicable.      */
 /* ------------------------------------------------------------------ */
 
-static void _print_banner(void) {
+void sup_print_banner(void) {
     mp_printf(&mp_plat_print, "%s running on wasm-browser\n",
               MICROPY_BANNER_NAME_AND_VERSION);
 }
 
-static void _print_soft_reboot(void) {
+void sup_print_soft_reboot(void) {
     mp_hal_stdout_tx_str("\r\nsoft reboot\r\n");
 }
 
@@ -200,8 +189,8 @@ static char heap[WASM_GC_HEAP_SIZE];
 
 /* Shared input buffer — JS writes source text here before calling
  * cp_exec() or cp_continue().  Exported via cp_input_buf_addr(). */
-#define INPUT_BUF_SIZE 4096
-static char _input_buf[INPUT_BUF_SIZE];
+/* SUP_INPUT_BUF_SIZE defined in supervisor_internal.h */
+char sup_input_buf[SUP_INPUT_BUF_SIZE];
 
 /* ------------------------------------------------------------------ */
 /* Background tasks — called from MICROPY_VM_HOOK_LOOP (vm_yield.c)    */
@@ -330,7 +319,7 @@ int main(int argc, char **argv) {
         pyexec_file_if_exists("/boot.py", &result);
     }
 
-    _state = SUP_REPL;
+    sup_state = SUP_REPL;
 
     SUP_DEBUG("CircuitPython WASM (heap=%dK)", WASM_GC_HEAP_SIZE / 1024);
 
@@ -367,7 +356,7 @@ int main(int argc, char **argv) {
 
 __attribute__((export_name("cp_init")))
 int cp_init(void) {
-    if (_state != SUP_UNINITIALIZED) return 0;
+    if (sup_state != SUP_UNINITIALIZED) return 0;
 
     _core_init();    /* Layer 2a: VM (mp_init, GC, pystack, HAL fds) */
     cp_hw_init();    /* Layer 2b: VH (display, terminal) */
@@ -376,9 +365,9 @@ int cp_init(void) {
     vm_yield_set_budget(WASM_FRAME_BUDGET_MS);
     #endif
 
-    _state = SUP_REPL;
-    _ctx0_is_code = false;
-    _code_header_printed = false;
+    sup_state = SUP_REPL;
+    sup_ctx0_is_code = false;
+    sup_code_header_printed = false;
     cp_context_set_status(0, CTX_IDLE);
 
     SUP_DEBUG("cp_init complete (heap=%dK budget=%dms) — awaiting JS orchestration",
@@ -419,13 +408,18 @@ extern void hal_export_dirty(void);
 __attribute__((export_name("cp_hw_step")))
 void cp_hw_step(uint32_t now_ms) {
     wasm_js_now_ms = (uint64_t)now_ms;
-    _frame_count++;
+    sup_frame_count++;
 
     /* HAL step — drive simulated hardware (poll /hal/ endpoints) */
     hal_step();
 
     /* Tick catchup + background callbacks */
     RUN_BACKGROUND_TASKS;
+
+    /* Background work drained — clear the pending flag.
+     * port_wake_main_task() sets this when new callbacks are registered;
+     * JS reads it to know whether to schedule cp_hw_step() while idle. */
+    sh_clear_bg_pending();
 
     /* HAL export — flush hw_state changes to /hal/ endpoints */
     hal_export_dirty();
@@ -440,7 +434,7 @@ void cp_hw_step(uint32_t now_ms) {
         #if MICROPY_ENABLE_PYSTACK
         depth = (uint32_t)mp_pystack_usage();
         #endif
-        sh_export_state((uint32_t)_state, yr, ya, _frame_count, depth);
+        sh_export_state((uint32_t)sup_state, yr, ya, sup_frame_count, depth);
     }
 
     /* Update cursor info for JS-side rendering */
@@ -462,7 +456,7 @@ void cp_hw_step(uint32_t now_ms) {
 
 __attribute__((export_name("cp_step")))
 int cp_step(uint32_t now_ms) {
-    if (_state == SUP_UNINITIALIZED) {
+    if (sup_state == SUP_UNINITIALIZED) {
         cp_init();
     }
 
@@ -506,18 +500,166 @@ int cp_step(uint32_t now_ms) {
             }
         }
 
-        /* Update legacy _state from context 0. */
+        /* Update legacy sup_state from context 0. */
         uint8_t ctx0 = cp_context_get_status(0);
         if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
-            _state = SUP_REPL;
-            _ctx0_is_code = false;
+            sup_state = SUP_REPL;
+            sup_ctx0_is_code = false;
         } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
-            _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+            sup_state = sup_ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
         }
     }
     #endif
 
-    return (int)_state;
+    return (int)sup_state;
+}
+
+/* ------------------------------------------------------------------ */
+/* wasm_frame — One frame of the WASM process.                         */
+/*                                                                     */
+/* The single entry point for JS. Internally does:                     */
+/*   1. Port check  — drain events, update VH, run background callbacks */
+/*   2. Supervisor   — pick context, check deadlines                    */
+/*   3. VM burst     — execute bytecode within remaining budget         */
+/*   4. Export       — write state, trace info to linear memory         */
+/*                                                                     */
+/* Returns a packed uint32_t with per-layer results:                   */
+/*   bits  0-7:  port result   (WASM_PORT_*)                           */
+/*   bits  8-15: supervisor    (WASM_SUP_*)                             */
+/*   bits 16-23: VM result     (WASM_VM_*)                              */
+/*                                                                     */
+/* JS unpacks to make nuanced scheduling decisions combining C results */
+/* with JS-local state (tab visibility, user settings, display).       */
+/* ------------------------------------------------------------------ */
+
+/* Port layer */
+#define WASM_PORT_QUIET         0  /* no events, no bg work */
+#define WASM_PORT_EVENTS        1  /* drained events from ring */
+#define WASM_PORT_BG_PENDING    2  /* background work still pending */
+#define WASM_PORT_HW_CHANGED    3  /* hardware state changed */
+
+/* Supervisor layer */
+#define WASM_SUP_IDLE           0  /* no contexts to run */
+#define WASM_SUP_SCHEDULED      1  /* picked and ran a context */
+#define WASM_SUP_CTX_DONE       2  /* a context completed this frame */
+#define WASM_SUP_ALL_SLEEPING   3  /* all contexts sleeping */
+
+/* VM layer */
+#define WASM_VM_NOT_RUN         0  /* supervisor didn't run VM */
+#define WASM_VM_YIELDED         1  /* budget expired, more to do */
+#define WASM_VM_SLEEPING        2  /* time.sleep, waiting for deadline */
+#define WASM_VM_COMPLETED       3  /* code finished normally */
+#define WASM_VM_EXCEPTION       4  /* unhandled exception */
+#define WASM_VM_SUSPENDED       5  /* waiting for I/O / external event */
+
+#define WASM_FRAME_RESULT(port, sup, vm) \
+    ((port) | ((sup) << 8) | ((vm) << 16))
+
+extern bool background_callback_pending(void);
+
+__attribute__((export_name("wasm_frame")))
+uint32_t wasm_frame(uint32_t now_ms, uint32_t budget_ms) {
+    if (sup_state == SUP_UNINITIALIZED) {
+        cp_init();
+    }
+
+    uint8_t port_result = WASM_PORT_QUIET;
+    uint8_t sup_result  = WASM_SUP_IDLE;
+    uint8_t vm_result   = WASM_VM_NOT_RUN;
+
+    /* ── 1. Port check ── */
+    cp_hw_step(now_ms);
+
+    /* Detect if events were processed or hardware changed */
+    /* (bg_pending set by port_wake_main_task during callback drain) */
+    if (background_callback_pending()) {
+        port_result = WASM_PORT_BG_PENDING;
+    }
+
+    /* ── 2. Supervisor: pick context, run VM ── */
+    #if MICROPY_VM_YIELD_ENABLED
+    if (wasm_cli_mode) {
+        /* CLI mode — event-driven REPL, no yield stepping */
+        #if MICROPY_REPL_EVENT_DRIVEN
+        while (serial_bytes_available() > 0) {
+            char c = serial_read();
+            int ret = pyexec_event_repl_process_char(c);
+            if (ret & PYEXEC_FORCED_EXIT) {
+                pyexec_event_repl_init();
+            }
+        }
+        #endif
+    } else {
+        vm_yield_set_budget(budget_ms);
+        vm_yield_set_frame_start(wasm_js_now_ms);
+
+        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
+
+        if (ctx_id >= 0) {
+            /* ── 3. VM burst ── */
+            int prev_id = cp_context_active();
+            if (ctx_id != prev_id) {
+                cp_context_save(prev_id);
+                cp_context_restore(ctx_id);
+            }
+
+            cp_context_set_status(ctx_id, CTX_RUNNING);
+            sup_result = WASM_SUP_SCHEDULED;
+
+            int ret = vm_yield_step();
+
+            if (ret == 0) {
+                /* Normal completion */
+                cp_context_set_status(ctx_id, CTX_DONE);
+                SUP_DEBUG("ctx%d done", ctx_id);
+                sup_result = WASM_SUP_CTX_DONE;
+                vm_result = WASM_VM_COMPLETED;
+            } else if (ret == 2) {
+                /* Exception */
+                cp_context_set_status(ctx_id, CTX_DONE);
+                SUP_DEBUG("ctx%d done", ctx_id);
+                sup_result = WASM_SUP_CTX_DONE;
+                vm_result = WASM_VM_EXCEPTION;
+            } else {
+                /* Yielded — determine why */
+                if (cp_context_get_status(ctx_id) == CTX_SLEEPING) {
+                    vm_result = WASM_VM_SLEEPING;
+                } else {
+                    cp_context_set_status(ctx_id, CTX_YIELDED);
+                    if (mp_vm_yield_reason == 1 /* YIELD_SLEEP */) {
+                        vm_result = WASM_VM_SLEEPING;
+                    } else if (mp_vm_yield_reason == 3 /* YIELD_IO_WAIT */ ||
+                               mp_vm_yield_reason == 4 /* YIELD_STDIN */) {
+                        vm_result = WASM_VM_SUSPENDED;
+                    } else {
+                        vm_result = WASM_VM_YIELDED;
+                    }
+                }
+            }
+        } else {
+            /* No context picked — check why */
+            bool any_sleeping = false;
+            for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
+                uint8_t st = cp_context_get_status(i);
+                if (st == CTX_SLEEPING) { any_sleeping = true; break; }
+            }
+            sup_result = any_sleeping ? WASM_SUP_ALL_SLEEPING : WASM_SUP_IDLE;
+        }
+
+        /* Update legacy sup_state from context 0 */
+        uint8_t ctx0 = cp_context_get_status(0);
+        if (ctx0 == CTX_IDLE || ctx0 == CTX_DONE || ctx0 == CTX_FREE) {
+            sup_state = SUP_REPL;
+            sup_ctx0_is_code = false;
+        } else if (ctx0 >= CTX_RUNNABLE && ctx0 <= CTX_SLEEPING) {
+            sup_state = sup_ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+        }
+    }
+    #endif
+
+    uint32_t result = WASM_FRAME_RESULT(port_result, sup_result, vm_result);
+    sh_set_frame_result(result);
+    return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -530,10 +672,10 @@ int cp_step(uint32_t now_ms) {
 
 __attribute__((export_name("cp_print")))
 void cp_print(int len) {
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+    if (len <= 0 || len >= SUP_INPUT_BUF_SIZE) {
         return;
     }
-    mp_hal_stdout_tx_strn(_input_buf, (size_t)len);
+    mp_hal_stdout_tx_strn(sup_input_buf, (size_t)len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -542,12 +684,12 @@ void cp_print(int len) {
 
 __attribute__((export_name("cp_input_buf_addr")))
 uintptr_t cp_input_buf_addr(void) {
-    return (uintptr_t)_input_buf;
+    return (uintptr_t)sup_input_buf;
 }
 
 __attribute__((export_name("cp_input_buf_size")))
 int cp_input_buf_size(void) {
-    return INPUT_BUF_SIZE;
+    return SUP_INPUT_BUF_SIZE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -599,18 +741,18 @@ uintptr_t cp_frozen_names_addr(void) {
 __attribute__((export_name("cp_run")))
 int cp_run(int src_kind, int src_len, int ctx, int priority) {
     #if MICROPY_VM_YIELD_ENABLED
-    if (src_len <= 0 || src_len >= INPUT_BUF_SIZE) {
+    if (src_len <= 0 || src_len >= SUP_INPUT_BUF_SIZE) {
         return -4;
     }
     if (src_kind != CP_SRC_EXPR && src_kind != CP_SRC_FILE) {
         return -4;
     }
-    _input_buf[src_len] = '\0';
+    sup_input_buf[src_len] = '\0';
 
     /* MAIN target: ctx0 must be idle.  REPL is the only legal entry state
      * for user-initiated runs on ctx0 (boot.py / code.py are driven by
      * the internal lifecycle path). */
-    if (ctx == CP_CTX_MAIN && _state != SUP_REPL) {
+    if (ctx == CP_CTX_MAIN && sup_state != SUP_REPL) {
         return -1;
     }
 
@@ -643,9 +785,9 @@ int cp_run(int src_kind, int src_len, int ctx, int priority) {
     /* Compile on the target context's pystack */
     mp_code_state_t *cs;
     if (src_kind == CP_SRC_EXPR) {
-        cs = cp_compile_str(_input_buf, (size_t)src_len, MP_PARSE_SINGLE_INPUT);
+        cs = cp_compile_str(sup_input_buf, (size_t)src_len, MP_PARSE_SINGLE_INPUT);
     } else {
-        cs = cp_compile_file(_input_buf);
+        cs = cp_compile_file(sup_input_buf);
     }
     if (cs == NULL) {
         /* Compile failed — restore caller's context; destroy NEW target */
@@ -665,10 +807,10 @@ int cp_run(int src_kind, int src_len, int ctx, int priority) {
         /* Convention: EXPR = REPL expression (ctx0_is_code=false),
          *             FILE = code.py-like run (ctx0_is_code=true).
          * JS controls which by choosing src_kind. */
-        _ctx0_is_code = (src_kind == CP_SRC_FILE);
-        _state = _ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
+        sup_ctx0_is_code = (src_kind == CP_SRC_FILE);
+        sup_state = sup_ctx0_is_code ? SUP_CODE_RUNNING : SUP_EXPR_RUNNING;
         SUP_DEBUG("cp_run → %s on ctx0",
-                  _ctx0_is_code ? "SUP_CODE_RUNNING" : "SUP_EXPR_RUNNING");
+                  sup_ctx0_is_code ? "SUP_CODE_RUNNING" : "SUP_EXPR_RUNNING");
     } else {
         /* Save the new context's state and switch back to caller */
         cp_context_save(target_id);
@@ -737,12 +879,12 @@ int cp_context_exec_file(int path_len, int priority) {
 
 __attribute__((export_name("cp_complete")))
 int cp_complete(int len) {
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+    if (len <= 0 || len >= SUP_INPUT_BUF_SIZE) {
         return 0;
     }
-    _input_buf[len] = '\0';
+    sup_input_buf[len] = '\0';
     const char *compl_str;
-    size_t compl_len = mp_repl_autocomplete(_input_buf, (size_t)len,
+    size_t compl_len = mp_repl_autocomplete(sup_input_buf, (size_t)len,
         &mp_plat_print, &compl_str);
     (void)compl_str;  /* completions are printed to stdout */
     return (int)compl_len;
@@ -758,7 +900,7 @@ int cp_complete(int len) {
 /* stderr for structured details.                                      */
 /*                                                                     */
 /* Safe to call mid-run: uses a scoped nlr_buf, doesn't touch any      */
-/* context's code_state or globals.  The compiled module_fun is not    */
+/* context's codesup_state or globals.  The compiled module_fun is not    */
 /* retained after the call returns.                                    */
 /*                                                                     */
 /* Returns:                                                            */
@@ -769,15 +911,15 @@ int cp_complete(int len) {
 
 __attribute__((export_name("cp_syntax_check")))
 int cp_syntax_check(int len) {
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+    if (len <= 0 || len >= SUP_INPUT_BUF_SIZE) {
         return 2;
     }
-    _input_buf[len] = '\0';
+    sup_input_buf[len] = '\0';
 
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
         mp_lexer_t *lex = mp_lexer_new_from_str_len(
-            MP_QSTR__lt_stdin_gt_, _input_buf, (size_t)len, 0);
+            MP_QSTR__lt_stdin_gt_, sup_input_buf, (size_t)len, 0);
         qstr source_name = lex->source_name;
         mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
         /* mp_compile allocates but the result is only rooted through the
@@ -814,7 +956,7 @@ void cp_ctrl_c(void) {
 
 __attribute__((export_name("cp_banner")))
 void cp_banner(void) {
-    _print_banner();
+    sup_print_banner();
 }
 
 /* ------------------------------------------------------------------ */
@@ -863,9 +1005,9 @@ void cp_cleanup(void) {
     cp_unregister_wake_all(0);
 
     /* 5. Reset supervisor state machine. */
-    _ctx0_is_code = false;
-    _code_header_printed = false;
-    _state = SUP_REPL;
+    sup_ctx0_is_code = false;
+    sup_code_header_printed = false;
+    sup_state = SUP_REPL;
 
     SUP_DEBUG("cleanup — Layer 3 torn down, Layer 2 intact");
     #endif
@@ -915,7 +1057,7 @@ void cp_wake(int ctx_id) {
 
 __attribute__((export_name("cp_soft_reboot")))
 void cp_soft_reboot(void) {
-    _print_soft_reboot();
+    sup_print_soft_reboot();
     cp_cleanup();
 }
 
@@ -941,11 +1083,11 @@ void cp_ctrl_d(void) {
 
 __attribute__((export_name("cp_continue")))
 int cp_continue(int len) {
-    if (len <= 0 || len >= INPUT_BUF_SIZE) {
+    if (len <= 0 || len >= SUP_INPUT_BUF_SIZE) {
         return 0;
     }
-    _input_buf[len] = '\0';
-    return mp_repl_continue_with_input(_input_buf) ? 1 : 0;
+    sup_input_buf[len] = '\0';
+    return mp_repl_continue_with_input(sup_input_buf) ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1035,9 +1177,9 @@ void _cp_unregister_wake_all(int ctx_id) {
 /* but kept for CLI/testing use.                                       */
 /* ------------------------------------------------------------------ */
 
-__attribute__((export_name("cp_get_state")))
-int cp_get_state(void) {
-    return (int)_state;
+__attribute__((export_name("cp_getsup_state")))
+int cp_getsup_state(void) {
+    return (int)sup_state;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1123,12 +1265,12 @@ int cp_ctx0_completed_code(void) {
 
 __attribute__((export_name("cp_set_debug")))
 void cp_set_debug(int enabled) {
-    _debug_enabled = (enabled != 0);
+    sup_debug_enabled = (enabled != 0);
 }
 
-__attribute__((export_name("cp_get_frame_count")))
-uint32_t cp_get_frame_count(void) {
-    return _frame_count;
+__attribute__((export_name("cp_getsup_frame_count")))
+uint32_t cp_getsup_frame_count(void) {
+    return sup_frame_count;
 }
 
 #if MICROPY_VM_YIELD_ENABLED

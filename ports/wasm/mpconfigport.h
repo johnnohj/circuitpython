@@ -302,8 +302,8 @@ void mp_hal_delay_ms(mp_uint_t ms);
 // budget.  When budget is expired, we call mp_vm_request_yield() so the
 // yield check right after will save state and return.
 #if MICROPY_VM_YIELD_ENABLED
-extern void wasm_vm_hook_loop(void);
-#define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop();
+extern void wasm_vm_hook_loop(const void *code_state_ptr);
+#define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop(code_state);
 #else
 #define MICROPY_VM_HOOK_LOOP
 #endif

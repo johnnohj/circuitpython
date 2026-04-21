@@ -39,8 +39,33 @@ const SH_EVT_CTRL_C        = 0x70;
 const SH_EVT_CLEANUP       = 0x80;
 
 // Sizes
-const SH_STATE_SIZE  = 24;
+const SH_STATE_SIZE  = 44;
 const SH_EVENT_SIZE  = 8;
+const SH_TRACE_SIZE  = 8;
+
+// Trace event types (C → JS)
+const SH_TRACE_LINE       = 0x01;
+const SH_TRACE_CALL       = 0x02;
+const SH_TRACE_RETURN     = 0x03;
+const SH_TRACE_EXCEPTION  = 0x04;
+
+// wasm_frame result codes — packed as (port | sup<<8 | vm<<16)
+const WASM_PORT_QUIET      = 0;
+const WASM_PORT_EVENTS     = 1;
+const WASM_PORT_BG_PENDING = 2;
+const WASM_PORT_HW_CHANGED = 3;
+
+const WASM_SUP_IDLE         = 0;
+const WASM_SUP_SCHEDULED    = 1;
+const WASM_SUP_CTX_DONE     = 2;
+const WASM_SUP_ALL_SLEEPING = 3;
+
+const WASM_VM_NOT_RUN    = 0;
+const WASM_VM_YIELDED    = 1;
+const WASM_VM_SLEEPING   = 2;
+const WASM_VM_COMPLETED  = 3;
+const WASM_VM_EXCEPTION  = 4;
+const WASM_VM_SUSPENDED  = 5;
 
 /* ------------------------------------------------------------------ */
 /* Semihosting class                                                   */
@@ -178,12 +203,61 @@ export class Semihosting {
             yieldArg:    view.getUint32(8,  true),
             frameCount:  view.getUint32(12, true),
             vmDepth:     view.getUint32(16, true),
-            pendingCall: view.getUint32(20, true),
+            bgPending:   view.getUint32(20, true),
+            /* Debug/trace fields */
+            currentLine: view.getUint32(24, true),
+            sourceFile:  view.getUint32(28, true),
+            callDepth:   view.getUint32(32, true),
+            traceFlags:  view.getUint32(36, true),
+            frameResult: view.getUint32(40, true),
         };
+    }
+
+    /**
+     * Drain trace events from the C → JS trace ring.
+     * Returns an array of {type, data, arg} objects.
+     * Call periodically (each frame or on demand) when debug is active.
+     */
+    readTrace() {
+        if (!this.instance) return [];
+        const exports = this.instance.exports;
+        if (!exports.sh_trace_ring_addr) return [];
+
+        const ringAddr = exports.sh_trace_ring_addr();
+        const maxEntries = exports.sh_trace_ring_max();
+        const mem = exports.memory.buffer;
+
+        const headerView = new DataView(mem, ringAddr, 8);
+        const writeIdx = headerView.getUint32(0, true);
+        const readIdx  = headerView.getUint32(4, true);
+
+        if (writeIdx === readIdx) return [];  // nothing to read
+
+        const events = [];
+        let ri = readIdx;
+        while (ri !== writeIdx) {
+            const entryOffset = ringAddr + 8 + (ri % maxEntries) * SH_TRACE_SIZE;
+            const entryView = new DataView(mem, entryOffset, SH_TRACE_SIZE);
+            events.push({
+                type: entryView.getUint16(0, true),
+                data: entryView.getUint16(2, true),
+                arg:  entryView.getUint32(4, true),
+            });
+            ri++;
+        }
+
+        // Advance read index
+        headerView.setUint32(4, writeIdx, true);
+        return events;
     }
 }
 
 /* ---- Exports for constants ---- */
+
+/** Unpack a wasm_frame result into { port, sup, vm }. */
+export function unpackFrameResult(r) {
+    return { port: r & 0xFF, sup: (r >> 8) & 0xFF, vm: (r >> 16) & 0xFF };
+}
 
 export {
     SH_EVT_NONE, SH_EVT_KEY_DOWN, SH_EVT_KEY_UP,
@@ -191,4 +265,9 @@ export {
     SH_EVT_HW_CHANGE, SH_EVT_PERSIST_DONE,
     SH_EVT_RESIZE, SH_EVT_WAKE,
     SH_EVT_EXEC, SH_EVT_CTRL_C, SH_EVT_CLEANUP,
+    SH_TRACE_LINE, SH_TRACE_CALL, SH_TRACE_RETURN, SH_TRACE_EXCEPTION,
+    WASM_PORT_QUIET, WASM_PORT_EVENTS, WASM_PORT_BG_PENDING, WASM_PORT_HW_CHANGED,
+    WASM_SUP_IDLE, WASM_SUP_SCHEDULED, WASM_SUP_CTX_DONE, WASM_SUP_ALL_SLEEPING,
+    WASM_VM_NOT_RUN, WASM_VM_YIELDED, WASM_VM_SLEEPING,
+    WASM_VM_COMPLETED, WASM_VM_EXCEPTION, WASM_VM_SUSPENDED,
 };

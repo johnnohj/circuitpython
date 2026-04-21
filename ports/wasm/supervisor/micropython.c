@@ -38,8 +38,8 @@ extern bool wasm_cli_mode;
 
 int mp_hal_stdin_rx_chr(void) {
     for (;;) {
-        #ifdef MICROPY_VM_HOOK_LOOP
-        MICROPY_VM_HOOK_LOOP
+        #if MICROPY_VM_YIELD_ENABLED
+        wasm_vm_hook_loop(NULL);
         #endif
         mp_handle_pending(true);
         if (serial_bytes_available()) {

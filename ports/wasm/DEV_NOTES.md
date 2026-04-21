@@ -29,8 +29,7 @@ It remains to be said that web assembly is very much an emerging technology, wit
 
 ## Outstanding Work
 
-- **Validate SUSPEND mechanism** under broader asyncio workloads — see
-  `design/yield-suspend-separation.md`.
+- **Implement `wasm-frame`**
 
 ### Design Commentary
 

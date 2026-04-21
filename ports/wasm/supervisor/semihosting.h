@@ -37,7 +37,7 @@
 /* VM state export (C → JS)                                            */
 /* ------------------------------------------------------------------ */
 
-#define SH_STATE_SIZE    24
+#define SH_STATE_SIZE    44
 
 /* Written by supervisor each cp_step(), read by JS via sh_state_addr() */
 typedef struct {
@@ -46,8 +46,38 @@ typedef struct {
     uint32_t yield_arg;    /* e.g., sleep duration ms */
     uint32_t frame_count;
     uint32_t vm_depth;     /* pystack depth / nesting level */
-    uint32_t pending_call; /* reserved for future FFI use */
+    uint32_t bg_pending;   /* background work pending — JS should call cp_hw_step */
+    /* ---- Debug/trace fields (always updated, opt-in read by JS) ---- */
+    uint32_t current_line; /* source line at last backwards branch (0=unknown) */
+    uint32_t source_file;  /* qstr hash of source filename (0=unknown) */
+    uint32_t call_depth;   /* function call nesting depth */
+    uint32_t trace_flags;  /* reserved: line-step mode, trace-on, etc. */
+    uint32_t frame_result; /* last wasm_frame return (packed port|sup|vm) */
 } sh_state_t;
+
+/* ------------------------------------------------------------------ */
+/* Trace ring (C → JS)                                                 */
+/*                                                                     */
+/* Lightweight trace events for JS coordination.  C appends, JS reads. */
+/* Separate from the event ring (which is JS → C).                     */
+/* ------------------------------------------------------------------ */
+
+/* Trace event types */
+#define SH_TRACE_LINE       0x01  /* data=line_no, arg=source_file qstr */
+#define SH_TRACE_CALL       0x02  /* data=line_no, arg=func_name qstr */
+#define SH_TRACE_RETURN     0x03  /* data=line_no, arg=0 */
+#define SH_TRACE_EXCEPTION  0x04  /* data=line_no, arg=exc_type qstr */
+
+typedef struct {
+    uint16_t trace_type;   /* SH_TRACE_* */
+    uint16_t data;         /* type-specific (usually line number) */
+    uint32_t arg;          /* type-specific (usually qstr) */
+} sh_trace_t;
+
+#define SH_TRACE_SIZE    8
+#define SH_TRACE_MAX     64  /* ring capacity — larger than event ring */
+#define SH_TRACE_RING_HEADER  8  /* write_idx + read_idx */
+#define SH_TRACE_RING_SIZE    (SH_TRACE_RING_HEADER + SH_TRACE_MAX * SH_TRACE_SIZE)
 
 /* ------------------------------------------------------------------ */
 /* Event ring (JS → C)                                                 */
@@ -104,5 +134,23 @@ void sh_on_event(const sh_event_t *evt);
 void sh_export_state(uint32_t sup_state, uint32_t yield_reason,
                      uint32_t yield_arg, uint32_t frame_count,
                      uint32_t vm_depth);
+
+/* Update trace fields in the exported state.
+ * Called from wasm_vm_hook_loop() at every backwards branch. */
+void sh_update_trace(uint32_t line, uint32_t source_file, uint32_t call_depth);
+
+/* Append a trace event to the trace ring (C → JS).
+ * Non-blocking; drops events if ring is full. */
+void sh_trace_emit(uint16_t trace_type, uint16_t data, uint32_t arg);
+
+/* Set the background-work-pending flag.  Called from port_wake_main_task()
+ * when a background callback is registered.  JS reads this via sh_state
+ * to know it should call cp_hw_step() even when the VM is idle.
+ * Cleared by sh_export_state() after background_callback_run_all() drains. */
+void sh_set_bg_pending(void);
+void sh_clear_bg_pending(void);
+
+/* Store the last wasm_frame return value in sh_state for JS to read. */
+void sh_set_frame_result(uint32_t result);
 
 #endif /* WASM_SEMIHOSTING_H */

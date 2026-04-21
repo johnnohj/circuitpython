@@ -28,7 +28,14 @@ import { Display } from './display.mjs';
 import { Readline } from './readline.mjs';
 import { HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
 import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';
-import { VMContext, DisplayContext, HardwareContext, IOContext } from './context-managers.mjs';
+import { DisplayContext, HardwareContext, IOContext } from './context-managers.mjs';
+import {
+    unpackFrameResult,
+    WASM_PORT_QUIET, WASM_PORT_BG_PENDING,
+    WASM_SUP_IDLE, WASM_SUP_CTX_DONE, WASM_SUP_ALL_SLEEPING,
+    WASM_VM_NOT_RUN, WASM_VM_YIELDED, WASM_VM_SLEEPING,
+    WASM_VM_COMPLETED, WASM_VM_EXCEPTION,
+} from './semihosting.js';
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
 
@@ -249,6 +256,31 @@ export class CircuitPython {
     get canvas() { return this._display?._canvas; }
     get displayWidth() { return this._display?.width || 0; }
     get displayHeight() { return this._display?.height || 0; }
+
+    /**
+     * Debug/trace info from the VM — current line, source file, call depth.
+     * Always available (cheap — reads linear memory). JS decides whether
+     * to display it (opt-in via debug checkbox or API flag).
+     */
+    get traceInfo() {
+        const st = this._sh?.readState();
+        if (!st) return null;
+        return {
+            currentLine: st.currentLine,
+            sourceFile:  st.sourceFile,
+            callDepth:   st.callDepth,
+        };
+    }
+
+    /**
+     * Drain trace events (LINE, CALL, RETURN, EXCEPTION) from the C→JS
+     * trace ring. Returns an array of {type, data, arg} objects.
+     * Only call when debug mode is active — otherwise events accumulate
+     * and get dropped (ring is finite).
+     */
+    drainTrace() {
+        return this._sh?.readTrace() || [];
+    }
 
     /** Access context managers for fine-grained control. */
     get displayContext() { return this._displayCtx; }
@@ -742,12 +774,11 @@ export class CircuitPython {
         // When autoLifecycle=false, JS manages execution directly.
         this._autoReloadEnabled = (options.autoLifecycle !== false);
 
-        // Initialize context managers
-        this._vmCtx = new VMContext(this);
+        // Initialize output consumers (wasm_frame handles all C-side work)
         this._displayCtx = new DisplayContext(this);
         this._hwCtx = new HardwareContext(this);
         this._ioCtx = new IOContext(this);
-        this._managers = [this._vmCtx, this._displayCtx, this._hwCtx, this._ioCtx];
+        this._managers = [this._displayCtx, this._hwCtx, this._ioCtx];
 
         // Start frame loop
         this._raf = env.requestFrame(() => this._loop());
@@ -846,14 +877,31 @@ export class CircuitPython {
     _loop() {
         const nowMs = performance.now() | 0;
 
-        // Step each context manager that has work
-        for (const mgr of this._managers) {
-            if (mgr.needsWork) {
-                mgr.step(nowMs);
+        // One C call does everything: port → supervisor → VM → export
+        const r = this._exports.wasm_frame(nowMs, 13);
+        const { port, sup, vm } = unpackFrameResult(r);
+
+        // Output consumers — read C results, update JS-side state
+        if (this._display) {
+            this._display.paint();
+            if (this._displayCtx?._showCursor && this._displayCtx?._cursorVisible) {
+                this._display.drawCursor();
             }
         }
 
+        // Hardware module sync (JS-side board SVG, onChange callbacks)
+        this._hw.preStep(this._wasi, nowMs);
+        this._hw.postStep(this._wasi, nowMs);
+
+        // IO target polling (independent of C, runs at reduced rate)
+        if (this._ioCtx?.needsWork) {
+            this._ioCtx.step(nowMs);
+        }
+
         this._frameCount++;
+
+        // Handle state transitions from C results
+        this._handleFrameResult(port, sup, vm);
 
         // Status bar update (every ~1 second)
         if (this._statusEl && this._frameCount % 60 === 0) {
@@ -862,30 +910,108 @@ export class CircuitPython {
             this._statusEl.textContent = `${STATE_NAMES[st] || '?'} | frame:${this._frameCount}`;
         }
 
-        this._scheduleNext(nowMs);
+        this._scheduleNext(port, sup, vm);
     }
 
     /**
-     * Schedule the next _loop() call based on VM state.
-     *
-     * We ask the VM how many ms until it needs attention:
-     *   0          → runnable now: requestAnimationFrame (full rate)
-     *   1..N ms    → sleeping: still tick at full rate for HAL/display
-     *               (cp_step is cheap during sleep — it skips the VM
-     *               phase and only runs HAL + background callbacks)
-     *   0xFFFFFFFF → truly idle (no contexts): don't schedule.
-     *               _kick() restarts on external event (keypress,
-     *               file write, cp_run call).  This is where we save
-     *               battery on mobile — no work, no ticks.
+     * Handle state transitions based on wasm_frame results.
+     * Replaces VMContext.step's transition detection logic.
      */
-    _scheduleNext(nowMs) {
-        // Check if any manager needs work
-        const anyWork = this._managers?.some(m => m.needsWork) ?? false;
-        if (anyWork) {
-            // At least one manager has work — keep ticking
+    _handleFrameResult(port, sup, vm) {
+        if (sup === WASM_SUP_CTX_DONE) {
+            // A context completed — force display refresh
+            this._exports.cp_display_refresh?.();
+
+            // Show prompt if readline is waiting
+            if (this._readline?.waitingForResult) {
+                this._readline.onResult();
+            }
+
+            // Fire onCodeDone callback for ctx0 file execution
+            if (this._onCodeDone && !this._codeDoneFired && this._ctx0IsCode) {
+                this._codeDoneFired = true;
+                this._onCodeDone();
+            }
+
+            // Clean up done background contexts
+            this._cleanupDoneContexts();
+        }
+    }
+
+    /**
+     * Clean up background contexts that have finished.
+     * Moved from VMContext._cleanupDoneContexts.
+     */
+    _cleanupDoneContexts() {
+        for (let i = 1; i < this._ctxMax; i++) {
+            const m = this._readContextMeta(i);
+            if (!m || m.status !== 6 /* CTX_DONE */) continue;
+
+            const cb = this._ctxCallbacks.get(i);
+            if (cb) {
+                this._ctxCallbacks.delete(i);
+                cb(i, null);
+            }
+
+            const active = this._exports.cp_context_active();
+            if (active === i) {
+                this._exports.cp_context_save(i);
+                this._exports.cp_context_restore(0);
+            }
+            this._exports.cp_context_destroy(i);
+        }
+    }
+
+    /**
+     * Schedule the next _loop() call based on wasm_frame results
+     * combined with JS-local state (tab visibility, display presence).
+     *
+     * The packed result tells us what each layer needs:
+     *   port: events processed? bg work pending?
+     *   sup:  contexts running? all sleeping? idle?
+     *   vm:   yielded? sleeping? completed?
+     *
+     * JS adds its own knowledge (hidden tab, display exists) to decide.
+     */
+    _scheduleNext(port, sup, vm) {
+        const hidden = typeof document !== 'undefined' && document.hidden;
+        const hasDisplay = !!this._display;
+        const hasIO = !!(this._target && this._target.connected);
+
+        if (vm === WASM_VM_YIELDED) {
+            // VM has more work — run ASAP (throttle if tab hidden)
+            if (hidden) {
+                setTimeout(() => this._loop(), 100);
+            } else {
+                this._raf = env.requestFrame(() => this._loop());
+            }
+        } else if (port === WASM_PORT_BG_PENDING) {
+            // Background work pending (display refresh, etc.)
             this._raf = env.requestFrame(() => this._loop());
+        } else if (vm === WASM_VM_SLEEPING || sup === WASM_SUP_ALL_SLEEPING) {
+            // VM sleeping — keep painting if display exists
+            if (hasDisplay) {
+                this._raf = env.requestFrame(() => this._loop());
+            } else {
+                // No display: use slower timer, _kick will restart on wake
+                setTimeout(() => this._kick(), 50);
+                this._raf = null;
+            }
+        } else if (sup === WASM_SUP_CTX_DONE) {
+            // Context just finished — one more frame for cleanup
+            this._raf = env.requestFrame(() => this._loop());
+        } else if (hasDisplay || hasIO) {
+            // Idle but display exists (cursor blink) or IO connected
+            // Use slower tick — display only needs ~2fps when idle
+            setTimeout(() => {
+                if (!this._raf && !this._destroyed) {
+                    this._raf = env.requestFrame(() => this._loop());
+                }
+            }, hasDisplay ? 250 : 333);
+            this._raf = null;
         } else {
-            // All idle — stop loop; _kick() restarts on external event
+            // Truly idle, no display, no IO — stop loop
+            // _kick() restarts on external event
             this._raf = null;
         }
     }
