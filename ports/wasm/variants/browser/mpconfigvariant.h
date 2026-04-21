@@ -75,6 +75,17 @@
 #undef CIRCUITPY_BITMAPTOOLS
 #define CIRCUITPY_BITMAPTOOLS       (1)
 
+// ── Pure software modules (no common-hal needed) ──
+// These are commonly available on popular boards and essential
+// for running Adafruit Learn Guide examples.
+
+// rainbowio — colorwheel() used in nearly every NeoPixel guide
+#define CIRCUITPY_RAINBOWIO         (1)
+
+// keypad — deferred (needs supervisor_acquire_lock, port_malloc_zero stubs)
+// touchio — deferred (needs common_hal_mcu_pin_claim stub)
+// gifio — deferred (verify dependencies first)
+
 // ── jsffi (JavaScript FFI via WASM imports) ──
 // Enables `import jsffi` — Python can access JS objects via JsProxy.
 #undef MICROPY_PY_JSFFI

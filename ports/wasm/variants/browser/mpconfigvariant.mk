@@ -132,3 +132,15 @@ CFLAGS += \
 
 # busio Make-level flag (for circuitpy_defns.mk SRC_PATTERNS)
 CIRCUITPY_BUSIO = 1
+
+# ── Pure software modules (no common-hal needed) ──
+# These are commonly available on popular boards and essential
+# for running Adafruit Learn Guide examples.
+
+# rainbowio — colorwheel() used in nearly every NeoPixel guide
+CIRCUITPY_RAINBOWIO = 1
+CFLAGS += -DCIRCUITPY_RAINBOWIO=1
+SRC_C += shared-bindings/rainbowio/__init__.c shared-module/rainbowio/__init__.c
+
+# keypad — deferred (needs supervisor_acquire_lock, port_malloc_zero stubs)
+# touchio — deferred (needs common_hal_mcu_pin_claim stub)
