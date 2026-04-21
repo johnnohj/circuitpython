@@ -72,11 +72,17 @@
 #define CIRCUITPY_COUNTIO           (0)
 #define CIRCUITPY_FREQUENCYIO       (0)
 #define CIRCUITPY_I2CTARGET         (0)
+#ifndef CIRCUITPY_KEYPAD
 #define CIRCUITPY_KEYPAD            (0)
+#endif
 #define CIRCUITPY_PULSEIO           (0)
+#ifndef CIRCUITPY_ROTARYIO
 #define CIRCUITPY_ROTARYIO          (0)
+#endif
 #define CIRCUITPY_SDCARDIO          (0)
+#ifndef CIRCUITPY_TOUCHIO
 #define CIRCUITPY_TOUCHIO           (0)
+#endif
 
 // ---- Display ----
 // C displayio pipeline is browser-only (set in variants/browser/mpconfigvariant.h).

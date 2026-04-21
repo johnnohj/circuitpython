@@ -83,7 +83,10 @@
 #define CIRCUITPY_RAINBOWIO         (1)
 
 // keypad — deferred (needs supervisor_acquire_lock, port_malloc_zero stubs)
-// touchio — deferred (needs common_hal_mcu_pin_claim stub)
+
+// touchio — software capacitive touch (uses analogio internally)
+#define CIRCUITPY_TOUCHIO           (1)
+#define CIRCUITPY_TOUCHIO_USE_NATIVE (0)
 // gifio — deferred (verify dependencies first)
 
 // ── jsffi (JavaScript FFI via WASM imports) ──

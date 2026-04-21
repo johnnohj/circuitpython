@@ -93,6 +93,10 @@ void claim_pin(const mcu_pin_obj_t *pin) {
     p->claimed = true;
 }
 
+void common_hal_mcu_pin_claim(const mcu_pin_obj_t *pin) {
+    claim_pin(pin);
+}
+
 bool pin_number_is_free(uint8_t pin_number) {
     if (pin_number >= 64) {
         return false;

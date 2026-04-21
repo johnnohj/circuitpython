@@ -143,4 +143,11 @@ CFLAGS += -DCIRCUITPY_RAINBOWIO=1
 SRC_C += shared-bindings/rainbowio/__init__.c shared-module/rainbowio/__init__.c
 
 # keypad — deferred (needs supervisor_acquire_lock, port_malloc_zero stubs)
-# touchio — deferred (needs common_hal_mcu_pin_claim stub)
+
+# touchio — software capacitive touch (uses analogio internally)
+CIRCUITPY_TOUCHIO = 1
+CFLAGS += -DCIRCUITPY_TOUCHIO=1 -DCIRCUITPY_TOUCHIO_USE_NATIVE=0
+SRC_C += \
+	shared-bindings/touchio/__init__.c \
+	shared-bindings/touchio/TouchIn.c \
+	shared-module/touchio/TouchIn.c
