@@ -54,3 +54,9 @@ extern bool vm_yield_code_running(void);
 /* Serial (serial.c) */
 extern void serial_push_byte(uint8_t c);
 extern void serial_check_interrupt(void);
+
+/* Port-boundary functions (port.c) — called by sh_on_event in supervisor.c */
+extern int cp_exec(int kind, int len);
+extern void cp_cleanup(void);
+extern void cp_wake(int ctx_id);
+extern int cp_is_runnable(void);
