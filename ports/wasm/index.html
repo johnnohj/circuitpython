@@ -28,12 +28,16 @@ body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto 1fr 1fr;
+    grid-template-areas:
+        "header  header"
+        "board   editor"
+        "sensors console";
     gap: 1px;
 }
 
 /* ── Header ── */
 header {
-    grid-column: 1 / -1;
+    grid-area: header;
     background: var(--surface);
     padding: 8px 16px;
     display: flex;
@@ -66,12 +70,98 @@ header .status { color: var(--dim); font-size: 12px; margin-left: auto; }
 .panel-title .actions { margin-left: auto; display: flex; gap: 4px; }
 
 /* ── Board panel ── */
-#board-panel { grid-column: 1; grid-row: 2; }
+#board-panel { grid-area: board; }
 #board-canvas { flex: 1; min-height: 0; }
 #board-svg { width: 100%; height: 100%; }
 
+/* ── Sensor panel ── */
+#sensor-panel { grid-area: sensors; }
+#sensor-list {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column;
+}
+#sensor-empty {
+    padding: 16px 12px; color: var(--dim); font-size: 11px;
+    text-align: center; font-style: italic;
+}
+
+/* Per-sensor block */
+.sensor-block {
+    border-bottom: 1px solid var(--border);
+}
+.sensor-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg);
+}
+.sensor-header .sensor-endpoint {
+    font-size: 9px; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    flex: 1;
+}
+.sensor-header button {
+    padding: 1px 7px; font-size: 9px;
+}
+.sensor-body {
+    padding: 4px 10px 6px;
+}
+
+/* Live mode */
+.sensor-live-row {
+    display: flex; align-items: center; gap: 8px;
+}
+.sensor-live-row label {
+    font-size: 11px; color: var(--text);
+    min-width: 28px; text-align: right; font-weight: 600;
+}
+.sensor-live-row input[type="range"] {
+    flex: 1; accent-color: var(--accent);
+    height: 4px;
+}
+.sensor-live-row .sensor-value {
+    font-size: 11px; color: var(--text);
+    min-width: 44px; text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Pattern mode */
+.sensor-pattern-row {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
+}
+.sensor-pattern-row label {
+    font-size: 11px; color: var(--text);
+    min-width: 28px; text-align: right; font-weight: 600;
+}
+.sensor-pattern-row .wave-btns {
+    display: flex; gap: 2px;
+}
+.sensor-pattern-row .wave-btns button {
+    padding: 2px 6px; font-size: 10px;
+    min-width: 0;
+}
+.sensor-pattern-row .wave-btns button.active {
+    background: var(--accent); color: var(--bg);
+}
+.sensor-pattern-row .pat-fields {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--dim);
+}
+.sensor-pattern-row .pat-fields input {
+    width: 48px; padding: 2px 4px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 2px; font-family: var(--font); font-size: 10px;
+    text-align: right;
+}
+.sensor-pattern-row .pat-play {
+    padding: 2px 8px; font-size: 10px;
+}
+.sensor-pattern-row .pat-play.running {
+    background: var(--green); color: var(--bg);
+}
+
 /* ── Editor panel ── */
-#editor-panel { grid-column: 2; grid-row: 2; }
+#editor-panel { grid-area: editor; }
 #editor {
     flex: 1; resize: none;
     background: var(--bg); color: var(--text);
@@ -81,7 +171,7 @@ header .status { color: var(--dim); font-size: 12px; margin-left: auto; }
 }
 
 /* ── Console panel ── */
-#console-panel { grid-column: 1 / -1; grid-row: 3; }
+#console-panel { grid-area: console; }
 #console-body { flex: 1; min-height: 0; position: relative; }
 
 #display-wrap {
@@ -108,7 +198,7 @@ header .status { color: var(--dim); font-size: 12px; margin-left: auto; }
 
 /* ── Loading overlay ── */
 #loading-overlay {
-    grid-column: 1 / -1; grid-row: 2 / -1;
+    grid-area: board / board / console / console;
     display: flex; justify-content: center; align-items: center;
     background: var(--bg); color: var(--dim); font-size: 14px;
     z-index: 10;
@@ -163,6 +253,14 @@ button.primary { background: var(--accent); color: var(--bg); }
     </div>
     <div id="board-canvas">
         <svg id="board-svg" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+</div>
+
+<!-- Sensors -->
+<div class="panel" id="sensor-panel">
+    <div class="panel-title">Sensors</div>
+    <div id="sensor-list">
+        <div id="sensor-empty">No active sensor inputs — create an AnalogIn in code.py</div>
     </div>
 </div>
 
@@ -389,7 +487,7 @@ function renderBoardSvg() {
 
     // Board title
     const title = document.createElementNS(ns, 'text');
-    title.setAttribute('x', '200'); title.setAttribute('y', '115');
+    title.setAttribute('x', '200'); title.setAttribute('y', '75');
     title.setAttribute('text-anchor', 'middle'); title.setAttribute('fill', '#3a6a4a');
     title.setAttribute('font-size', '12'); title.setAttribute('font-family', 'var(--font)');
     title.textContent = adapter.boardName.toUpperCase();
@@ -426,13 +524,13 @@ function renderBoardSvg() {
         $svg.appendChild(g);
     }
 
-    // NeoPixels
+    // NeoPixel strip — centered between the two buttons
     const npPin = adapter.resolvePin('NEOPIXEL');
     if (npPin) {
         for (let i = 0; i < 10; i++) {
             const led = document.createElementNS(ns, 'circle');
-            led.setAttribute('cx', 200 + (i - 4.5) * 18);
-            led.setAttribute('cy', 160); led.setAttribute('r', 7);
+            led.setAttribute('cx', 200 + (i - 4.5) * 22);
+            led.setAttribute('cy', 110); led.setAttribute('r', 7);
             led.setAttribute('fill', '#111'); led.setAttribute('stroke', '#333');
             led.setAttribute('stroke-width', '1');
             led.classList.add('neopixel-led');
@@ -453,6 +551,195 @@ function renderBoardSvg() {
             $svg.appendChild(lbl);
         }
     }
+}
+
+// ── Sensor panel ──
+// Each active analog input gets its own modular block with Live/Pattern toggle.
+
+const WAVES = {
+    '\u2197':  (t) => t,                                  // ramp up
+    '\u2198':  (t) => 1 - t,                              // ramp down
+    '\u2A58':  (t) => t < 0.5 ? t * 2 : 2 - t * 2,       // triangle
+    '\u2293':  (t) => t < 0.5 ? 1 : 0,                    // square
+    '\u223F':  (t) => (Math.sin(t * Math.PI * 2) + 1) / 2, // sine
+    '\u2047':  ()  => Math.random(),                       // random
+};
+const WAVE_NAMES = {
+    '\u2197':'Ramp up', '\u2198':'Ramp down', '\u2A58':'Triangle',
+    '\u2293':'Square', '\u223F':'Sine', '\u2047':'Random',
+};
+
+const $sensorList  = document.getElementById('sensor-list');
+const $sensorEmpty = document.getElementById('sensor-empty');
+const sensorBlocks = {};  // pinName → block state
+
+function createSensorBlock(pinName, pinId) {
+    const endpoint = `/hal/analog +${pinId * 4}`;
+
+    // Container
+    const block = document.createElement('div');
+    block.className = 'sensor-block';
+
+    // Header: endpoint path + Live/Pattern toggle
+    const header = document.createElement('div');
+    header.className = 'sensor-header';
+
+    const epLabel = document.createElement('span');
+    epLabel.className = 'sensor-endpoint';
+    epLabel.textContent = endpoint;
+
+    const liveBtn = document.createElement('button');
+    liveBtn.textContent = 'Live';
+    liveBtn.classList.add('primary');
+
+    const patBtn = document.createElement('button');
+    patBtn.textContent = 'Pattern';
+
+    header.append(epLabel, liveBtn, patBtn);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'sensor-body';
+
+    // Live view: pin label + slider + value
+    const liveRow = document.createElement('div');
+    liveRow.className = 'sensor-live-row';
+
+    const liveLabel = document.createElement('label');
+    liveLabel.textContent = pinName;
+
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = 0; slider.max = 65535; slider.value = 0;
+
+    const valDisplay = document.createElement('span');
+    valDisplay.className = 'sensor-value';
+    valDisplay.textContent = '0';
+
+    slider.addEventListener('input', () => {
+        const v = parseInt(slider.value);
+        valDisplay.textContent = v;
+        if (board) adapter.setInput(board, pinName, v);
+    });
+
+    liveRow.append(liveLabel, slider, valDisplay);
+
+    // Pattern view: pin label + waveform buttons + fields + play
+    const patRow = document.createElement('div');
+    patRow.className = 'sensor-pattern-row';
+    patRow.style.display = 'none';
+
+    const patLabel = document.createElement('label');
+    patLabel.textContent = pinName;
+
+    const waveBtns = document.createElement('div');
+    waveBtns.className = 'wave-btns';
+
+    const ps = { wave: null, interval: 100, min: 0, max: 65535, timer: null, phase: 0, steps: 50 };
+
+    for (const sym of Object.keys(WAVES)) {
+        const b = document.createElement('button');
+        b.textContent = sym;
+        b.title = WAVE_NAMES[sym];
+        b.addEventListener('click', () => {
+            waveBtns.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            ps.wave = sym;
+        });
+        waveBtns.appendChild(b);
+    }
+
+    const fields = document.createElement('div');
+    fields.className = 'pat-fields';
+    const mkField = (lbl, val, key) => {
+        const sp = document.createElement('span');
+        sp.textContent = lbl;
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.value = val;
+        inp.addEventListener('change', () => { ps[key] = parseInt(inp.value) || 0; });
+        fields.append(sp, inp);
+    };
+    mkField('ms:', 100, 'interval');
+    mkField('min:', 0, 'min');
+    mkField('max:', 65535, 'max');
+    mkField('#:', 50, 'steps');
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'pat-play';
+    playBtn.textContent = '\u25B6';
+    playBtn.addEventListener('click', () => {
+        if (ps.timer) {
+            clearInterval(ps.timer);
+            ps.timer = null;
+            ps.phase = 0;
+            playBtn.textContent = '\u25B6';
+            playBtn.classList.remove('running');
+        } else if (ps.wave) {
+            const fn = WAVES[ps.wave];
+            const stepMs = Math.max(10, ps.interval / Math.max(1, ps.steps));
+            ps.phase = 0;
+            ps.timer = setInterval(() => {
+                const t = (ps.phase % ps.steps) / Math.max(1, ps.steps - 1);
+                const v = Math.round(ps.min + fn(t) * (ps.max - ps.min));
+                if (board) adapter.setInput(board, pinName, v);
+                slider.value = v;
+                valDisplay.textContent = v;
+                ps.phase++;
+            }, stepMs);
+            playBtn.textContent = '\u23F9';
+            playBtn.classList.add('running');
+        }
+    });
+
+    patRow.append(patLabel, waveBtns, fields, playBtn);
+
+    // Tab switching (per-block)
+    liveBtn.addEventListener('click', () => {
+        liveBtn.classList.add('primary'); patBtn.classList.remove('primary');
+        liveRow.style.display = ''; patRow.style.display = 'none';
+    });
+    patBtn.addEventListener('click', () => {
+        patBtn.classList.add('primary'); liveBtn.classList.remove('primary');
+        patRow.style.display = ''; liveRow.style.display = 'none';
+    });
+
+    body.append(liveRow, patRow);
+    block.append(header, body);
+    $sensorList.appendChild(block);
+
+    return { block, slider, valDisplay, patternState: ps };
+}
+
+function removeSensorBlock(pinName) {
+    const entry = sensorBlocks[pinName];
+    if (!entry) return;
+    if (entry.patternState.timer) clearInterval(entry.patternState.timer);
+    entry.block.remove();
+    delete sensorBlocks[pinName];
+}
+
+// Called each frame — syncs sensor blocks with live HAL state
+function updateSensorPanel(snap) {
+    const activePins = new Set();
+
+    for (const [name, state] of Object.entries(snap.pins)) {
+        if (!state.analog?.enabled || state.analog.isOutput) continue;
+        activePins.add(name);
+
+        if (!sensorBlocks[name]) {
+            sensorBlocks[name] = createSensorBlock(name, state.id);
+        }
+        const entry = sensorBlocks[name];
+        if (!entry.patternState.timer) {
+            entry.slider.value = state.analog.value;
+            entry.valDisplay.textContent = state.analog.value;
+        }
+    }
+
+    for (const name of Object.keys(sensorBlocks)) {
+        if (!activePins.has(name)) removeSensorBlock(name);
+    }
+
+    $sensorEmpty.style.display = activePins.size > 0 ? 'none' : '';
 }
 
 // ── Render loop (board visualization + cursor) ──
@@ -488,6 +775,9 @@ function renderLoop() {
                 el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
             }
         }
+
+        // Sensor panel — show active analog input pins
+        updateSensorPanel(snap);
 
         // Cursor is managed by DisplayContext (blink timer independent of rAF)
     }

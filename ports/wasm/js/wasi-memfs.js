@@ -622,11 +622,45 @@ export class IdbBackend {
  * Call after loading from the persistence backend but before cp_init().
  */
 const DEFAULT_CODE_PY = `\
-# SPDX-FileCopyrightText: 2026 Adafruit Industries
-# Welcome to CircuitPython in the browser!
-# Edit this file to get started.
-print("Hello from CircuitPython!")
-print("Edit code.py to write your own program.")
+# CircuitPython Browser Board — Sensor Demo
+# Use the Sensors panel (bottom-left) to feed values into the board.
+# Switch to "Patterns" tab for automatic waveforms!
+
+import time
+import board
+import analogio
+import neopixel_write
+import digitalio
+from rainbowio import colorwheel
+
+# Read analog sensor on A0
+sensor = analogio.AnalogIn(board.A0)
+
+# Set up NeoPixel output
+np_pin = digitalio.DigitalInOut(board.NEOPIXEL)
+np_pin.direction = digitalio.Direction.OUTPUT
+
+NUM_PIXELS = 10
+buf = bytearray(NUM_PIXELS * 3)
+
+hue_offset = 0
+while True:
+    # Read the sensor (drag the A0 slider or run a pattern!)
+    val = sensor.value  # 0-65535
+
+    # Map sensor to brightness (0.0 - 1.0)
+    brightness = val / 65535
+
+    # Paint a rainbow across the NeoPixels, scaled by sensor brightness
+    for i in range(NUM_PIXELS):
+        color = colorwheel((hue_offset + i * 25) & 255)
+        buf[i * 3]     = int(((color >> 8) & 0xFF) * brightness)  # G
+        buf[i * 3 + 1] = int(((color >> 16) & 0xFF) * brightness) # R
+        buf[i * 3 + 2] = int((color & 0xFF) * brightness)         # B
+    neopixel_write.neopixel_write(np_pin, buf)
+
+    hue_offset = (hue_offset + 1) & 255
+    time.sleep(0.02)
 `;
 
 export function seedDrive(memfs, options = {}) {

@@ -42,7 +42,6 @@
     { "name": "D12", "id": 12, "capabilities": { "digital": true, "spi_miso": true },
       "visual": { "x": 280, "y": 20, "side": "top" } },
     { "name": "D13", "id": 13, "aliases": ["LED", "LED_BUILTIN"],
-      "displayName": "D13 (LED)",
       "capabilities": { "digital": true, "pwm": true, "spi_sck": true },
       "visual": { "x": 300, "y": 20, "side": "top" } },
 
@@ -55,24 +54,21 @@
     { "name": "A3",  "id": 17, "capabilities": { "digital": true, "analog_in": true, "pwm": true },
       "visual": { "x": 100, "y": 200, "side": "bottom" } },
     { "name": "A4",  "id": 18, "aliases": ["SDA"],
-      "displayName": "A4 (SDA)",
       "capabilities": { "digital": true, "analog_in": true, "i2c_sda": true },
       "visual": { "x": 120, "y": 200, "side": "bottom" } },
     { "name": "A5",  "id": 19, "aliases": ["SCL"],
-      "displayName": "A5 (SCL)",
       "capabilities": { "digital": true, "analog_in": true, "i2c_scl": true },
       "visual": { "x": 140, "y": 200, "side": "bottom" } },
 
     { "name": "NEOPIXEL", "id": 20,
-      "capabilities": { "digital": true },
-      "visual": { "x": 340, "y": 110, "side": "internal" } },
+      "capabilities": { "digital": true } },
 
     { "name": "BUTTON_A", "id": 21,
       "capabilities": { "digital": true },
-      "visual": { "x": 100, "y": 110, "side": "internal" } },
+      "visual": { "x": 60, "y": 110, "side": "internal" } },
     { "name": "BUTTON_B", "id": 22,
       "capabilities": { "digital": true },
-      "visual": { "x": 300, "y": 110, "side": "internal" } }
+      "visual": { "x": 340, "y": 110, "side": "internal" } }
   ],
 
   "power": {
