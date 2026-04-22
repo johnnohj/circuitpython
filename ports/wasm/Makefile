@@ -114,6 +114,7 @@ SRC_C += \
 	supervisor/stubs.c \
 	supervisor/compile.c \
 	supervisor/context.c \
+	supervisor/port_memory.c \
 	supervisor/vm_yield.c \
 	supervisor/serial.c \
 	supervisor/micropython.c \

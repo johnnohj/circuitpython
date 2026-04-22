@@ -3,21 +3,14 @@
  *
  * Hardware state lives at /hal/ WASI fd endpoints, not in C arrays.
  * Common-hal modules read/write these fds directly.  wasi-memfs.js
- * intercepts the WASI calls and manages the state on the JS side,
- * routing to hardware simulators via onHardwareWrite callbacks.
+ * intercepts the WASI calls and manages the state on the JS side.
  *
- * hal_init():
- *   Opens the /hal/ fd endpoints at startup.  Each peripheral type
- *   gets its own path: /hal/gpio, /hal/analog, /hal/pwm, etc.
- *
- * hal_step():
- *   Called at the top of cp_step().  Currently a no-op — JS writes
- *   to /hal/ endpoints are visible immediately via the WASI fd layer.
- *   Future: batch-read updates for efficiency.
- *
- * hal_export_dirty():
- *   Called at the bottom of cp_step().  Currently a no-op — writes
- *   go through fds in real-time.  Future: flush deferred writes.
+ * Self-aware behavior:
+ *   JS sets dirty bitmasks in port_mem when it writes to /hal/
+ *   endpoints.  hal_step() reads and clears these, detecting which
+ *   pins changed.  When changes are detected, the supervisor is
+ *   alerted via port_wake_main_task() so background callbacks run
+ *   and interrupt-driven modules (keypad, countio, etc.) can process.
  */
 
 #include <stdbool.h>
@@ -26,7 +19,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "supervisor/hal.h"
 #include "supervisor/semihosting.h"
+#include "supervisor/port_memory.h"
 
 /* ------------------------------------------------------------------ */
 /* HAL file descriptors                                                */
@@ -61,6 +56,13 @@ void hal_init(void) {
     _neopixel_fd = open("/hal/neopixel", O_RDWR | O_CREAT, 0644);
     _serial_rx_fd = open("/hal/serial/rx", O_RDONLY | O_CREAT, 0644);
     _serial_tx_fd = open("/hal/serial/tx", O_WRONLY | O_CREAT, 0644);
+
+    /* Clear dirty flags */
+    port_mem.hal_gpio_dirty = 0;
+    port_mem.hal_analog_dirty = 0;
+    port_mem.hal_pwm_dirty = 0;
+    port_mem.hal_neopixel_dirty = 0;
+    port_mem.hal_change_count = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -75,17 +77,105 @@ int hal_serial_rx_fd(void) { return _serial_rx_fd; }
 int hal_serial_tx_fd(void) { return _serial_tx_fd; }
 
 /* ------------------------------------------------------------------ */
+/* Dirty flag implementation                                           */
+/* ------------------------------------------------------------------ */
+
+void hal_mark_gpio_dirty(uint8_t pin) {
+    if (pin < 64) {
+        port_mem.hal_gpio_dirty |= (1ULL << pin);
+        port_mem.hal_change_count++;
+    }
+}
+
+void hal_mark_analog_dirty(uint8_t pin) {
+    if (pin < 64) {
+        port_mem.hal_analog_dirty |= (1ULL << pin);
+        port_mem.hal_change_count++;
+    }
+}
+
+void hal_mark_pwm_dirty(uint8_t pin) {
+    if (pin < 64) {
+        port_mem.hal_pwm_dirty |= (1ULL << pin);
+        port_mem.hal_change_count++;
+    }
+}
+
+void hal_mark_neopixel_dirty(void) {
+    port_mem.hal_neopixel_dirty = 1;
+    port_mem.hal_change_count++;
+}
+
+bool hal_gpio_changed(uint8_t pin) {
+    if (pin >= 64) return false;
+    return (port_mem.hal_gpio_dirty & (1ULL << pin)) != 0;
+}
+
+bool hal_analog_changed(uint8_t pin) {
+    if (pin >= 64) return false;
+    return (port_mem.hal_analog_dirty & (1ULL << pin)) != 0;
+}
+
+uint64_t hal_gpio_drain_dirty(void) {
+    uint64_t d = port_mem.hal_gpio_dirty;
+    port_mem.hal_gpio_dirty = 0;
+    return d;
+}
+
+uint64_t hal_analog_drain_dirty(void) {
+    uint64_t d = port_mem.hal_analog_dirty;
+    port_mem.hal_analog_dirty = 0;
+    return d;
+}
+
+/* ------------------------------------------------------------------ */
+/* WASM exports — JS calls these to set dirty flags                    */
+/* ------------------------------------------------------------------ */
+
+__attribute__((export_name("hal_mark_gpio_dirty")))
+void _hal_mark_gpio_dirty(int pin) {
+    hal_mark_gpio_dirty((uint8_t)pin);
+}
+
+__attribute__((export_name("hal_mark_analog_dirty")))
+void _hal_mark_analog_dirty(int pin) {
+    hal_mark_analog_dirty((uint8_t)pin);
+}
+
+__attribute__((export_name("hal_mark_pwm_dirty")))
+void _hal_mark_pwm_dirty(int pin) {
+    hal_mark_pwm_dirty((uint8_t)pin);
+}
+
+__attribute__((export_name("hal_mark_neopixel_dirty")))
+void _hal_mark_neopixel_dirty(void) {
+    hal_mark_neopixel_dirty();
+}
+
+__attribute__((export_name("hal_get_change_count")))
+uint32_t _hal_get_change_count(void) {
+    return port_mem.hal_change_count;
+}
+
+/* ------------------------------------------------------------------ */
 /* hal_step — called at top of cp_step()                               */
 /* ------------------------------------------------------------------ */
 
+/* Forward declaration — port.c */
+extern void port_wake_main_task(void);
+
 void hal_step(void) {
-    /* Drain events from the shared linear-memory event ring.
-     * JS writes events directly into _event_ring via sh_event_ring_addr();
-     * no WASI fd round-trip needed. */
+    /* Drain events from the shared linear-memory event ring. */
     sh_drain_event_ring();
 
-    /* JS writes to /hal/ endpoints are visible immediately via WASI.
-     * No explicit poll needed — common-hal reads the fd on demand. */
+    /* Check for HAL changes from JS.
+     * JS calls hal_mark_*_dirty() when it writes to /hal/ endpoints.
+     * If anything changed, wake the supervisor so background callbacks
+     * and interrupt-driven modules can process. */
+    if (port_mem.hal_gpio_dirty || port_mem.hal_analog_dirty ||
+        port_mem.hal_pwm_dirty || port_mem.hal_neopixel_dirty) {
+        port_wake_main_task();
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,6 +183,11 @@ void hal_step(void) {
 /* ------------------------------------------------------------------ */
 
 void hal_export_dirty(void) {
-    /* Writes go through fds in real-time — no deferred flush needed.
-     * Future: if we batch writes, flush them here. */
+    /* Clear dirty flags after the frame has processed them.
+     * Any changes that arrived during the frame will be caught
+     * on the next hal_step(). */
+    port_mem.hal_gpio_dirty = 0;
+    port_mem.hal_analog_dirty = 0;
+    port_mem.hal_pwm_dirty = 0;
+    port_mem.hal_neopixel_dirty = 0;
 }

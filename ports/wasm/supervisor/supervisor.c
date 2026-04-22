@@ -52,6 +52,7 @@
 #include "supervisor/compile.h"
 #include "supervisor/context.h"
 #include "supervisor/semihosting.h"
+#include "supervisor/port_memory.h"
 #if CIRCUITPY_MICROCONTROLLER
 #include "shared-bindings/microcontroller/Pin.h"
 #endif
@@ -92,20 +93,8 @@ extern void *mp_vm_yield_state;
 
 #include "supervisor/supervisor_internal.h"
 
-/* Supervisor state — shared with port.c via supervisor_internal.h. */
-int sup_state = SUP_UNINITIALIZED;
-bool sup_ctx0_is_code = false;  /* true if ctx0 is running code.py (vs REPL expr) */
-bool sup_code_header_printed = false;  /* deferred so JS can inject "last edited" */
-uint32_t sup_frame_count = 0;
-
-/* cp_is_runnable, cp_exec, cp_cleanup, cp_wake declared in supervisor_internal.h */
-
-/* JS time source — written by cp_step(), read by mp_hal_ticks_ms().
- * Eliminates clock_gettime syscall from the hot loop. */
-volatile uint64_t wasm_js_now_ms = 0;
-
-/* Runtime mode: CLI (blocking stdin) vs browser (yield-driven). */
-bool wasm_cli_mode = false;
+/* All supervisor state lives in port_mem (port_memory.c).
+ * cp_is_runnable, cp_exec, cp_cleanup, cp_wake declared in supervisor_internal.h. */
 
 /* ------------------------------------------------------------------ */
 /* supervisor_execution_status — called by status_bar.c                */
@@ -132,29 +121,10 @@ void supervisor_execution_status(void) {
 }
 #endif
 
-/* ------------------------------------------------------------------ */
-/* Configuration                                                       */
-/* ------------------------------------------------------------------ */
-
-#ifndef WASM_GC_HEAP_SIZE
-#define WASM_GC_HEAP_SIZE (512 * 1024)
-#endif
-
-/* Frame budget: how many ms the supervisor gets per cp_step() call. */
-#ifndef WASM_FRAME_BUDGET_MS
-#define WASM_FRAME_BUDGET_MS 13
-#endif
-
-/* ------------------------------------------------------------------ */
-/* Supervisor debug logging                                            */
-/*                                                                     */
-/* In browser mode, debug output goes to stderr (→ console.log via JS).*/
-/* Gated by a runtime flag so settings.toml or boot.py can silence it. */
-/* ------------------------------------------------------------------ */
-
-bool sup_debug_enabled = true;  /* default on; JS or boot.py can turn off */
-
-/* SUP_DEBUG macro defined in supervisor_internal.h */
+/* Configuration and state accessors come from port_memory.h
+ * (included via supervisor_internal.h).  SUP_DEBUG macro and all
+ * state names (sup_state, wasm_js_now_ms, etc.) are #defined there
+ * to reference port_mem fields. */
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle messages — printed to stdout (serial/displayio terminal)   */
@@ -180,16 +150,7 @@ void sup_print_soft_reboot(void) {
  * code.py → REPL sequence via runBoardLifecycle(); C provides primitives
  * (cp_run, cp_banner, cp_soft_reboot) but no longer owns the sequence. */
 
-/* ------------------------------------------------------------------ */
-/* Static buffers                                                      */
-/* ------------------------------------------------------------------ */
-
-static char heap[WASM_GC_HEAP_SIZE];
-
-/* Shared input buffer — JS writes source text here before calling
- * cp_exec() or cp_continue().  Exported via cp_input_buf_addr(). */
-/* SUP_INPUT_BUF_SIZE defined in supervisor_internal.h */
-char sup_input_buf[SUP_INPUT_BUF_SIZE];
+/* Static buffers (GC heap, input buffer) now live in port_mem. */
 
 /* ------------------------------------------------------------------ */
 /* Background tasks — called from MICROPY_VM_HOOK_LOOP (vm_yield.c)    */
@@ -213,7 +174,7 @@ void wasm_background_tasks(void) {
 
 static void _core_init(void) {
     mp_cstack_init_with_sp_here(16 * 1024);
-    gc_init(heap, heap + WASM_GC_HEAP_SIZE);
+    gc_init(port_gc_heap(), port_gc_heap() + port_gc_heap_size());
 
     /* Open /hal/ fd endpoints before mp_init() — hardware must be
      * available before Python starts. */

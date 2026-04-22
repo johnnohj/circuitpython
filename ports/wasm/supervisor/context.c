@@ -1,8 +1,11 @@
 /*
  * supervisor/context.c — Multi-context execution for WASM port.
  *
- * Static pystack arrays: each context gets a fixed 8KB region in linear
- * memory.  On context switch, we swap MP_STATE_THREAD's pystack pointers
+ * All storage (pystacks, metadata, VM state, wake registrations)
+ * lives in port_mem (port_memory.c).  The port is supreme — it owns
+ * the memory; this module operates on port-provided regions.
+ *
+ * On context switch, we swap MP_STATE_THREAD's pystack pointers
  * to point at the target context's region — no memcpy needed.
  *
  * GC scans all non-free pystack regions as roots, so inactive contexts'
@@ -20,34 +23,27 @@
 #include "py/pystack.h"
 
 #include "supervisor/context.h"
+#include "supervisor/port_memory.h"
 
 /* ------------------------------------------------------------------ */
-/* Storage                                                             */
+/* Convenience aliases into port_mem                                    */
 /* ------------------------------------------------------------------ */
 
-/* Per-context pystack regions (static, in linear memory). */
-static uint8_t _pystacks[CP_MAX_CONTEXTS][CP_CTX_PYSTACK_SIZE]
-    __attribute__((aligned(sizeof(mp_obj_t))));
-
-/* Context metadata (exported to JS). */
-static cp_context_meta_t _meta[CP_MAX_CONTEXTS];
-
-/* Per-context VM stepping state. */
-static cp_context_vm_t _vm[CP_MAX_CONTEXTS];
-
-/* Which context is currently loaded into MP_STATE_THREAD. */
-static int _active_id = -1;
+#define _meta       port_mem.ctx_meta
+#define _vm         port_mem.ctx_vm
+#define _active_id  port_mem.active_ctx_id
+#define _wake_regs  port_mem.wake_regs
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
 
 static inline uint8_t *_pystack_base(int id) {
-    return _pystacks[id];
+    return port_pystack(id);
 }
 
 static inline uint8_t *_pystack_end(int id) {
-    return _pystacks[id] + CP_CTX_PYSTACK_SIZE;
+    return port_pystack_end(id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -55,8 +51,8 @@ static inline uint8_t *_pystack_end(int id) {
 /* ------------------------------------------------------------------ */
 
 void cp_context_init(void) {
-    memset(_meta, 0, sizeof(_meta));
-    memset(_vm, 0, sizeof(_vm));
+    memset(_meta, 0, sizeof(port_mem.ctx_meta));
+    memset(_vm, 0, sizeof(port_mem.ctx_vm));
     for (int i = 0; i < CP_MAX_CONTEXTS; i++) {
         _meta[i].status = CTX_FREE;
         _meta[i].yield_state_off = CTX_NO_YIELD_STATE;
@@ -211,22 +207,7 @@ void cp_context_set_sleeping(int id, uint64_t delay_until) {
 /* Scheduler                                                           */
 /* ------------------------------------------------------------------ */
 
-/* cp_next_wake_ms — tell JS how many ms until the VM needs attention.
- *
- * Takes the current time (same clock as cp_step's now_ms).
- *
- * Returns (uint32_t):
- *   0          — at least one context is runnable RIGHT NOW; tick ASAP
- *   1..0xFFFFFFFE — ms until the earliest sleeping context wakes;
- *                JS can setTimeout(N) and skip frames
- *   0xFFFFFFFF — nothing is runnable or sleeping; VM is idle until an
- *                external event (keypress, file write, cp_run call).
- *                JS should NOT schedule; instead, kick the loop when
- *                an event arrives.
- *
- * This turns the frame loop from "tick every 16ms regardless" into
- * "call me when I say, or when something happens."  On mobile browsers
- * this is real battery savings; on desktop it frees the main thread. */
+/* cp_next_wake_ms — tell JS how many ms until the VM needs attention. */
 __attribute__((export_name("cp_next_wake_ms")))
 uint32_t cp_next_wake_ms(uint32_t now_ms) {
     uint64_t now64 = (uint64_t)now_ms;
@@ -398,20 +379,7 @@ void _cp_context_restore(int id) {
 
 /* ------------------------------------------------------------------ */
 /* Wake registrations                                                  */
-/*                                                                     */
-/* A context can register interest in specific semihosting events.     */
-/* When sh_on_event receives a matching event, the context is woken    */
-/* via cp_wake.  This enables event-driven suspend/resume:             */
-/*                                                                     */
-/*   Python: alarm.pin_alarm(board.BUTTON_A)                           */
-/*     → common-hal calls cp_register_wake(ctx, HW_CHANGE, pin)       */
-/*     → VM suspends                                                   */
-/*     → JS button press → SH_EVT_HW_CHANGE                          */
-/*     → cp_wake_check_event matches → cp_wake(ctx)                   */
-/*     → VM resumes                                                    */
 /* ------------------------------------------------------------------ */
-
-static cp_wake_reg_t _wake_regs[CP_MAX_WAKE_REGS];
 
 int cp_register_wake(int ctx_id, uint16_t event_type, uint16_t event_data, bool one_shot) {
     for (int i = 0; i < CP_MAX_WAKE_REGS; i++) {

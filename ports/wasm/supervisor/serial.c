@@ -39,8 +39,8 @@
 static bool _console_write_disabled = false;
 static bool _display_write_disabled = false;
 
-/* Runtime mode — set by main() in supervisor.c */
-extern bool wasm_cli_mode;
+/* Runtime mode — lives in port_mem. */
+#include "supervisor/port_memory.h"
 
 /* ------------------------------------------------------------------ */
 /* Rx buffer — keyboard input from JS event ring or CLI stdin          */

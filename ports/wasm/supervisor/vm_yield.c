@@ -135,11 +135,8 @@ void mp_vm_request_yield(int reason, uint32_t arg) {
 /* Forward declaration — implemented in supervisor.c */
 extern void wasm_background_tasks(void);
 
-/* CLI mode flag — set by main() in supervisor.c */
-extern bool wasm_cli_mode;
-
-/* JS time source — written by cp_step() each frame. */
-extern volatile uint64_t wasm_js_now_ms;
+/* CLI mode + JS time source — live in port_mem. */
+#include "supervisor/port_memory.h"
 
 void wasm_vm_hook_loop(const void *code_state_ptr) {
     const mp_code_state_t *code_state = (const mp_code_state_t *)code_state_ptr;

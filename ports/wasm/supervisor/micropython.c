@@ -33,8 +33,8 @@
 /* next cp_step() resumes where it left off.                           */
 /* ------------------------------------------------------------------ */
 
-/* Runtime mode flag — set by main() in supervisor.c */
-extern bool wasm_cli_mode;
+/* Runtime mode flag — lives in port_mem. */
+#include "supervisor/port_memory.h"
 
 int mp_hal_stdin_rx_chr(void) {
     for (;;) {

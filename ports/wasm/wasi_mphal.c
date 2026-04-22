@@ -111,9 +111,8 @@ void mp_hal_stdio_mode_orig(void) {
 /* Timing — CLOCK_MONOTONIC via wasi-sdk                               */
 /* ------------------------------------------------------------------ */
 
-/* JS time source — written by cp_step() in supervisor.c each frame.
- * Zero means CLI mode (cp_step not called), fall back to clock_gettime. */
-extern volatile uint64_t wasm_js_now_ms;
+/* JS time source — lives in port_mem (port_memory.h). */
+#include "supervisor/port_memory.h"
 
 #ifndef mp_hal_ticks_ms
 mp_uint_t mp_hal_ticks_ms(void) {

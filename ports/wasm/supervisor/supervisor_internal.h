@@ -4,12 +4,17 @@
  * Exposes supervisor state and functions that port.c (the JS-facing
  * boundary) needs to access.  Nothing outside supervisor.c and port.c
  * should include this header.
+ *
+ * All state lives in port_mem (port_memory.h).  This header provides
+ * convenience macros so existing code reads naturally.
  */
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+
+#include "supervisor/port_memory.h"
 
 /* ---- Supervisor state constants ---- */
 
@@ -19,18 +24,19 @@
 #define SUP_CODE_RUNNING     3
 #define SUP_CODE_FINISHED    4
 
-/* ---- Shared state (owned by supervisor.c) ---- */
+/* ---- State accessors (all in port_mem) ---- */
 
-extern int sup_state;
-extern bool sup_ctx0_is_code;
-extern bool sup_code_header_printed;
-extern uint32_t sup_frame_count;
-extern bool sup_debug_enabled;
-extern bool wasm_cli_mode;
+#define sup_state               port_mem.sup_state
+#define sup_ctx0_is_code        port_mem.sup_ctx0_is_code
+#define sup_code_header_printed port_mem.sup_code_header_printed
+#define sup_frame_count         port_mem.frame_count
+#define sup_debug_enabled       port_mem.sup_debug_enabled
+#define wasm_cli_mode           port_mem.wasm_cli_mode
+#define wasm_js_now_ms          port_mem.js_now_ms
 
 /* Shared input buffer (JS → C string passing) */
-#define SUP_INPUT_BUF_SIZE 4096
-extern char sup_input_buf[];
+#define SUP_INPUT_BUF_SIZE PORT_INPUT_BUF_SIZE
+#define sup_input_buf      port_mem.input_buf
 
 /* ---- Debug macro ---- */
 
