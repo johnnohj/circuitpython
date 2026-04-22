@@ -1,19 +1,17 @@
 /*
- * board_pins.c — Dynamic board pin mapping for WASM port.
+ * board_pins.c — Board pin name mapping for WASM browser board.
  *
- * Uses CIRCUITPY_MUTABLE_BOARD: the board dict starts with only
- * standard items (__name__, board_id) and is populated at runtime
- * by JS calling board_add_pin() for each pin in definition.json.
+ * Uses CIRCUITPY_MUTABLE_BOARD: the dict starts with the full default
+ * pin table (matching definition.json) but can be replaced at runtime
+ * by JS calling board_reset() + board_add_pin() for board switching.
  *
- * This replaces the static ROM table with a runtime-populated dict,
- * enabling board switching without recompilation.
- *
- * Boot sequence:
- *   1. JS parses definition.json
- *   2. JS calls board_reset() to clear existing pins
- *   3. JS calls board_add_pin(name, len, gpio_id) for each pin
- *   4. JS calls board_add_pin for aliases (LED, SDA, SCL, etc.)
- *   5. board_finalize() adds bus constructors and display
+ * Default pin assignments (work without any JS intervention):
+ *   D0-D13   → GPIO  0-13  (digital I/O)
+ *   A0-A5    → GPIO 14-19  (analog)
+ *   NEOPIXEL → GPIO 20
+ *   BUTTON_A → GPIO 21,  BUTTON_B → GPIO 22
+ *   Bus aliases: SDA/SCL=A4/A5, MOSI/MISO/SCK=D11/D12/D13,
+ *                TX/RX=D1/D0, LED=D13
  */
 
 #include "shared-bindings/board/__init__.h"
@@ -68,13 +66,68 @@ static const mcu_pin_obj_t *const _gpio_table[64] = {
     &pin_GPIO60, &pin_GPIO61, &pin_GPIO62, &pin_GPIO63,
 };
 
-/* ---- Mutable board dict ---- */
+/* ---- Default board dict (mutable, full pin table) ---- */
 
-/* Initial table with just the standard items.  board_add_pin()
- * grows the dict at runtime.  MP_DEFINE_MUTABLE_DICT requires
- * a non-empty initial table. */
 static mp_map_elem_t _board_table[] = {
     CIRCUITPYTHON_MUTABLE_BOARD_DICT_STANDARD_ITEMS
+
+    /* Digital pins: D0-D13 → GPIO 0-13 */
+    { MP_ROM_QSTR(MP_QSTR_D0),  MP_OBJ_FROM_PTR(&pin_GPIO0) },
+    { MP_ROM_QSTR(MP_QSTR_D1),  MP_OBJ_FROM_PTR(&pin_GPIO1) },
+    { MP_ROM_QSTR(MP_QSTR_D2),  MP_OBJ_FROM_PTR(&pin_GPIO2) },
+    { MP_ROM_QSTR(MP_QSTR_D3),  MP_OBJ_FROM_PTR(&pin_GPIO3) },
+    { MP_ROM_QSTR(MP_QSTR_D4),  MP_OBJ_FROM_PTR(&pin_GPIO4) },
+    { MP_ROM_QSTR(MP_QSTR_D5),  MP_OBJ_FROM_PTR(&pin_GPIO5) },
+    { MP_ROM_QSTR(MP_QSTR_D6),  MP_OBJ_FROM_PTR(&pin_GPIO6) },
+    { MP_ROM_QSTR(MP_QSTR_D7),  MP_OBJ_FROM_PTR(&pin_GPIO7) },
+    { MP_ROM_QSTR(MP_QSTR_D8),  MP_OBJ_FROM_PTR(&pin_GPIO8) },
+    { MP_ROM_QSTR(MP_QSTR_D9),  MP_OBJ_FROM_PTR(&pin_GPIO9) },
+    { MP_ROM_QSTR(MP_QSTR_D10), MP_OBJ_FROM_PTR(&pin_GPIO10) },
+    { MP_ROM_QSTR(MP_QSTR_D11), MP_OBJ_FROM_PTR(&pin_GPIO11) },
+    { MP_ROM_QSTR(MP_QSTR_D12), MP_OBJ_FROM_PTR(&pin_GPIO12) },
+    { MP_ROM_QSTR(MP_QSTR_D13), MP_OBJ_FROM_PTR(&pin_GPIO13) },
+
+    /* Analog pins: A0-A5 → GPIO 14-19 */
+    { MP_ROM_QSTR(MP_QSTR_A0), MP_OBJ_FROM_PTR(&pin_GPIO14) },
+    { MP_ROM_QSTR(MP_QSTR_A1), MP_OBJ_FROM_PTR(&pin_GPIO15) },
+    { MP_ROM_QSTR(MP_QSTR_A2), MP_OBJ_FROM_PTR(&pin_GPIO16) },
+    { MP_ROM_QSTR(MP_QSTR_A3), MP_OBJ_FROM_PTR(&pin_GPIO17) },
+    { MP_ROM_QSTR(MP_QSTR_A4), MP_OBJ_FROM_PTR(&pin_GPIO18) },
+    { MP_ROM_QSTR(MP_QSTR_A5), MP_OBJ_FROM_PTR(&pin_GPIO19) },
+
+    /* I2C: SDA=A4, SCL=A5 */
+    { MP_ROM_QSTR(MP_QSTR_SDA), MP_OBJ_FROM_PTR(&pin_GPIO18) },
+    { MP_ROM_QSTR(MP_QSTR_SCL), MP_OBJ_FROM_PTR(&pin_GPIO19) },
+
+    /* SPI: MOSI=D11, MISO=D12, SCK=D13 */
+    { MP_ROM_QSTR(MP_QSTR_MOSI), MP_OBJ_FROM_PTR(&pin_GPIO11) },
+    { MP_ROM_QSTR(MP_QSTR_MISO), MP_OBJ_FROM_PTR(&pin_GPIO12) },
+    { MP_ROM_QSTR(MP_QSTR_SCK),  MP_OBJ_FROM_PTR(&pin_GPIO13) },
+
+    /* LED = D13 */
+    { MP_ROM_QSTR(MP_QSTR_LED), MP_OBJ_FROM_PTR(&pin_GPIO13) },
+
+    /* UART: TX=D1, RX=D0 */
+    { MP_ROM_QSTR(MP_QSTR_TX), MP_OBJ_FROM_PTR(&pin_GPIO1) },
+    { MP_ROM_QSTR(MP_QSTR_RX), MP_OBJ_FROM_PTR(&pin_GPIO0) },
+
+    /* NeoPixel */
+    { MP_ROM_QSTR(MP_QSTR_NEOPIXEL), MP_OBJ_FROM_PTR(&pin_GPIO20) },
+
+    /* Buttons */
+    { MP_ROM_QSTR(MP_QSTR_BUTTON_A), MP_OBJ_FROM_PTR(&pin_GPIO21) },
+    { MP_ROM_QSTR(MP_QSTR_BUTTON_B), MP_OBJ_FROM_PTR(&pin_GPIO22) },
+    { MP_ROM_QSTR(MP_QSTR_BUTTON),   MP_OBJ_FROM_PTR(&pin_GPIO21) },
+
+    /* Bus constructors */
+    { MP_ROM_QSTR(MP_QSTR_I2C),  MP_OBJ_FROM_PTR(&board_i2c_obj) },
+    { MP_ROM_QSTR(MP_QSTR_SPI),  MP_OBJ_FROM_PTR(&board_spi_obj) },
+    { MP_ROM_QSTR(MP_QSTR_UART), MP_OBJ_FROM_PTR(&board_uart_obj) },
+
+    /* Display */
+    #if CIRCUITPY_DISPLAYIO
+    { MP_ROM_QSTR(MP_QSTR_DISPLAY), MP_OBJ_FROM_PTR(&displays[0].framebuffer_display) },
+    #endif
 };
 
 mp_obj_dict_t board_module_globals = {
@@ -89,23 +142,19 @@ mp_obj_dict_t board_module_globals = {
     },
 };
 
-/* ---- Shared input buffer for pin names (reuse port's input buf) ---- */
+/* ---- Shared input buffer for pin names ---- */
 #include "supervisor/port_memory.h"
 
-/* ---- WASM exports ---- */
+/* ---- WASM exports for board switching ---- */
 
 /* Reset the board dict to only standard items.
- * Call before re-populating with a new definition. */
+ * Call before re-populating with a new board definition. */
 __attribute__((export_name("board_reset")))
 void board_reset(void) {
-    /* Clear the dict and re-add standard items. */
     mp_obj_dict_t *d = &board_module_globals;
-
-    /* Re-init as a fresh mutable dict. */
     mp_map_init(&d->map, 2);
     d->map.all_keys_are_qstrs = 1;
 
-    /* Add standard items */
     mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
         MP_OBJ_NEW_QSTR(MP_QSTR___name__),
         MP_OBJ_NEW_QSTR(MP_QSTR_board));
@@ -114,10 +163,8 @@ void board_reset(void) {
         MP_OBJ_FROM_PTR(&board_module_id_obj));
 }
 
-/* Add a pin to the board dict.
- * name_len: length of pin name in sup_input_buf (JS writes it there).
- * gpio_id: GPIO number (0-63).
- * Returns 0 on success, -1 on invalid gpio_id. */
+/* Add a pin to the board dict by name.
+ * JS writes the name into port_input_buf, then calls this. */
 __attribute__((export_name("board_add_pin")))
 int board_add_pin(int name_len, int gpio_id) {
     if (gpio_id < 0 || gpio_id >= 64) return -1;
@@ -126,10 +173,7 @@ int board_add_pin(int name_len, int gpio_id) {
     char *name = port_input_buf();
     name[name_len] = '\0';
 
-    /* Create a qstr from the pin name */
     qstr q = qstr_from_str(name);
-
-    /* Store pin_GPIO<gpio_id> under that name */
     mp_obj_dict_store(
         MP_OBJ_FROM_PTR(&board_module_globals),
         MP_OBJ_NEW_QSTR(q),
@@ -138,8 +182,7 @@ int board_add_pin(int name_len, int gpio_id) {
     return 0;
 }
 
-/* Finalize the board dict by adding bus constructors and display.
- * Call after all pins have been added. */
+/* Finalize: add bus constructors and display after custom pins. */
 __attribute__((export_name("board_finalize")))
 void board_finalize(void) {
     mp_obj_dict_t *d = &board_module_globals;

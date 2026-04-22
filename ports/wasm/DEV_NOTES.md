@@ -29,7 +29,7 @@ It remains to be said that web assembly is very much an emerging technology, wit
 
 ## Outstanding Work
 
-- **Implement `wasm-frame`**
+- **Internal refinements**
 
 ### Design Commentary
 

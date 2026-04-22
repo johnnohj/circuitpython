@@ -721,9 +721,11 @@ export class CircuitPython {
         // JS orchestrates boot.py → code.py → REPL via runBoardLifecycle().
         this._exports.cp_init();
 
-        // Populate board pins from definition.json.
-        // JS parses the JSON, calls board_add_pin() for each pin.
-        this._applyBoardDefinition(options.boardDefinition);
+        // Apply custom board definition if provided.  The C default
+        // (compiled into board_pins.c) is used when no definition is given.
+        if (options.boardDefinition) {
+            this._applyBoardDefinition(options.boardDefinition);
+        }
 
         // Enable C-driven frame loop: C calls port.requestFrame() at the
         // end of wasm_frame() to tell JS when to schedule the next frame.
@@ -894,11 +896,6 @@ export class CircuitPython {
         const e = this._exports;
         if (!e.board_reset || !e.board_add_pin || !e.board_finalize) {
             return;  // CIRCUITPY_MUTABLE_BOARD not enabled
-        }
-
-        // Load default definition if none provided
-        if (!def) {
-            def = DEFAULT_BOARD_DEFINITION;
         }
 
         if (!def || !def.pins) return;
