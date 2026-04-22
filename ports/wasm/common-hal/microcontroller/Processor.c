@@ -11,6 +11,8 @@
 #include "shared-bindings/microcontroller/ResetReason.h"
 #include "py/runtime.h"
 
+#include "supervisor/port_imports.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,11 +21,19 @@ static uint32_t _cpu_frequency = 100000000;  /* 100 MHz default */
 static bool _freq_note_shown = false;
 
 float common_hal_mcu_processor_get_temperature(void) {
-    return (float)NAN;
+    int32_t milli_c = port_get_cpu_temperature();
+    if (milli_c == INT32_MIN) {
+        return (float)NAN;
+    }
+    return (float)milli_c / 1000.0f;
 }
 
 float common_hal_mcu_processor_get_voltage(void) {
-    return (float)NAN;
+    int32_t mv = port_get_cpu_voltage();
+    if (mv == 0) {
+        return (float)NAN;
+    }
+    return (float)mv / 1000.0f;
 }
 
 uint32_t common_hal_mcu_processor_get_frequency(void) {

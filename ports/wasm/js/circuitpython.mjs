@@ -645,6 +645,23 @@ export class CircuitPython {
                     }, hintMs);
                 }
             },
+
+            // ── Synchronous data callouts ──
+            // Common-hal calls these via WASM imports. JS runs
+            // synchronously, returns a value, C continues.
+
+            getCpuTemperature: () => {
+                // Simulated: 25°C ± 2°C noise
+                return 25000 + ((Math.random() * 4000 - 2000) | 0);
+            },
+
+            getCpuVoltage: () => {
+                return 3300;  // 3.3V
+            },
+
+            getMonotonicMs: () => {
+                return performance.now() | 0;
+            },
         };
 
         const instance = await WebAssembly.instantiate(module, imports);
