@@ -1,121 +1,172 @@
-CircuitPython WASM port
-=====================
+CircuitPython WASM Port
+=======================
 
-The "wasm" (or "wasi") port runs in standard browser environments, like Chrome, Firefox, and Safari, as well as Node.js runtimes. This port is offered for rapid prototyping, general testing, and experimentation with the primary intention to allow users to see whether some code 'works' even when they happen not to have the hardware at hand.
+This port runs CircuitPython as a WebAssembly module in browsers and
+Node.js. It provides a virtual CircuitPython board with simulated
+hardware (GPIO, analog, PWM, NeoPixels, I2C, display) driven by
+JavaScript, so users can run CircuitPython code without physical
+hardware.
 
-The goal of the wasm port is to provide a faithful simulation of a generic CircuitPython board in the browser; users should be able to run code using both this port and real hardware without needing to make edits. Differences between browsers, user hardware, and this port's reliance upon a JavaScript runtime mean there is no guarantee execution will match exactly the behavior found on real hardware.
+The guiding principle: **if it works on real hardware, it should work
+here.** The port targets the same shared-bindings API as physical
+boards; differences arise from timing, JavaScript runtime behavior,
+and the virtual nature of the hardware.
 
-For a fuller discussion of features and project goals, please see `DEV_NOTES.md`
+For project background and design discussion, see `DEV_NOTES.md`.
+For architecture documents, see the `design/` directory.
+
+Visit the sample on [GitHub pages](https://johnnohj.github.io/wasm/) to try out a recent build!
+
+Variants
+--------
+
+| Variant    | Purpose | Key modules |
+|------------|---------|-------------|
+| `standard` | WASI CLI — Node.js testing, REPL | time, random, os, math, json, re, collections |
+| `browser`  | Full board simulation in browser | + displayio, digitalio, analogio, pwmio, neopixel_write, busio, board |
+
+The `browser` variant adds a virtual board with 64 GPIO pins, a
+160×128 framebuffer display, NeoPixel output, I2C/SPI/UART buses,
+and a board module matching `boards/wasm_browser/definition.json`.
 
 Building
 --------
 
 ### Dependencies
 
-To build the wasm port locally then you will need:
+- [wasi-sdk](https://github.com/aspect-build/aspect-build-wasi-sdk)
+  (default path: `~/.local/bin/wasi-sdk-30.0-x86_64-linux`; override
+  with `WASI_SDK=`)
+- Python 3.x
+- `mpy-cross` (built from the repo)
 
-* git command line executable
-* wasi-sdk
-* Python 3.x
+No system `libffi` or `pkg-config` is needed — this port compiles
+entirely with wasi-sdk's clang.
 
-To build the default "standard" variant and configuration, then you will also
-need:
+### Build steps
 
-* `pkg-config` tool
-* `libffi` library and headers
+From the repository root:
 
-On Debian/Ubuntu/Mint and related Linux distros, you can install all these
-dependencies with a command like:
-
-```
-# apt install build-essential git python3 pkg-config libffi-dev
-```
-
-(See below for steps to build either a standalone or minimal MicroPython
-executable that doesn't require system `libffi` or `pkg-config`.)
-
-### Default build steps
-
-To set up the environment for building (not needed every time), starting from
-the top-level CircuitPython directory:
-
+    $ make -C mpy-cross
     $ cd ports/wasm
-    $ make -C ../../mpy-cross
     $ make submodules
+    $ make                     # standard variant (WASI CLI)
+    $ make VARIANT=browser     # browser variant
 
-The `mpy-cross` step builds the [MicroPython
-cross-compiler](https://github.com/micropython/micropython/?tab=readme-ov-file#the-micropython-cross-compiler-mpy-cross).
-The `make submodules` step can be skipped if you didn't clone the CircuitPython
-source from git.
+Outputs:
+- `build-standard/circuitpython.wasm` — WASI binary for Node.js
+- `build-browser/circuitpython.wasm` — browser board binary
 
-Next, to build the actual executable (still in the `ports/wasm` directory):
+**Important:** after changing config macros in `mpconfigboard.h` or
+variant headers, do a clean rebuild (`rm -rf build-<variant>`).
+Incremental builds can miss header changes.
 
-    $ make
+### Debug builds
 
-Then to give it a try:
+    $ make DEBUG=1             # assertions + debug symbols, -Og
+    $ make STRIP=              # keep symbols, full optimization
 
-    $ node run ./build-standard/circuitpython
-    >>> list(5 * x + y for x in range(10) for y in [4, 2, 1])
+Running
+-------
 
-Use `CTRL-D` (i.e. EOF) to exit the shell.
-
-Learn about command-line options (in particular, how to increase heap size
-which may be needed for larger applications):
-
-    $ node run ./build-standard/circuitpython -h
-
-To run the complete testsuite, use:
-
-    $ make test
-
-The wasm port comes with a built-in package manager called `fwip`, e.g.:
-
-    $ node run ./build-standard/circuitpython -m fwip install hmac
-
-or
+### Node.js (standard variant)
 
     $ node run ./build-standard/circuitpython
+    >>> import sys; print(sys.platform)
+    wasi
+
+Use `Ctrl-D` to exit.
+
+### Node.js (browser variant)
+
+    $ node --input-type=module -e "
+    import { CircuitPython } from './js/circuitpython.mjs';
+    const cp = await CircuitPython.create({
+        wasmUrl: 'build-browser/circuitpython.wasm',
+        onStdout: t => process.stdout.write(t),
+    });
+    "
+
+### Browser
+
+Serve the port directory and open `index.html`:
+
+    $ python3 -m http.server 8080
+    # open http://localhost:8080/index.html
+
+The browser UI provides a code editor, display canvas, board
+visualization with pin state, a sensor panel for analog input,
+and NeoPixel rendering.
+
+### Package manager
+
+The built-in `fwip` package manager fetches libraries from the
+[Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle):
+
     >>> import fwip
-    >>> fwip.install("hmac")
+    >>> fwip.install("display_text")
 
-`fwip` uses `fetch()` to import libraries from the bundle repo into the virtual board's `CIRCUITPY/lib` directory. In web browsers, this is persistent Virtual Filesystem storage backed by an Indexed Database. In Node.js, the board's directory is created within the same parent directory of the binary itself. Browse available modules at
-[Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle).
+In browsers, installed packages persist in IndexedDB. In Node.js,
+they are written to the WASI filesystem.
 
-### Browser Variant
+Testing
+-------
 
-The "standard" variant of CircuitPython is the default. It enables most features and is intended largely for testing in a Node.js runtime. To instead build the
-"browser" variant, which adds several modules and features for use in a browser environment:
+    $ node test_standard.mjs           # standard variant tests
+    $ node test_node.mjs               # Node.js integration tests
+    $ node test_node_board.mjs         # board lifecycle tests (Node)
+    $ node test_browser.mjs            # browser variant lifecycle tests
 
-    $ cd ports/wasm
-    $ make submodules
-    $ make VARIANT=browser
+Filter tests:
 
-The binary will be built at `build-browser/circuitpython`.
+    $ node test_browser.mjs --filter repl --verbose
 
-### Other dependencies
+Architecture
+------------
 
-To actually enable/disable use of dependencies, edit the
-`ports/wasm/mpconfigport.mk` file, which has inline descriptions of the
-options. For example, to build the SSL module, `MICROPY_PY_SSL` should be
-set to 1.
+### Key files
 
-### Debug Symbols
+| File | Purpose |
+|------|---------|
+| `mpconfigboard.h` | CIRCUITPY_* feature flags |
+| `supervisor/supervisor.c` | cp_init / cp_step / cp_exec / cp_ctrl_c/d, main() |
+| `supervisor/port_memory.h` | port_memory_t — single struct owns all port state |
+| `supervisor/vm_yield.c` | cooperative yield + SUSPEND mechanism |
+| `supervisor/compile.c` | unified compile service (string + file) |
+| `js/circuitpython.mjs` | JS API: CircuitPython.create(), lifecycle, contexts |
+| `js/wasi-memfs.js` | in-memory WASI runtime + IndexedDB persistence |
+| `js/semihosting.js` | JS↔WASM FFI: event ring + linear memory state export |
+| `js/board-adapter.mjs` | pin name ↔ GPIO index bridge for visual renderers |
+| `common-hal/board/board_pins.c` | mutable board dict (dynamic board definition) |
+| `boards/wasm_browser/definition.json` | default board pin layout |
 
-By default, builds are stripped of symbols and debug information to save size.
+### Execution model
 
-To build a debuggable version of the port, there are two options:
+The port uses cooperative multitasking within a single WASM instance:
 
-1. Run `make [other arguments] DEBUG=1`. Note setting `DEBUG` also reduces the
-   optimisation level and enables assertions, so it's not a good option for
-   builds that also want the best performance.
-2. Run `make [other arguments] STRIP=`. Note that the value of `STRIP` is
-   empty. This will skip the build step that strips symbols and debug
-   information, but changes nothing else in the build configuration.
+1. **C supervisor** (`cp_step`) runs per frame with a ~13ms wall-clock
+   budget. The VM yields at backward branches when the budget expires.
+2. **JS frame loop** calls `wasm_frame()` each animation frame. C
+   requests the next frame via a WASM import (`port.requestFrame`).
+3. **SUSPEND mechanism** allows the VM to pause mid-execution (for
+   `time.sleep`, I/O wait, etc.) and resume on the next frame without
+   blocking the browser's event loop.
 
-### Optimisation Level
+### Hardware simulation
 
-The default compiler optimisation level is -Os, or -Og if `DEBUG=1` is set.
+Virtual hardware state lives in WASM linear memory as flat arrays
+(GPIO direction/value, analog values, PWM duty cycles, NeoPixel
+buffers). JS reads/writes these via exported pointers — no fd I/O
+in the hot path.
 
-Setting the variable `COPT` will explicitly set the optimisation level. For
-example `make [other arguments] COPT=-O0 DEBUG=1` will build a binary with no
-optimisations, assertions enabled, and debug symbols.
+The board module uses `CIRCUITPY_MUTABLE_BOARD`: pins are compiled
+into a mutable dict matching `definition.json` by default. For board
+switching at runtime, JS can call `board_reset()` + `board_add_pin()`
++ `board_finalize()` with a different definition.
+
+### Filesystem
+
+The port uses WASI POSIX filesystem calls (`fd_read`, `fd_write`,
+etc.) backed by an in-memory filesystem (`wasi-memfs.js`). The
+`/CIRCUITPY/` drive is optionally persisted to IndexedDB across
+browser page reloads. No block device or FAT filesystem is used.
