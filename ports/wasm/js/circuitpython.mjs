@@ -609,9 +609,43 @@ export class CircuitPython {
         const bytes = await env.loadFile(options.wasmUrl);
         const module = await WebAssembly.compile(bytes);
 
-        // Merge WASI + jsffi imports
+        // Merge WASI + jsffi + port imports
         const imports = this._wasi.getImports();
         imports.jsffi = getJsffiImports();
+
+        // Port imports — C calls these to request scheduling.
+        // requestFrame(hint_ms): C tells JS when to call wasm_frame() next.
+        //   0 = ASAP, 1..N = delay ms, 0xFFFFFFFF = idle (don't schedule)
+        imports.port = {
+            requestFrame: (hintMs) => {
+                // Cancel any existing schedule
+                if (this._raf) {
+                    env.cancelFrame(this._raf);
+                    this._raf = null;
+                }
+                if (this._cDrivenTimer) {
+                    clearTimeout(this._cDrivenTimer);
+                    this._cDrivenTimer = null;
+                }
+
+                if (hintMs === 0xFFFFFFFF) {
+                    // Fully idle — don't schedule. _kick() restarts on event.
+                    return;
+                }
+                if (hintMs === 0) {
+                    // ASAP — use rAF for vsync
+                    this._raf = env.requestFrame(() => this._loop());
+                } else {
+                    // Delayed — use setTimeout
+                    this._cDrivenTimer = setTimeout(() => {
+                        this._cDrivenTimer = null;
+                        if (!this._destroyed) {
+                            this._raf = env.requestFrame(() => this._loop());
+                        }
+                    }, hintMs);
+                }
+            },
+        };
 
         const instance = await WebAssembly.instantiate(module, imports);
         this._wasi.setInstance(instance);
@@ -642,6 +676,15 @@ export class CircuitPython {
         // Initialize the supervisor (core init only — no auto-lifecycle).
         // JS orchestrates boot.py → code.py → REPL via runBoardLifecycle().
         this._exports.cp_init();
+
+        // Enable C-driven frame loop: C calls port.requestFrame() at the
+        // end of wasm_frame() to tell JS when to schedule the next frame.
+        // This replaces JS-side _scheduleNext logic with C-side decisions.
+        this._cDriven = true;
+        this._cDrivenTimer = null;
+        if (this._exports.cp_set_c_driven_loop) {
+            this._exports.cp_set_c_driven_loop(1);
+        }
 
         // Display (browser only)
         this._display = options.canvas
@@ -974,6 +1017,10 @@ export class CircuitPython {
      * JS adds its own knowledge (hidden tab, display exists) to decide.
      */
     _scheduleNext(port, sup, vm) {
+        // In C-driven mode, wasm_frame() already called port.requestFrame()
+        // with the right hint. JS doesn't need to schedule.
+        if (this._cDriven) return;
+
         const hidden = typeof document !== 'undefined' && document.hidden;
         const hasDisplay = !!this._display;
         const hasIO = !!(this._target && this._target.connected);

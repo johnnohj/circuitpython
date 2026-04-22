@@ -516,6 +516,63 @@ int cp_step(uint32_t now_ms) {
     ((port) | ((sup) << 8) | ((vm) << 16))
 
 extern bool background_callback_pending(void);
+extern uint32_t cp_next_wake_ms(uint32_t now_ms);
+
+/* ── WASM imports: C asks JS for scheduling ── */
+
+/* Request the next animation frame.  C calls this at the end of
+ * wasm_frame() when there's more work to do.  JS implements it as
+ * requestAnimationFrame(cb) where cb calls wasm_frame() again.
+ *
+ * hint values:
+ *   0 = ASAP (rAF or setTimeout(0))
+ *   1..N = delay in ms (setTimeout(N) — for sleeping contexts)
+ *   0xFFFFFFFF = don't schedule (idle — wait for external event)
+ *
+ * If JS doesn't provide this import, the function is a no-op and
+ * JS continues to drive the loop externally (backward compat). */
+__attribute__((import_module("port"), import_name("requestFrame")))
+extern void port_request_frame(uint32_t hint_ms);
+
+/* Whether C should drive the frame loop (JS provided the import). */
+static bool _c_driven_loop = false;
+
+__attribute__((export_name("cp_set_c_driven_loop")))
+void cp_set_c_driven_loop(int enabled) {
+    _c_driven_loop = (enabled != 0);
+}
+
+/* Determine next-frame hint from wasm_frame results. */
+static uint32_t _schedule_hint(uint8_t port_result, uint8_t sup_result,
+                                uint8_t vm_result) {
+    /* VM yielded = more bytecode to run — ASAP */
+    if (vm_result == WASM_VM_YIELDED) return 0;
+
+    /* Background work pending — keep ticking */
+    if (port_result == WASM_PORT_BG_PENDING) return 0;
+
+    /* Context just finished — one more frame for cleanup */
+    if (sup_result == WASM_SUP_CTX_DONE) return 0;
+
+    /* VM sleeping — ask context system for nearest deadline */
+    if (vm_result == WASM_VM_SLEEPING || sup_result == WASM_SUP_ALL_SLEEPING) {
+        uint32_t wake_ms = cp_next_wake_ms((uint32_t)wasm_js_now_ms);
+        /* If display is running, keep at rAF rate for refresh */
+        #if CIRCUITPY_DISPLAYIO
+        return (wake_ms > 16) ? 16 : wake_ms;
+        #else
+        return wake_ms;
+        #endif
+    }
+
+    /* Idle — no work, no sleeping contexts */
+    #if CIRCUITPY_DISPLAYIO
+    /* Keep slow ticking for cursor blink */
+    return 250;
+    #else
+    return 0xFFFFFFFF;  /* fully idle */
+    #endif
+}
 
 __attribute__((export_name("wasm_frame")))
 uint32_t wasm_frame(uint32_t now_ms, uint32_t budget_ms) {
@@ -619,6 +676,13 @@ uint32_t wasm_frame(uint32_t now_ms, uint32_t budget_ms) {
 
     uint32_t result = WASM_FRAME_RESULT(port_result, sup_result, vm_result);
     sh_set_frame_result(result);
+
+    /* C-driven scheduling: tell JS when to call wasm_frame() next. */
+    if (_c_driven_loop) {
+        uint32_t hint = _schedule_hint(port_result, sup_result, vm_result);
+        port_request_frame(hint);
+    }
+
     return result;
 }
 
