@@ -103,9 +103,8 @@ static uint64_t _wall_clock_ms(void) {
     return (uint64_t)tv.tv_sec * 1000 + tv.tv_nsec / 1000000;
 }
 
-void vm_yield_set_frame_start(uint64_t ms) {
+void vm_yield_set_frame_start(void) {
     _frame_start_ms = _wall_clock_ms();
-    (void)ms;
     _yield_requested = false;
     mp_vm_yield_reason = YIELD_BUDGET;
 }

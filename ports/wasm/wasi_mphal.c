@@ -112,14 +112,10 @@ void mp_hal_stdio_mode_orig(void) {
 /* ------------------------------------------------------------------ */
 
 /* JS time source — lives in port_mem (port_memory.h). */
-#include "supervisor/port_memory.h"
-
 #ifndef mp_hal_ticks_ms
 mp_uint_t mp_hal_ticks_ms(void) {
-    if (wasm_js_now_ms != 0) {
-        return (mp_uint_t)wasm_js_now_ms;
-    }
-    /* CLI mode fallback */
+    /* Single source of truth: WASI clock_gettime → JS performance.now().
+     * Always fresh, no frozen frame cache. */
     struct timespec tv;
     clock_gettime(CLOCK_MONOTONIC, &tv);
     return tv.tv_sec * 1000 + tv.tv_nsec / 1000000;

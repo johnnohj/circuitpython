@@ -72,7 +72,7 @@
 /* ------------------------------------------------------------------ */
 
 #if MICROPY_VM_YIELD_ENABLED
-extern void vm_yield_set_frame_start(uint64_t ms);
+extern void vm_yield_set_frame_start(void);
 extern void vm_yield_set_budget(uint32_t ms);
 extern int mp_hal_delay_active(void);
 extern void vm_yield_start(mp_code_state_t *cs);
@@ -367,7 +367,7 @@ extern void hal_export_dirty(void);
 
 __attribute__((export_name("cp_hw_step")))
 void cp_hw_step(uint32_t now_ms) {
-    wasm_js_now_ms = (uint64_t)now_ms;
+    (void)now_ms;  /* Time read fresh via clock_gettime when needed */
     sup_frame_count++;
 
     /* HAL step — drive simulated hardware (poll /hal/ endpoints) */
@@ -424,7 +424,7 @@ int cp_step(uint32_t now_ms) {
     cp_hw_step(now_ms);
 
     #if MICROPY_VM_YIELD_ENABLED
-    vm_yield_set_frame_start(wasm_js_now_ms);
+    vm_yield_set_frame_start();
 
     /* VM work — only when there's code to execute */
     if (wasm_cli_mode) {
@@ -438,7 +438,7 @@ int cp_step(uint32_t now_ms) {
         }
         #endif
     } else {
-        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
+        int ctx_id = cp_scheduler_pick(mp_hal_ticks_ms());
 
         if (ctx_id >= 0) {
             int prev_id = cp_context_active();
@@ -556,7 +556,7 @@ static uint32_t _schedule_hint(uint8_t port_result, uint8_t sup_result,
 
     /* VM sleeping — ask context system for nearest deadline */
     if (vm_result == WASM_VM_SLEEPING || sup_result == WASM_SUP_ALL_SLEEPING) {
-        uint32_t wake_ms = cp_next_wake_ms((uint32_t)wasm_js_now_ms);
+        uint32_t wake_ms = cp_next_wake_ms(mp_hal_ticks_ms());
         /* If display is running, keep at rAF rate for refresh */
         #if CIRCUITPY_DISPLAYIO
         return (wake_ms > 16) ? 16 : wake_ms;
@@ -608,9 +608,9 @@ uint32_t wasm_frame(uint32_t now_ms, uint32_t budget_ms) {
         #endif
     } else {
         vm_yield_set_budget(budget_ms);
-        vm_yield_set_frame_start(wasm_js_now_ms);
+        vm_yield_set_frame_start();
 
-        int ctx_id = cp_scheduler_pick(wasm_js_now_ms);
+        int ctx_id = cp_scheduler_pick(mp_hal_ticks_ms());
 
         if (ctx_id >= 0) {
             /* ── 3. VM burst ── */

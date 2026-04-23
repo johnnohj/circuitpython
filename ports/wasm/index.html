@@ -221,6 +221,19 @@ button:hover { background: var(--accent); color: var(--bg); }
 button.danger:hover { background: var(--red); }
 button.primary { background: var(--accent); color: var(--bg); }
 
+/* ── Sample tabs ── */
+.sample-tabs { display: flex; gap: 2px; }
+.sample-tabs button {
+    padding: 2px 8px; font-size: 10px;
+    background: transparent; color: var(--dim);
+    border-radius: 3px 3px 0 0;
+}
+.sample-tabs button:hover { background: var(--border); color: var(--text); }
+.sample-tabs button.active {
+    background: var(--bg); color: var(--text);
+    font-weight: 600;
+}
+
 .pin-circle { transition: fill 0.1s; }
 .pin-label {
     font-size: 9px; fill: var(--dim); text-anchor: middle;
@@ -267,7 +280,7 @@ button.primary { background: var(--accent); color: var(--bg); }
 <!-- Editor -->
 <div class="panel" id="editor-panel">
     <div class="panel-title">
-        code.py
+        <div id="sample-tabs" class="sample-tabs"></div>
         <div class="actions">
             <button id="btn-run" class="primary" title="Save & Run (Ctrl+S)">Run</button>
             <button id="btn-repl" title="Enter REPL">REPL</button>
@@ -317,6 +330,141 @@ let mode    = 'loading';   // loading | ready | code | repl
 // Expose for DevTools debugging
 window._cp = { get board() { return board; }, get adapter() { return adapter; } };
 
+// ── Code samples ──
+// Built-in samples are JS constants (edits don't persist).
+// "My Code" reads/writes /CIRCUITPY/code.py in MEMFS (persists via IDB).
+const SAMPLES = [
+    {
+        id: 'my-code',
+        label: 'My Code',
+        code: '# Write your code here!\nimport board\nimport time\n\nprint("Hello from CircuitPython!")\n',
+    },
+    {
+        id: 'sensors',
+        label: 'Sensors',
+        code: `\
+# Sensor Demo — drag the A0 slider or use Patterns!
+import time, board, analogio, digitalio
+import neopixel_write
+from rainbowio import colorwheel
+
+sensor = analogio.AnalogIn(board.A0)
+np_pin = digitalio.DigitalInOut(board.NEOPIXEL)
+np_pin.direction = digitalio.Direction.OUTPUT
+
+NUM_PIXELS = 10
+buf = bytearray(NUM_PIXELS * 3)
+hue = 0
+
+while True:
+    brightness = sensor.value / 65535
+    for i in range(NUM_PIXELS):
+        c = colorwheel((hue + i * 25) & 255)
+        buf[i*3]   = int(((c >> 8) & 0xFF) * brightness)
+        buf[i*3+1] = int(((c >> 16) & 0xFF) * brightness)
+        buf[i*3+2] = int((c & 0xFF) * brightness)
+    neopixel_write.neopixel_write(np_pin, buf)
+    hue = (hue + 1) & 255
+    time.sleep(0.02)
+`,
+    },
+    {
+        id: 'display',
+        label: 'Display',
+        code: `\
+# Display Demo — text + shapes on the framebuffer
+import board, displayio, time
+
+display = board.DISPLAY
+group = displayio.Group()
+
+# Color palette
+pal = displayio.Palette(4)
+pal[0] = 0x000000  # black (transparent)
+pal[1] = 0x89b4fa  # blue
+pal[2] = 0xa6e3a1  # green
+pal[3] = 0xf38ba8  # pink
+
+# Draw a few rectangles
+for i, color_idx in enumerate([1, 2, 3]):
+    bmp = displayio.Bitmap(60, 40, 4)
+    for x in range(60):
+        for y in range(40):
+            bmp[x, y] = color_idx
+    sprite = displayio.TileGrid(bmp, pixel_shader=pal, x=30 + i*70, y=20 + i*50)
+    group.append(sprite)
+
+display.root_group = group
+
+# Animate
+dx = [2, -1, 1]
+while True:
+    for i, sprite in enumerate(group):
+        sprite.x += dx[i]
+        if sprite.x <= 0 or sprite.x >= display.width - 60:
+            dx[i] = -dx[i]
+    time.sleep(0.03)
+`,
+    },
+    {
+        id: 'blink',
+        label: 'Blink',
+        code: `\
+# Blink a NeoPixel!
+#   BUTTON_A → cycle color (ROY G BIV)
+#   BUTTON_B → move to next pixel (wraps around)
+import board, digitalio, neopixel, time
+
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, auto_write=True)
+
+btn_a = digitalio.DigitalInOut(board.BUTTON_A)
+btn_a.direction = digitalio.Direction.INPUT
+btn_a.pull = digitalio.Pull.UP
+
+btn_b = digitalio.DigitalInOut(board.BUTTON_B)
+btn_b.direction = digitalio.Direction.INPUT
+btn_b.pull = digitalio.Pull.UP
+
+COLORS = [
+    ("Red",    (255, 0,   0)),
+    ("Orange", (255, 127, 0)),
+    ("Yellow", (255, 255, 0)),
+    ("Green",  (0,   255, 0)),
+    ("Blue",   (0,   0,   255)),
+    ("Indigo", (75,  0,   130)),
+    ("Violet", (148, 0,   211)),
+]
+
+pos = 0
+color_idx = 0
+prev_a = True
+prev_b = True
+
+while True:
+    a_pressed = not btn_a.value
+    if a_pressed and prev_a:
+        color_idx = (color_idx + 1) % len(COLORS)
+        print("Color:", COLORS[color_idx][0])
+    prev_a = not a_pressed
+
+    b_pressed = not btn_b.value
+    if b_pressed and prev_b:
+        pos = (pos + 1) % len(pixels)
+        print("Pixel:", pos)
+    prev_b = not b_pressed
+
+    pixels.fill((0, 0, 0))
+    pixels[pos] = COLORS[color_idx][1]
+    time.sleep(0.3)
+
+    pixels[pos] = (0, 0, 0)
+    time.sleep(0.3)
+`,
+    },
+];
+
+let currentTab = null; // currently active sample id
+
 // ── Init ──
 async function init() {
     adapter = await loadBoardAdapter(
@@ -343,22 +491,21 @@ async function init() {
             // code.py finished — stay on display, show status
             setMode('ready');
         },
+        onFrame: () => {
+            // Render board visualization in sync with wasm_frame()
+            renderBoardState();
+        },
     });
 
     board._exports.cp_set_debug(0);
 
-    // Populate editor from MEMFS (seeded from IDB or default)
-    const codePy = board._wasi.readFile('/CIRCUITPY/code.py');
-    if (codePy) {
-        $editor.value = new TextDecoder().decode(codePy);
-    }
+    // Build sample tabs
+    initSampleTabs();
 
     renderBoardSvg();
+    cacheSvgElements();
     $loading.classList.add('hidden');
     setMode('ready');
-
-    // Render loop — board visualization (SVG pins/neopixels)
-    requestAnimationFrame(renderLoop);
 }
 
 // ── Mode management ──
@@ -378,13 +525,57 @@ function setMode(m) {
     }
 }
 
+// ── Sample tabs ──
+const $tabs = document.getElementById('sample-tabs');
+
+function initSampleTabs() {
+    for (const sample of SAMPLES) {
+        const btn = document.createElement('button');
+        btn.textContent = sample.label;
+        btn.dataset.sampleId = sample.id;
+        btn.addEventListener('click', () => switchTab(sample.id));
+        $tabs.appendChild(btn);
+    }
+    // Start on "My Code" — load from IDB/MEMFS, or use default
+    const saved = board._wasi.readFile('/CIRCUITPY/code.py');
+    if (saved) {
+        SAMPLES[0].code = new TextDecoder().decode(saved);
+    }
+    switchTab('my-code');
+}
+
+function switchTab(id) {
+    // Save current editor content back to current tab
+    if (currentTab) {
+        const cur = SAMPLES.find(s => s.id === currentTab);
+        if (cur) cur.code = $editor.value;
+        // If leaving "My Code", persist to MEMFS (→ IDB)
+        if (currentTab === 'my-code' && board) {
+            board._wasi.writeFile('/CIRCUITPY/code.py', new TextEncoder().encode($editor.value));
+        }
+    }
+    // Activate new tab
+    currentTab = id;
+    const sample = SAMPLES.find(s => s.id === id);
+    $editor.value = sample.code;
+    // Update tab button styles
+    for (const btn of $tabs.children) {
+        btn.classList.toggle('active', btn.dataset.sampleId === id);
+    }
+}
+
 // ── Actions ──
 
 function startCode() {
     if (!board) return;
     board.stop();
     $text.textContent = '';
-    // Write editor → MEMFS (persists to IDB automatically)
+    // Clear displayio terminal + print separator (like real CP boards)
+    clearDisplay();
+    board._readline.termWrite('Running code.py ...\r\n\r\n');
+    // Save editor to current sample + write to MEMFS
+    const cur = SAMPLES.find(s => s.id === currentTab);
+    if (cur) cur.code = $editor.value;
     const enc = new TextEncoder();
     board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode($editor.value));
     board.execFile('/code.py');
@@ -396,7 +587,10 @@ function startRepl() {
     if (!board) return;
     board.stop();
     $text.textContent = '';
-    // Show REPL prompt on the displayio terminal
+    // Clear displayio terminal, newline, then prompt (matches _enterRepl)
+    clearDisplay();
+    board._readline._waitingForResult = false;
+    board._readline.termWrite('\r\n');
     board._readline.showPrompt();
     setMode('repl');
     setView('display');
@@ -406,7 +600,21 @@ function startRepl() {
 function stopAll() {
     if (!board) return;
     board.stop();
+    clearDisplay();
+    resetBoardVisuals();
     setMode('ready');
+}
+
+/** Reset SVG pin circles and neopixels to default (off) state. */
+function resetBoardVisuals() {
+    for (const c of $svg.querySelectorAll('.pin-circle')) {
+        c.setAttribute('fill', '#333');
+        c.setAttribute('stroke', '#555');
+    }
+    for (const led of $svg.querySelectorAll('.neopixel-led')) {
+        led.setAttribute('fill', '#111');
+        led.setAttribute('stroke', '#333');
+    }
 }
 
 // ── Event wiring ──
@@ -435,7 +643,16 @@ function setView(view) {
 }
 document.getElementById('btn-view-display').addEventListener('click', () => setView('display'));
 document.getElementById('btn-view-text').addEventListener('click', () => setView('text'));
-document.getElementById('btn-clear').addEventListener('click', () => { $text.textContent = ''; });
+document.getElementById('btn-clear').addEventListener('click', () => {
+    $text.textContent = '';
+    clearDisplay();
+});
+
+/** Send ESC[2J (clear screen) to the displayio terminal via cp_print. */
+function clearDisplay() {
+    if (!board?._readline) return;
+    board._readline.termWrite('\x1b[2J');
+}
 
 // ── Board buttons ──
 function setupButton(id, pin) {
@@ -742,47 +959,57 @@ function updateSensorPanel(snap) {
     $sensorEmpty.style.display = activePins.size > 0 ? 'none' : '';
 }
 
-// ── Render loop (board visualization + cursor) ──
-function renderLoop() {
-    if (board && adapter) {
-        const snap = adapter.getSnapshot(board);
+// ── Board state rendering (called in sync with wasm_frame via onFrame) ──
 
-        // Pin state
-        for (const [name, state] of Object.entries(snap.pins)) {
-            const g = $svg.querySelector(`[data-pin="${name}"]`);
-            if (!g) continue;
-            const c = g.querySelector('.pin-circle');
-            if (!c) continue;
-            if (!state.gpio?.enabled) {
-                c.setAttribute('fill', '#333'); c.setAttribute('stroke', '#555');
-            } else if (state.gpio.direction === 1) {
-                c.setAttribute('fill', state.gpio.value ? '#a6e3a1' : '#45475a');
-                c.setAttribute('stroke', state.gpio.value ? '#74c7a0' : '#555');
-            } else {
-                c.setAttribute('fill', state.gpio.value ? '#89b4fa' : '#313244');
-                c.setAttribute('stroke', '#555');
-            }
+// Cache SVG element references — avoids querySelector every frame
+const _pinCircles = new Map();   // pinName → SVGCircleElement
+const _npLeds = [];              // index → SVGCircleElement
+
+function cacheSvgElements() {
+    for (const g of $svg.querySelectorAll('[data-pin]')) {
+        const name = g.dataset.pin;
+        const circle = g.querySelector('.pin-circle');
+        if (circle) _pinCircles.set(name, circle);
+    }
+    for (let i = 0; i < 10; i++) {
+        const el = $svg.querySelector(`[data-np-index="${i}"]`);
+        if (el) _npLeds[i] = el;
+    }
+}
+
+function renderBoardState() {
+    if (!board || !adapter) return;
+    const snap = adapter.getSnapshot(board);
+
+    // Pin state
+    for (const [name, state] of Object.entries(snap.pins)) {
+        const c = _pinCircles.get(name);
+        if (!c) continue;
+        if (!state.gpio?.enabled) {
+            c.setAttribute('fill', '#333'); c.setAttribute('stroke', '#555');
+        } else if (state.gpio.direction === 1) {
+            c.setAttribute('fill', state.gpio.value ? '#a6e3a1' : '#45475a');
+            c.setAttribute('stroke', state.gpio.value ? '#74c7a0' : '#555');
+        } else {
+            c.setAttribute('fill', state.gpio.value ? '#89b4fa' : '#313244');
+            c.setAttribute('stroke', '#555');
         }
-
-        // NeoPixels
-        const np = snap.neopixels['NEOPIXEL'];
-        if (np) {
-            for (let i = 0; i < np.numPixels && i < 10; i++) {
-                const el = $svg.querySelector(`[data-np-index="${i}"]`);
-                if (!el || !np.pixels[i]) continue;
-                const p = np.pixels[i];
-                el.setAttribute('fill', `rgb(${p.r},${p.g},${p.b})`);
-                el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
-            }
-        }
-
-        // Sensor panel — show active analog input pins
-        updateSensorPanel(snap);
-
-        // Cursor is managed by DisplayContext (blink timer independent of rAF)
     }
 
-    requestAnimationFrame(renderLoop);
+    // NeoPixels
+    const np = snap.neopixels['NEOPIXEL'];
+    if (np) {
+        for (let i = 0; i < np.numPixels && i < 10; i++) {
+            const el = _npLeds[i];
+            if (!el || !np.pixels[i]) continue;
+            const p = np.pixels[i];
+            el.setAttribute('fill', `rgb(${p.r},${p.g},${p.b})`);
+            el.setAttribute('stroke', p.r + p.g + p.b > 30 ? '#fff3' : '#333');
+        }
+    }
+
+    // Sensor panel — show active analog input pins
+    updateSensorPanel(snap);
 }
 
 // ── Boot ──

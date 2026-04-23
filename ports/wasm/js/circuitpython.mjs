@@ -313,8 +313,8 @@ export class CircuitPython {
     get displayContext() { return this._displayCtx; }
 
     /**
-     * Register a hardware module.  Modules get preStep/postStep hooks
-     * and receive routed /hal/ write/read callbacks.
+     * Register a hardware module.  Modules receive routed /hal/
+     * onWrite/onRead callbacks from C, plus afterFrame for cleanup.
      * @param {HardwareModule} mod
      */
     registerHardware(mod) { this._hw.register(mod); }
@@ -565,6 +565,7 @@ export class CircuitPython {
         this._statusEl = options.statusEl || null;
         this._serialEl = options.serialEl || null;
         this._onCodeDone = options.onCodeDone || null;
+        this._onFrame = options.onFrame || null;
 
         if (this._statusEl) this._statusEl.textContent = 'Loading...';
 
@@ -1028,9 +1029,11 @@ export class CircuitPython {
             }
         }
 
-        // Hardware module sync (JS-side board SVG, onChange callbacks)
-        this._hw.preStep(this._wasi, nowMs);
-        this._hw.postStep(this._wasi, nowMs);
+        // Post-frame hardware cleanup (e.g., release latched buttons)
+        this._hw.afterFrame(this._wasi);
+
+        // Notify frame listeners (SVG render, sensor panel, etc.)
+        if (this._onFrame) this._onFrame();
 
         // IO target polling (independent of C, runs at reduced rate)
         if (this._ioCtx?.needsWork) {

@@ -49,8 +49,14 @@ const ANALOG_SLOT = 4;
 const PWM_SLOT = 8;
 
 /**
- * Base class for hardware modules.  Subclasses override preStep/postStep
- * and declare which /hal/ paths they handle.
+ * Base class for hardware modules.
+ *
+ * Event-driven: onWrite fires when C writes output state, onRead fires
+ * when C reads input state. Modules parse state in onWrite and provide
+ * fresh data in onRead — no polling needed.
+ *
+ * afterFrame is an optional hook for post-frame cleanup (e.g., releasing
+ * latched button state). Most modules don't need it.
  */
 export class HardwareModule {
     /** @returns {string} Module name (e.g., 'gpio', 'neopixel') */
@@ -58,39 +64,33 @@ export class HardwareModule {
 
     /**
      * @returns {string[]} /hal/ path prefixes this module handles.
-     * Used by the router to dispatch onHardwareWrite/onHardwareRead.
+     * Used by the router to dispatch onWrite/onRead.
      */
     get paths() { return []; }
 
     /**
-     * Called before cp_step — inject fresh data into MEMFS.
-     * @param {WasiMemfs} memfs — the WASI filesystem
-     * @param {number} nowMs — current time in ms
-     */
-    preStep(memfs, nowMs) {}
-
-    /**
-     * Called after cp_step — read state from MEMFS, update UI.
-     * @param {WasiMemfs} memfs — the WASI filesystem
-     * @param {number} nowMs — current time in ms
-     */
-    postStep(memfs, nowMs) {}
-
-    /**
-     * Called when Python writes to a /hal/ path handled by this module.
+     * Called when C writes to a /hal/ path handled by this module.
+     * Parse output state here (replaces postStep polling).
      * @param {string} path — full path (e.g., '/hal/gpio')
      * @param {Uint8Array} data — bytes written
      */
     onWrite(path, data) {}
 
     /**
-     * Called when Python reads a /hal/ path handled by this module.
-     * Return fresh data to override what Python sees, or null for no override.
+     * Called when C reads a /hal/ path handled by this module.
+     * Return fresh data to override what C sees, or null for MEMFS default.
      * @param {string} path — full path
      * @param {number} offset — file read offset
      * @returns {Uint8Array|null}
      */
     onRead(path, offset) { return null; }
+
+    /**
+     * Optional post-frame hook for cleanup (e.g., latch release).
+     * Called once after wasm_frame() returns. Most modules leave this empty.
+     * @param {WasiMemfs} memfs
+     */
+    afterFrame(memfs) {}
 
     /**
      * Reset hardware state to initial (Layer 3 teardown).
@@ -116,6 +116,9 @@ export class GpioModule extends HardwareModule {
         super();
         this._onChange = options.onChange || null;
         this._pins = new Array(GPIO_MAX_PINS).fill(null);
+        // Latched presses: Set of pin numbers. Cleared after Python reads that pin.
+        this._latched = new Map();
+        this._latchRead = new Set();  // pins whose latched value has been read
     }
 
     get name() { return 'gpio'; }
@@ -132,16 +135,32 @@ export class GpioModule extends HardwareModule {
     /**
      * Set a pin's input value from JS (e.g., virtual button press).
      * Only works for input pins — writes to MEMFS so Python reads it.
+     *
+     * Button presses (value=false for pull-up buttons) are latched:
+     * the low state persists in MEMFS until C writes back /hal/gpio
+     * (i.e., Python has had a chance to read it). This prevents fast
+     * clicks from being missed during time.sleep().
      */
     setInputValue(memfs, pin, value) {
         const data = memfs.readFile('/hal/gpio');
         if (!data || pin * GPIO_SLOT + 2 >= data.length) return;
         const state = this._pins[pin];
         if (!state || !state.enabled || state.direction !== 0) return;
-        // Write value byte at offset [2] in pin's slot
+
+        if (!value) {
+            // Press: latch it so it survives until Python reads
+            this._latched.set(pin, true);
+        } else if (this._latched.has(pin)) {
+            // Release while latched: don't write yet, let onWrite clear it
+            return;
+        }
+
         const buf = new Uint8Array(data);
-        buf[pin * GPIO_SLOT + 2] = value ? 1 : 0;
+        const byteVal = value ? 1 : 0;
+        buf[pin * GPIO_SLOT + 2] = byteVal;
         memfs.updateHardwareState('/hal/gpio', buf);
+        // Keep local state in sync for UI reads
+        if (this._pins[pin]) this._pins[pin].value = byteVal;
     }
 
     reset(memfs) {
@@ -149,12 +168,46 @@ export class GpioModule extends HardwareModule {
         const data = memfs.readFile('/hal/gpio');
         if (data) data.fill(0);
         this._pins.fill(null);
+        this._latched.clear();
+        this._latchRead.clear();
     }
 
-    postStep(memfs, nowMs) {
-        const data = memfs.readFile('/hal/gpio');
-        if (!data) return;
+    /** C reads /hal/gpio — mark specific latched pins as read. */
+    onRead(path, offset) {
+        if (this._latched.size > 0) {
+            // offset tells us which pin C is reading
+            const pin = Math.floor(offset / GPIO_SLOT);
+            if (this._latched.has(pin)) {
+                this._latchRead.add(pin);
+            }
+        }
+        return null;
+    }
 
+    /** C wrote /hal/gpio — parse pin state, fire onChange. */
+    onWrite(path, data) {
+        this._parseState(data);
+    }
+
+    /** Release latched buttons that Python has actually read. */
+    afterFrame(memfs) {
+        if (this._latchRead.size > 0) {
+            const data = memfs.readFile('/hal/gpio');
+            if (data) {
+                const buf = new Uint8Array(data);
+                for (const pin of this._latchRead) {
+                    buf[pin * GPIO_SLOT + 2] = 1;
+                    this._latched.delete(pin);
+                }
+                memfs.updateHardwareState('/hal/gpio', buf);
+            }
+            this._latchRead.clear();
+        }
+    }
+
+    /** Parse GPIO state from raw MEMFS data. */
+    _parseState(data) {
+        if (!data) return;
         for (let pin = 0; pin < GPIO_MAX_PINS; pin++) {
             const off = pin * GPIO_SLOT;
             if (off + GPIO_SLOT > data.length) break;
@@ -170,9 +223,9 @@ export class GpioModule extends HardwareModule {
 
             const state = {
                 enabled: true,
-                direction: data[off + 1],  // 0=input, 1=output
+                direction: data[off + 1],
                 value: data[off + 2],
-                pull: data[off + 3],       // 0=none, 1=up, 2=down
+                pull: data[off + 3],
                 openDrain: data[off + 4],
             };
 
@@ -226,11 +279,10 @@ export class NeoPixelModule extends HardwareModule {
         this._strips.clear();
     }
 
-    postStep(memfs, nowMs) {
-        const data = memfs.readFile('/hal/neopixel');
+    /** C wrote /hal/neopixel — parse pixel data, fire onUpdate. */
+    onWrite(path, data) {
         if (!data) return;
 
-        // Scan pin regions
         for (let pin = 0; pin < GPIO_MAX_PINS; pin++) {
             const base = pin * NEOPIXEL_REGION;
             if (base + NEOPIXEL_HEADER > data.length) break;
@@ -247,7 +299,6 @@ export class NeoPixelModule extends HardwareModule {
             const numBytes = data[base + 2] | (data[base + 3] << 8);
             if (numBytes === 0) continue;
 
-            // GRB format: 3 bytes per pixel
             const bpp = numBytes % 4 === 0 && numBytes >= 4 ? 4 : 3;
             const numPixels = Math.floor(numBytes / bpp);
             const pixels = [];
@@ -255,7 +306,6 @@ export class NeoPixelModule extends HardwareModule {
             for (let i = 0; i < numPixels; i++) {
                 const off = base + NEOPIXEL_HEADER + i * bpp;
                 if (off + bpp > data.length) break;
-                // NeoPixel wire order: GRB (or GRBW)
                 pixels.push({
                     r: data[off + 1],
                     g: data[off],
@@ -359,6 +409,8 @@ export class AnalogModule extends HardwareModule {
         buf[pin * ANALOG_SLOT + 2] = value & 0xff;
         buf[pin * ANALOG_SLOT + 3] = (value >> 8) & 0xff;
         memfs.updateHardwareState('/hal/analog', buf);
+        // Update local state so UI reads (sensor panel) stay in sync
+        state.value = value;
     }
 
     reset(memfs) {
@@ -367,8 +419,8 @@ export class AnalogModule extends HardwareModule {
         this._pins.fill(null);
     }
 
-    postStep(memfs, nowMs) {
-        const data = memfs.readFile('/hal/analog');
+    /** C wrote /hal/analog — parse ADC/DAC state. */
+    onWrite(path, data) {
         if (!data) return;
 
         for (let pin = 0; pin < GPIO_MAX_PINS; pin++) {
@@ -442,8 +494,8 @@ export class PwmModule extends HardwareModule {
         this._pins.fill(null);
     }
 
-    postStep(memfs, nowMs) {
-        const data = memfs.readFile('/hal/pwm');
+    /** C wrote /hal/pwm — parse duty cycle / frequency state. */
+    onWrite(path, data) {
         if (!data) return;
 
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -643,13 +695,8 @@ export class I2cModule extends HardwareModule {
         }
     }
 
-    preStep(memfs, nowMs) {
-        // Sync device register arrays → MEMFS before VM reads them
-        for (const [addr, device] of this._devices) {
-            const path = `/hal/i2c/dev/${addr}`;
-            memfs.updateHardwareState(path, device.registers);
-        }
-    }
+    // Note: preStep removed — onRead already returns fresh register data
+    // directly from device.registers, bypassing MEMFS.
 
     _parseAddr(path) {
         // /hal/i2c/dev/68 → 68
@@ -688,17 +735,10 @@ export class HardwareRouter {
         return this._modules.find(m => m.name === name) || null;
     }
 
-    /** Run all preStep hooks. */
-    preStep(memfs, nowMs) {
+    /** Run all afterFrame hooks (post-frame cleanup like latch release). */
+    afterFrame(memfs) {
         for (const mod of this._modules) {
-            mod.preStep(memfs, nowMs);
-        }
-    }
-
-    /** Run all postStep hooks. */
-    postStep(memfs, nowMs) {
-        for (const mod of this._modules) {
-            mod.postStep(memfs, nowMs);
+            mod.afterFrame(memfs);
         }
     }
 
