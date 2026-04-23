@@ -26,9 +26,8 @@ import { env } from './env.js';
 import { Fwip } from './fwip.js';
 import { Display } from './display.mjs';
 import { Readline } from './readline.mjs';
-import { HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
+import { HardwareState, I2CDevice } from './hardware.mjs';
 import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';
-import { DisplayContext, HardwareContext, IOContext } from './context-managers.mjs';
 import {
     unpackFrameResult,
     WASM_PORT_QUIET, WASM_PORT_BG_PENDING,
@@ -38,6 +37,72 @@ import {
 } from './semihosting.js';
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\[[\?]?[0-9;]*[hlm]/g;
+
+// ── Context managers (inlined from context-managers.mjs) ──
+// Output consumers for wasm_frame() results. They don't call C exports —
+// they only read state and update JS-side resources.
+
+class DisplayContext {
+    constructor(board) {
+        this._board = board;
+        this._cursorVisible = false;
+        this._cursorTimer = null;
+        this._cursorBlinkMs = 530;
+        this._showCursor = false;
+    }
+    startCursorBlink() {
+        this._showCursor = true;
+        this._cursorVisible = true;
+        if (this._cursorTimer) clearInterval(this._cursorTimer);
+        this._cursorTimer = setInterval(() => {
+            this._cursorVisible = !this._cursorVisible;
+        }, this._cursorBlinkMs);
+    }
+    stopCursorBlink() {
+        this._showCursor = false;
+        this._cursorVisible = false;
+        if (this._cursorTimer) {
+            clearInterval(this._cursorTimer);
+            this._cursorTimer = null;
+        }
+    }
+    onVisible() {}
+    onHidden() { this.stopCursorBlink(); }
+    reset() { this.stopCursorBlink(); }
+}
+
+class HardwareContext {
+    constructor(board) { this._board = board; }
+    onVisible() {}
+    onHidden() {}
+    reset() {
+        const board = this._board;
+        if (board._hw?.reset) board._hw.reset(board._wasi);
+    }
+}
+
+class IOContext {
+    constructor(board) {
+        this._board = board;
+        this._pollCounter = 0;
+        this._pollInterval = 20;
+    }
+    get needsWork() {
+        return !!(this._board._target && this._board._target.connected);
+    }
+    step(nowMs) {
+        const target = this._board._target;
+        if (!target || !target.connected) return;
+        target.applyState(this._board._wasi, nowMs);
+        if (++this._pollCounter >= this._pollInterval) {
+            this._pollCounter = 0;
+            target.pollInputs();
+        }
+    }
+    onHidden() { this._pollInterval = 60; }
+    onVisible() { this._pollInterval = 20; }
+    reset() { this._pollCounter = 0; }
+}
 
 // Context-status display names (matches CTX_* in supervisor/context.h)
 const YIELD_REASONS = ['budget', 'sleep', 'show', 'io_wait', 'stdin'];
@@ -128,7 +193,7 @@ export class CircuitPython {
         this._onCodeDone = null;
         this._codeDoneFired = false;
         this._waitingForKey = false;
-        this._hw = new HardwareRouter();
+        this._hw = new HardwareState();
         this._ctxCallbacks = new Map();  // context id → onDone callback
         this._autoReloadTimer = null;
         this._autoReloadEnabled = false;
@@ -325,14 +390,15 @@ export class CircuitPython {
      * onWrite/onRead callbacks from C, plus afterFrame for cleanup.
      * @param {HardwareModule} mod
      */
-    registerHardware(mod) { this._hw.register(mod); }
+    /** @deprecated Use board.hardware('i2c').addDevice() instead. */
+    registerHardware(mod) {}
 
     /**
      * Get a registered hardware module by name.
      * @param {string} name — e.g., 'gpio', 'neopixel'
      * @returns {HardwareModule|null}
      */
-    hardware(name) { return this._hw.get(name); }
+    hardware(name) { return this._hw.hardware(name); }
 
     // ── Board lifecycle orchestration ──
 
@@ -584,14 +650,7 @@ export class CircuitPython {
         const idb = options.persist ? new IdbBackend() : null;
         this._idb = idb;
 
-        // Register default hardware modules
-        this._hw.register(new GpioModule());
-        this._hw.register(new NeoPixelModule());
-        this._hw.register(new AnalogModule());
-        this._hw.register(new PwmModule());
-        this._hw.register(new I2cModule());
-
-        // WASI runtime — route /hal/ callbacks through hardware router
+        // WASI runtime — route /hal/ callbacks through hardware state
         this._wasi = new WasiMemfs({
             args: ['circuitpython'],
             idb,
@@ -614,6 +673,7 @@ export class CircuitPython {
                 }
             },
         });
+        this._hw.setMemfs(this._wasi);
 
         // Restore persisted files
         if (idb) {
@@ -895,50 +955,11 @@ export class CircuitPython {
         }
     }
 
-    /**
-     * Populate the board module dict from a definition.json object.
-     * JS parses the JSON; C provides board_add_pin(name_len, gpio_id).
-     *
-     * If no definition is provided, loads the built-in default from
-     * /boards/wasm_browser/definition.json via MEMFS.
-     */
+    /** Store board definition for visual rendering (SVG, board-adapter).
+     *  Board pins are defined in the static C table (board_pins.c) —
+     *  pin_meta categories are set at init by hal_init_pin_categories(). */
     _applyBoardDefinition(def) {
-        const e = this._exports;
-        if (!e.board_reset || !e.board_add_pin || !e.board_finalize) {
-            return;  // CIRCUITPY_MUTABLE_BOARD not enabled
-        }
-
-        if (!def || !def.pins) return;
-
-        // Reset board dict to standard items only
-        e.board_reset();
-
-        // Write each pin name into the shared input buffer, then call board_add_pin
-        const bufAddr = e.cp_input_buf_addr();
-        const mem = new Uint8Array(e.memory.buffer);
-        const enc = new TextEncoder();
-
-        for (const pin of def.pins) {
-            // Add primary name
-            const nameBytes = enc.encode(pin.name);
-            mem.set(nameBytes, bufAddr);
-            e.board_add_pin(nameBytes.length, pin.id);
-
-            // Add aliases (LED, SDA, SCL, etc.)
-            if (pin.aliases) {
-                for (const alias of pin.aliases) {
-                    const aliasBytes = enc.encode(alias);
-                    mem.set(aliasBytes, bufAddr);
-                    e.board_add_pin(aliasBytes.length, pin.id);
-                }
-            }
-        }
-
-        // Add bus constructors and display
-        e.board_finalize();
-
-        // Store definition for hardware adapter / SVG rendering
-        this._boardDefinition = def;
+        if (def) this._boardDefinition = def;
     }
 
     /** Print "code.py last edited: ..." line via cp_print. */
@@ -1183,6 +1204,6 @@ export class CircuitPython {
     }
 }
 
-// Re-export hardware module classes for external use
-export { HardwareModule, HardwareRouter, GpioModule, NeoPixelModule, AnalogModule, PwmModule, I2cModule, I2CDevice } from './hardware.mjs';
+// Re-export hardware classes for external use
+export { HardwareState, I2CDevice } from './hardware.mjs';
 export { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';

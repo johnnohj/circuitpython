@@ -27,18 +27,7 @@
  *   board.connectTarget(tee);
  */
 
-// ── GPIO slot layout (must match hardware.mjs) ──
-const GPIO_SLOT = 8;
-const GPIO_MAX_PINS = 32;
-
-// ── NeoPixel region layout ──
-const NEOPIXEL_HEADER = 4;
-
-// ── Analog slot layout ──
-const ANALOG_SLOT = 4;
-
-// ── PWM slot layout ──
-const PWM_SLOT = 8;
+import { GPIO_SLOT, GPIO_MAX_PINS, NEOPIXEL_HEADER, ANALOG_SLOT, PWM_SLOT } from './hardware.mjs';
 
 // ── U2IF opcodes ──
 const U2IF = {
