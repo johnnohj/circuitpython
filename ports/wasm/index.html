@@ -569,16 +569,29 @@ function switchTab(id) {
 function startCode() {
     if (!board) return;
     board.stop();
+    // Process the stop — supervisor needs a frame to reach SUP_REPL
+    board._exports.wasm_frame(performance.now() | 0, 1);
     $text.textContent = '';
-    // Clear displayio terminal + print separator (like real CP boards)
     clearDisplay();
     board._readline.termWrite('Running code.py ...\r\n\r\n');
-    // Save editor to current sample + write to MEMFS
+    // Save editor to current sample
     const cur = SAMPLES.find(s => s.id === currentTab);
     if (cur) cur.code = $editor.value;
-    const enc = new TextEncoder();
-    board._wasi.writeFile('/CIRCUITPY/code.py', enc.encode($editor.value));
-    board.execFile('/code.py');
+    // Always persist "My Code" before running anything else
+    const myCode = SAMPLES.find(s => s.id === 'my-code');
+    if (currentTab === 'my-code') {
+        // Running My Code — write directly to code.py
+        board._wasi.writeFile('/CIRCUITPY/code.py',
+            new TextEncoder().encode($editor.value));
+        board.execFile('/code.py');
+    } else {
+        // Running a sample — save My Code first, then run sample from string
+        board._wasi.writeFile('/CIRCUITPY/code.py',
+            new TextEncoder().encode(myCode.code));
+        board._wasi.writeFile('/CIRCUITPY/_sample.py',
+            new TextEncoder().encode($editor.value));
+        board.execFile('/_sample.py');
+    }
     setMode('code');
     setView('display');
 }
@@ -586,6 +599,7 @@ function startCode() {
 function startRepl() {
     if (!board) return;
     board.stop();
+    board._exports.wasm_frame(performance.now() | 0, 1);
     $text.textContent = '';
     // Clear displayio terminal, newline, then prompt (matches _enterRepl)
     clearDisplay();
