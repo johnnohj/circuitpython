@@ -43,6 +43,7 @@ void common_hal_analogio_analogin_construct(analogio_analogin_obj_t *self,
     const mcu_pin_obj_t *pin) {
     self->pin = pin;
     claim_pin(pin);
+    hal_set_role(pin->number, HAL_ROLE_ADC);
     uint8_t slot[ANALOG_SLOT_SIZE] = {1, 0, 0x00, 0x80}; /* enabled, input, value=32768 */
     _write_pin(pin->number, slot);
 }
@@ -62,6 +63,11 @@ bool common_hal_analogio_analogin_deinited(analogio_analogin_obj_t *self) {
 uint16_t common_hal_analogio_analogin_get_value(analogio_analogin_obj_t *self) {
     uint8_t slot[ANALOG_SLOT_SIZE];
     _read_pin(self->pin->number, slot);
+    uint8_t flags = hal_get_flags(self->pin->number);
+    if (flags & HAL_FLAG_JS_WROTE) {
+        hal_clear_flag(self->pin->number, HAL_FLAG_JS_WROTE);
+        hal_set_flag(self->pin->number, HAL_FLAG_C_READ);
+    }
     return (uint16_t)slot[2] | ((uint16_t)slot[3] << 8);
 }
 

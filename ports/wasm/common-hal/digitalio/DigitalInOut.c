@@ -20,6 +20,7 @@
 #include "shared-bindings/digitalio/DigitalInOut.h"
 #include "shared-bindings/microcontroller/Pin.h"
 #include "supervisor/hal.h"
+#include "supervisor/port_memory.h"
 #include "py/runtime.h"
 
 #include <string.h>
@@ -57,6 +58,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
     digitalio_digitalinout_obj_t *self, const mcu_pin_obj_t *pin) {
     self->pin = pin;
     claim_pin(pin);
+    hal_set_role(pin->number, HAL_ROLE_DIGITAL_IN);
 
     uint8_t slot[GPIO_SLOT_SIZE] = {0};
     slot[0] = 1;  /* enabled */
@@ -99,6 +101,7 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_input(
         slot[2] = 0;
     }
     _write_pin(self->pin->number, slot);
+    hal_set_role(self->pin->number, HAL_ROLE_DIGITAL_IN);
     return DIGITALINOUT_OK;
 }
 
@@ -111,12 +114,33 @@ digitalinout_result_t common_hal_digitalio_digitalinout_switch_to_output(
     slot[2] = value ? 1 : 0;
     slot[4] = (drive_mode == DRIVE_MODE_OPEN_DRAIN) ? 1 : 0;
     _write_pin(self->pin->number, slot);
+    hal_set_role(self->pin->number, HAL_ROLE_DIGITAL_OUT);
     return DIGITALINOUT_OK;
 }
 
 bool common_hal_digitalio_digitalinout_get_value(digitalio_digitalinout_obj_t *self) {
+    uint8_t pin_num = self->pin->number;
+    uint8_t flags = hal_get_flags(pin_num);
+
+    /* If the port latched an input value (like a GPIO interrupt capture),
+     * return the latched value instead of the live MEMFS value.  This
+     * ensures the VM sees a button press even if JS already released
+     * (mouseup) before the VM woke from time.sleep(). */
+    if (flags & HAL_FLAG_LATCHED) {
+        uint8_t val = port_mem.pin_meta[pin_num].latched;
+        /* Consume: clear the latch + JS_WROTE, set C_READ */
+        hal_clear_flag(pin_num, HAL_FLAG_LATCHED | HAL_FLAG_JS_WROTE);
+        hal_set_flag(pin_num, HAL_FLAG_C_READ);
+        return val != 0;
+    }
+
+    /* Normal read from MEMFS */
     uint8_t slot[GPIO_SLOT_SIZE];
-    _read_pin(self->pin->number, slot);
+    _read_pin(pin_num, slot);
+    if (flags & HAL_FLAG_JS_WROTE) {
+        hal_clear_flag(pin_num, HAL_FLAG_JS_WROTE);
+        hal_set_flag(pin_num, HAL_FLAG_C_READ);
+    }
     return slot[2] != 0;
 }
 
@@ -126,6 +150,7 @@ void common_hal_digitalio_digitalinout_set_value(digitalio_digitalinout_obj_t *s
     _read_pin(self->pin->number, slot);
     slot[2] = value ? 1 : 0;
     _write_pin(self->pin->number, slot);
+    hal_set_flag(self->pin->number, HAL_FLAG_C_WROTE);
 }
 
 digitalio_pull_t common_hal_digitalio_digitalinout_get_pull(

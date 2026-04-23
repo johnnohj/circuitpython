@@ -87,6 +87,20 @@ typedef struct {
     volatile uint64_t hal_pwm_dirty;
     volatile uint32_t hal_neopixel_dirty;  /* 1 = any neopixel data changed */
     uint32_t hal_change_count;             /* monotonic, incremented on any change */
+
+    /* ── HAL: per-pin metadata ──
+     *
+     * Self-describing pin state visible to both C and JS.
+     * role:     what peripheral Python claimed this pin as (set by common-hal)
+     * flags:    report/ack bitmask (JS_WROTE, C_WROTE, C_READ)
+     * category: what the board designed this pin for (set at init from board table)
+     */
+    struct {
+        uint8_t role;       /* HAL_ROLE_* */
+        uint8_t flags;      /* HAL_FLAG_* */
+        uint8_t category;   /* HAL_CAT_*  */
+        uint8_t latched;    /* Port-latched input value (like IRQ capture) */
+    } pin_meta[64];         /* 256 bytes */
 } port_memory_t;
 
 /* The single instance — defined in port_memory.c */

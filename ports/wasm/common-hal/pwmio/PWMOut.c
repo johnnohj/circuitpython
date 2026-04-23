@@ -54,9 +54,11 @@ pwmout_result_t common_hal_pwmio_pwmout_construct(pwmio_pwmout_obj_t *self,
     self->pin = pin;
     self->variable_freq = variable_frequency;
     claim_pin(pin);
+    hal_set_role(pin->number, HAL_ROLE_PWM);
     uint8_t slot[PWM_SLOT_SIZE];
     _pack_slot(slot, true, variable_frequency, duty, frequency);
     _write_pin(pin->number, slot);
+    hal_set_flag(pin->number, HAL_FLAG_C_WROTE);
     return PWMOUT_OK;
 }
 
@@ -79,6 +81,7 @@ void common_hal_pwmio_pwmout_set_duty_cycle(pwmio_pwmout_obj_t *self,
     slot[2] = duty & 0xFF;
     slot[3] = (duty >> 8) & 0xFF;
     _write_pin(self->pin->number, slot);
+    hal_set_flag(self->pin->number, HAL_FLAG_C_WROTE);
 }
 
 uint16_t common_hal_pwmio_pwmout_get_duty_cycle(pwmio_pwmout_obj_t *self) {

@@ -142,63 +142,49 @@ mp_obj_dict_t board_module_globals = {
     },
 };
 
-/* ---- Shared input buffer for pin names ---- */
+/* ---- Pin category initialization ---- */
 #include "supervisor/port_memory.h"
+#include "supervisor/hal.h"
 
-/* ---- WASM exports for board switching ---- */
+/* Classify a board qstr name into a HAL category.
+ * Uses qstr comparison against well-known prefixes/names. */
+static uint8_t _classify_qstr(qstr q) {
+    /* Exact matches first (highest specificity) */
+    if (q == MP_QSTR_LED)      return HAL_CAT_LED;
+    if (q == MP_QSTR_NEOPIXEL) return HAL_CAT_NEOPIXEL;
+    if (q == MP_QSTR_SDA || q == MP_QSTR_SCL) return HAL_CAT_BUS_I2C;
+    if (q == MP_QSTR_MOSI || q == MP_QSTR_MISO || q == MP_QSTR_SCK)
+        return HAL_CAT_BUS_SPI;
+    if (q == MP_QSTR_TX || q == MP_QSTR_RX) return HAL_CAT_BUS_UART;
 
-/* Reset the board dict to only standard items.
- * Call before re-populating with a new board definition. */
-__attribute__((export_name("board_reset")))
-void board_reset(void) {
-    mp_obj_dict_t *d = &board_module_globals;
-    mp_map_init(&d->map, 2);
-    d->map.all_keys_are_qstrs = 1;
+    /* Prefix-based: check the string representation */
+    const char *s = qstr_str(q);
+    if (s[0] == 'B' && s[1] == 'U' && s[2] == 'T' && s[3] == 'T')
+        return HAL_CAT_BUTTON;   /* BUTTON_A, BUTTON_B, BUTTON */
+    if (s[0] == 'A' && s[1] >= '0' && s[1] <= '9')
+        return HAL_CAT_ANALOG;   /* A0-A9 */
+    if (s[0] == 'D' && s[1] >= '0' && s[1] <= '9')
+        return HAL_CAT_DIGITAL;  /* D0-D13 */
 
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR___name__),
-        MP_OBJ_NEW_QSTR(MP_QSTR_board));
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR_board_id),
-        MP_OBJ_FROM_PTR(&board_module_id_obj));
+    return HAL_CAT_NONE;
 }
 
-/* Add a pin to the board dict by name.
- * JS writes the name into port_input_buf, then calls this. */
-__attribute__((export_name("board_add_pin")))
-int board_add_pin(int name_len, int gpio_id) {
-    if (gpio_id < 0 || gpio_id >= 64) return -1;
-    if (name_len <= 0 || name_len >= (int)port_input_buf_size()) return -1;
+/* Walk the static board table and populate pin_meta categories.
+ * Higher-specificity categories win when multiple names map to one GPIO. */
+void hal_init_pin_categories(void) {
+    mp_map_t *map = &board_module_globals.map;
+    for (size_t i = 0; i < map->alloc; i++) {
+        mp_map_elem_t *elem = &map->table[i];
+        if (elem->key == MP_OBJ_NULL) continue;
+        if (!mp_obj_is_type(elem->value, &mcu_pin_type)) continue;
 
-    char *name = port_input_buf();
-    name[name_len] = '\0';
+        const mcu_pin_obj_t *pin = MP_OBJ_TO_PTR(elem->value);
+        qstr q = MP_OBJ_QSTR_VALUE(elem->key);
+        uint8_t cat = _classify_qstr(q);
 
-    qstr q = qstr_from_str(name);
-    mp_obj_dict_store(
-        MP_OBJ_FROM_PTR(&board_module_globals),
-        MP_OBJ_NEW_QSTR(q),
-        MP_OBJ_FROM_PTR(_gpio_table[gpio_id]));
-
-    return 0;
-}
-
-/* Finalize: add bus constructors and display after custom pins. */
-__attribute__((export_name("board_finalize")))
-void board_finalize(void) {
-    mp_obj_dict_t *d = &board_module_globals;
-
-    #if CIRCUITPY_BUSIO
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR_I2C), MP_OBJ_FROM_PTR(&board_i2c_obj));
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR_SPI), MP_OBJ_FROM_PTR(&board_spi_obj));
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR_UART), MP_OBJ_FROM_PTR(&board_uart_obj));
-    #endif
-
-    #if CIRCUITPY_DISPLAYIO
-    mp_obj_dict_store(MP_OBJ_FROM_PTR(d),
-        MP_OBJ_NEW_QSTR(MP_QSTR_DISPLAY),
-        MP_OBJ_FROM_PTR(&displays[0].framebuffer_display));
-    #endif
+        /* Higher specificity wins (BUTTON > DIGITAL, BUS > ANALOG) */
+        if (cat > port_mem.pin_meta[pin->number].category) {
+            hal_set_category(pin->number, cat);
+        }
+    }
 }

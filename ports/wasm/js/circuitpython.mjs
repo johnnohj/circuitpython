@@ -179,6 +179,14 @@ export class CircuitPython {
         this._kick();
     }
 
+    /** Immediate hardware dispatch — runs cp_hw_step() synchronously so C
+     *  sees dirty flags and runs background callbacks without waiting for
+     *  the next rAF frame. Then schedules a full frame for VM + display. */
+    kick() {
+        this._exports.cp_hw_step(performance.now() | 0);
+        this._kick();
+    }
+
     /** Stop execution + reset to READY state.
      *  Interrupts running code, kills background contexts, resets
      *  hardware (pins, buses, display). After this, state === 'ready'. */
@@ -697,6 +705,7 @@ export class CircuitPython {
         this._sh.setInstance(instance);
         jsffi_init(instance);
         this._exports = instance.exports;
+        this._hw.setExports(instance.exports);
 
         if (this._statusEl) this._statusEl.textContent = 'Initializing...';
 

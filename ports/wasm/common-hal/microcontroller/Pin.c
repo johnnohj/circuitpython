@@ -8,6 +8,7 @@
 
 #include "common-hal/microcontroller/Pin.h"
 #include "shared-bindings/microcontroller/Pin.h"
+#include "supervisor/hal.h"
 #include "py/runtime.h"
 
 #include <string.h>
@@ -78,6 +79,7 @@ void reset_pin_number(uint8_t pin_number) {
     if (pin_number < 64) {
         mcu_pin_obj_t *p = (mcu_pin_obj_t *)pin_table[pin_number];
         p->claimed = false;
+        hal_clear_role(pin_number);  /* clears role + flags, preserves category */
     }
 }
 

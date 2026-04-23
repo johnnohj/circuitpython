@@ -48,6 +48,27 @@ const ANALOG_SLOT = 4;
 // [0] enabled  [1] variable_freq  [2-3] duty_cycle(u16LE)  [4-7] frequency(u32LE)
 const PWM_SLOT = 8;
 
+// ── Pin metadata flags (must match supervisor/hal.h) ──
+const HAL_FLAG_JS_WROTE = 0x01;
+const HAL_FLAG_C_WROTE  = 0x02;
+const HAL_FLAG_C_READ   = 0x04;
+
+// ── Pin metadata categories (must match supervisor/hal.h) ──
+export const HAL_CAT_NONE     = 0x00;
+export const HAL_CAT_DIGITAL  = 0x01;
+export const HAL_CAT_ANALOG   = 0x02;
+export const HAL_CAT_BUS_UART = 0x03;
+export const HAL_CAT_BUS_SPI  = 0x04;
+export const HAL_CAT_BUS_I2C  = 0x05;
+export const HAL_CAT_NEOPIXEL = 0x06;
+export const HAL_CAT_LED      = 0x07;
+export const HAL_CAT_BUTTON   = 0x08;
+
+// ── Pin metadata roles (must match supervisor/hal.h) ──
+export const HAL_ROLE_UNCLAIMED   = 0x00;
+export const HAL_ROLE_DIGITAL_IN  = 0x01;
+export const HAL_ROLE_DIGITAL_OUT = 0x02;
+
 /**
  * Base class for hardware modules.
  *
@@ -116,9 +137,7 @@ export class GpioModule extends HardwareModule {
         super();
         this._onChange = options.onChange || null;
         this._pins = new Array(GPIO_MAX_PINS).fill(null);
-        // Latched presses: Set of pin numbers. Cleared after Python reads that pin.
-        this._latched = new Map();
-        this._latchRead = new Set();  // pins whose latched value has been read
+        this._exports = null;  // set by HardwareRouter after WASM init
     }
 
     get name() { return 'gpio'; }
@@ -136,10 +155,10 @@ export class GpioModule extends HardwareModule {
      * Set a pin's input value from JS (e.g., virtual button press).
      * Only works for input pins — writes to MEMFS so Python reads it.
      *
-     * Button presses (value=false for pull-up buttons) are latched:
-     * the low state persists in MEMFS until C writes back /hal/gpio
-     * (i.e., Python has had a chance to read it). This prevents fast
-     * clicks from being missed during time.sleep().
+     * The port latches the value in hal_step() (like a GPIO interrupt
+     * capture), so even if JS releases before the VM wakes from
+     * time.sleep(), C still has the pressed value.  JS just writes
+     * the live state; C handles persistence.
      */
     setInputValue(memfs, pin, value) {
         const data = memfs.readFile('/hal/gpio');
@@ -147,63 +166,32 @@ export class GpioModule extends HardwareModule {
         const state = this._pins[pin];
         if (!state || !state.enabled || state.direction !== 0) return;
 
-        if (!value) {
-            // Press: latch it so it survives until Python reads
-            this._latched.set(pin, true);
-        } else if (this._latched.has(pin)) {
-            // Release while latched: don't write yet, let onWrite clear it
-            return;
-        }
-
         const buf = new Uint8Array(data);
-        const byteVal = value ? 1 : 0;
-        buf[pin * GPIO_SLOT + 2] = byteVal;
-        memfs.updateHardwareState('/hal/gpio', buf);
-        // Keep local state in sync for UI reads
-        if (this._pins[pin]) this._pins[pin].value = byteVal;
+        buf[pin * GPIO_SLOT + 2] = value ? 1 : 0;
+        memfs.updateHardwareState('/hal/gpio', buf, pin);
+        if (this._exports?.hal_set_pin_flag) {
+            this._exports.hal_set_pin_flag(pin, HAL_FLAG_JS_WROTE);
+        }
+        if (this._pins[pin]) this._pins[pin].value = value ? 1 : 0;
     }
 
     reset(memfs) {
-        // Zero all GPIO state — all pins unclaimed
         const data = memfs.readFile('/hal/gpio');
         if (data) data.fill(0);
         this._pins.fill(null);
-        this._latched.clear();
-        this._latchRead.clear();
     }
 
-    /** C reads /hal/gpio — mark specific latched pins as read. */
-    onRead(path, offset) {
-        if (this._latched.size > 0) {
-            // offset tells us which pin C is reading
-            const pin = Math.floor(offset / GPIO_SLOT);
-            if (this._latched.has(pin)) {
-                this._latchRead.add(pin);
-            }
-        }
-        return null;
-    }
+    onRead(path, offset) { return null; }
 
     /** C wrote /hal/gpio — parse pin state, fire onChange. */
     onWrite(path, data) {
         this._parseState(data);
     }
 
-    /** Release latched buttons that Python has actually read. */
-    afterFrame(memfs) {
-        if (this._latchRead.size > 0) {
-            const data = memfs.readFile('/hal/gpio');
-            if (data) {
-                const buf = new Uint8Array(data);
-                for (const pin of this._latchRead) {
-                    buf[pin * GPIO_SLOT + 2] = 1;
-                    this._latched.delete(pin);
-                }
-                memfs.updateHardwareState('/hal/gpio', buf);
-            }
-            this._latchRead.clear();
-        }
-    }
+    /** No JS-side release logic needed — C latches input values at the
+     *  port level (hal_step), so the VM always sees the press even if
+     *  JS has already released by the time Python reads the pin. */
+    afterFrame(memfs) {}
 
     /** Parse GPIO state from raw MEMFS data. */
     _parseState(data) {
@@ -408,7 +396,10 @@ export class AnalogModule extends HardwareModule {
         const buf = new Uint8Array(data);
         buf[pin * ANALOG_SLOT + 2] = value & 0xff;
         buf[pin * ANALOG_SLOT + 3] = (value >> 8) & 0xff;
-        memfs.updateHardwareState('/hal/analog', buf);
+        memfs.updateHardwareState('/hal/analog', buf, pin);
+        if (this._exports?.hal_set_pin_flag) {
+            this._exports.hal_set_pin_flag(pin, HAL_FLAG_JS_WROTE);
+        }
         // Update local state so UI reads (sensor panel) stay in sync
         state.value = value;
     }
@@ -723,6 +714,19 @@ export class HardwareRouter {
         this._modules.push(mod);
         for (const path of mod.paths) {
             this._pathMap.set(path, mod);
+        }
+        // Propagate WASM exports if already available
+        if (this._exports) mod._exports = this._exports;
+    }
+
+    /**
+     * Provide WASM exports to all modules (for pin_meta access).
+     * Called by CircuitPython after WASM instantiation.
+     */
+    setExports(exports) {
+        this._exports = exports;
+        for (const mod of this._modules) {
+            mod._exports = exports;
         }
     }
 

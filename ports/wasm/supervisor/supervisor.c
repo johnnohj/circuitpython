@@ -183,6 +183,10 @@ static void _core_init(void) {
 
     mp_init();
 
+    /* Populate pin_meta categories from the board dict.
+     * Must come after mp_init() since the dict uses qstrs. */
+    hal_init_pin_categories();
+
     /* Initialize jsffi proxy tables (must come after mp_init for GC). */
     #if MICROPY_PY_JSFFI
     {
@@ -556,22 +560,11 @@ static uint32_t _schedule_hint(uint8_t port_result, uint8_t sup_result,
 
     /* VM sleeping — ask context system for nearest deadline */
     if (vm_result == WASM_VM_SLEEPING || sup_result == WASM_SUP_ALL_SLEEPING) {
-        uint32_t wake_ms = cp_next_wake_ms(mp_hal_ticks_ms());
-        /* If display is running, keep at rAF rate for refresh */
-        #if CIRCUITPY_DISPLAYIO
-        return (wake_ms > 16) ? 16 : wake_ms;
-        #else
-        return wake_ms;
-        #endif
+        return cp_next_wake_ms(mp_hal_ticks_ms());
     }
 
     /* Idle — no work, no sleeping contexts */
-    #if CIRCUITPY_DISPLAYIO
-    /* Keep slow ticking for cursor blink */
-    return 250;
-    #else
     return 0xFFFFFFFF;  /* fully idle */
-    #endif
 }
 
 __attribute__((export_name("wasm_frame")))

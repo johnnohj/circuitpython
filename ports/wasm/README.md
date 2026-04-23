@@ -23,7 +23,7 @@ Variants
 | Variant    | Purpose | Key modules |
 |------------|---------|-------------|
 | `standard` | WASI CLI — Node.js testing, REPL | time, random, os, math, json, re, collections |
-| `browser`  | Full board simulation in browser | + displayio, digitalio, analogio, pwmio, neopixel_write, busio, board |
+| `browser`  | Full board simulation in browser | + displayio, digitalio, analogio, pwmio, neopixel, busio, board |
 
 The `browser` variant adds a virtual board with 64 GPIO pins, a
 160×128 framebuffer display, NeoPixel output, I2C/SPI/UART buses,

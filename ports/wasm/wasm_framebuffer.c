@@ -69,7 +69,7 @@ static int wasm_fb_get_bytes_per_cell(mp_obj_t self_in) {
 
 static int wasm_fb_get_native_fps(mp_obj_t self_in) {
     (void)self_in;
-    return 30;  // Browser refresh rate target
+    return 1000;  // No throttle — browser rAF paces frames
 }
 
 static bool wasm_fb_get_grayscale(mp_obj_t self_in) {

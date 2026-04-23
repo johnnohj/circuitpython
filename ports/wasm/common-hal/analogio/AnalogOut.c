@@ -37,6 +37,7 @@ void common_hal_analogio_analogout_construct(analogio_analogout_obj_t *self,
     const mcu_pin_obj_t *pin) {
     self->pin = pin;
     claim_pin(pin);
+    hal_set_role(pin->number, HAL_ROLE_DAC);
     uint8_t slot[ANALOG_SLOT_SIZE] = {1, 1, 0, 0}; /* enabled, is_output, value=0 */
     _write_pin(pin->number, slot);
 }
@@ -60,6 +61,7 @@ void common_hal_analogio_analogout_set_value(analogio_analogout_obj_t *self,
     slot[2] = value & 0xFF;
     slot[3] = (value >> 8) & 0xFF;
     _write_pin(self->pin->number, slot);
+    hal_set_flag(self->pin->number, HAL_FLAG_C_WROTE);
 }
 
 void common_hal_analogio_analogout_never_reset(analogio_analogout_obj_t *self) {

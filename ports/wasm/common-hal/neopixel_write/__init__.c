@@ -50,4 +50,5 @@ void common_hal_neopixel_write(const digitalio_digitalinout_obj_t *digitalinout,
     lseek(fd, offset, SEEK_SET);
     write(fd, header, NEOPIXEL_HEADER_SIZE);
     write(fd, pixels, numBytes);
+    hal_set_flag(pin, HAL_FLAG_C_WROTE);
 }

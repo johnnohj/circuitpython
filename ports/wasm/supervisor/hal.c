@@ -15,6 +15,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -63,6 +64,9 @@ void hal_init(void) {
     port_mem.hal_pwm_dirty = 0;
     port_mem.hal_neopixel_dirty = 0;
     port_mem.hal_change_count = 0;
+
+    /* Zero pin metadata (categories populated by hal_init_pin_categories) */
+    memset(port_mem.pin_meta, 0, sizeof(port_mem.pin_meta));
 }
 
 /* ------------------------------------------------------------------ */
@@ -158,6 +162,69 @@ uint32_t _hal_get_change_count(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Pin category init — weak default, overridden by board_pins.c        */
+/* ------------------------------------------------------------------ */
+
+__attribute__((weak))
+void hal_init_pin_categories(void) {
+    /* No board table in standard variant — categories stay zeroed. */
+}
+
+/* ------------------------------------------------------------------ */
+/* Pin metadata API                                                    */
+/* ------------------------------------------------------------------ */
+
+void hal_set_role(uint8_t pin, uint8_t role) {
+    if (pin < 64) port_mem.pin_meta[pin].role = role;
+}
+
+void hal_clear_role(uint8_t pin) {
+    if (pin < 64) {
+        port_mem.pin_meta[pin].role = HAL_ROLE_UNCLAIMED;
+        port_mem.pin_meta[pin].flags = 0;
+    }
+}
+
+void hal_set_flag(uint8_t pin, uint8_t flag) {
+    if (pin < 64) port_mem.pin_meta[pin].flags |= flag;
+}
+
+void hal_clear_flag(uint8_t pin, uint8_t flag) {
+    if (pin < 64) port_mem.pin_meta[pin].flags &= ~flag;
+}
+
+uint8_t hal_get_flags(uint8_t pin) {
+    if (pin >= 64) return 0;
+    return port_mem.pin_meta[pin].flags;
+}
+
+void hal_set_category(uint8_t pin, uint8_t category) {
+    if (pin < 64) port_mem.pin_meta[pin].category = category;
+}
+
+/* WASM exports for JS direct memory access */
+__attribute__((export_name("hal_pin_meta_addr")))
+uint32_t _hal_pin_meta_addr(void) {
+    return (uint32_t)(uintptr_t)&port_mem.pin_meta[0];
+}
+
+__attribute__((export_name("hal_pin_meta_stride")))
+uint32_t _hal_pin_meta_stride(void) {
+    return (uint32_t)sizeof(port_mem.pin_meta[0]);
+}
+
+/* JS calls this to set flags (e.g., JS_WROTE) from outside WASM */
+__attribute__((export_name("hal_set_pin_flag")))
+void _hal_set_pin_flag(int pin, int flag) {
+    hal_set_flag((uint8_t)pin, (uint8_t)flag);
+}
+
+__attribute__((export_name("hal_clear_pin_flag")))
+void _hal_clear_pin_flag(int pin, int flag) {
+    hal_clear_flag((uint8_t)pin, (uint8_t)flag);
+}
+
+/* ------------------------------------------------------------------ */
 /* hal_step — called at top of cp_step()                               */
 /* ------------------------------------------------------------------ */
 
@@ -175,6 +242,40 @@ void hal_step(void) {
     if (port_mem.hal_gpio_dirty || port_mem.hal_analog_dirty ||
         port_mem.hal_pwm_dirty || port_mem.hal_neopixel_dirty) {
         port_wake_main_task();
+    }
+
+    /* Latch input values from JS — port-level interrupt capture.
+     *
+     * On real hardware, a GPIO interrupt latches the pin state in a
+     * register.  The ISR fires during sleep, and the application reads
+     * the latched value when it wakes.  We do the same: when JS writes
+     * a new value (JS_WROTE), read the MEMFS value and store it in
+     * pin_meta.latched.  get_value() returns the latched value if set,
+     * ensuring the VM sees the press even if JS releases (mouseup)
+     * before the VM wakes from time.sleep().
+     */
+    uint64_t gpio_dirty = port_mem.hal_gpio_dirty;
+    if (gpio_dirty) {
+        int gpio_fd = hal_gpio_fd();
+        if (gpio_fd >= 0) {
+            while (gpio_dirty) {
+                int pin = __builtin_ctzll(gpio_dirty);
+                gpio_dirty &= gpio_dirty - 1;  /* clear lowest bit */
+                uint8_t flags = port_mem.pin_meta[pin].flags;
+                if ((flags & HAL_FLAG_JS_WROTE) &&
+                    !(flags & HAL_FLAG_LATCHED) &&
+                    port_mem.pin_meta[pin].role == HAL_ROLE_DIGITAL_IN) {
+                    /* Read the current value from MEMFS and latch it.
+                     * Skip if already latched — first edge wins, like
+                     * an edge-triggered IRQ pending until consumed. */
+                    uint8_t slot[8];
+                    lseek(gpio_fd, pin * 8, SEEK_SET);
+                    read(gpio_fd, slot, 8);
+                    port_mem.pin_meta[pin].latched = slot[2];
+                    port_mem.pin_meta[pin].flags |= HAL_FLAG_LATCHED;
+                }
+            }
+        }
     }
 }
 

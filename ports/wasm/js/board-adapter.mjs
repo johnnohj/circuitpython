@@ -225,6 +225,7 @@ export class BoardAdapter {
                 analog.setInputValue(memfs, id, Math.max(0, Math.min(65535, value | 0)));
             }
         }
+        board.kick();  // immediate dispatch — C processes dirty flags now
     }
 }
 

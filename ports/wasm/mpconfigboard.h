@@ -19,10 +19,10 @@
 #define MICROPY_HW_MCU_NAME         "wasm32"
 #define CIRCUITPY_BOARD_ID          "wasm_wasi"
 
-// ---- Dynamic board definition ----
-// Board pin dict is populated at runtime by JS calling board_add_pin()
-// for each pin in definition.json. Enables board switching without recompile.
-#define CIRCUITPY_MUTABLE_BOARD     (1)
+// ---- Board definition ----
+// Static board table in board_pins.c. Pin categories populated at init
+// via hal_init_pin_categories() from the board dict name patterns.
+#define CIRCUITPY_MUTABLE_BOARD     (1)  /* keep for dict API compat */
 
 // ---- Filesystem ----
 // No flash filesystem — we use VFS POSIX over WASI fd_* syscalls.
