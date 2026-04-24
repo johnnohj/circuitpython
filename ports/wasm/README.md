@@ -34,9 +34,11 @@ Building
 
 ### Dependencies
 
-- [wasi-sdk](https://github.com/aspect-build/aspect-build-wasi-sdk)
-  (default path: `~/.local/bin/wasi-sdk-30.0-x86_64-linux`; override
-  with `WASI_SDK=`)
+CircuitPython WASM port substitutes the `wasi-sdk` in place of the `arm-none-eabi` toolchain typically used for builds targeting development boards. Configuring your build environment follows similar steps to those for [Building Circuitpython](../../BUILDING.md#building-circuitpython).
+
+- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk)
+  (example path: `/home/${USER_DIR}/wasi-sdk-30.0-x86_64-linux`; configure
+  with `WASI_SDK_PATH=`; see source repo [README](https://github.com/WebAssembly/wasi-sdk/blob/main/README.md#install) for fuller installation and configuration details)
 - Python 3.x
 - `mpy-cross` (built from the repo)
 
@@ -100,6 +102,7 @@ and NeoPixel rendering.
 
 ### Package manager
 
+**Experimental**
 The built-in `fwip` package manager fetches libraries from the
 [Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle):
 
@@ -156,13 +159,7 @@ The port uses cooperative multitasking within a single WASM instance:
 
 Virtual hardware state lives in WASM linear memory as flat arrays
 (GPIO direction/value, analog values, PWM duty cycles, NeoPixel
-buffers). JS reads/writes these via exported pointers — no fd I/O
-in the hot path.
-
-The board module uses `CIRCUITPY_MUTABLE_BOARD`: pins are compiled
-into a mutable dict matching `definition.json` by default. For board
-switching at runtime, JS can call `board_reset()` + `board_add_pin()`
-+ `board_finalize()` with a different definition.
+buffers). JS reads/writes these via MEMFS.
 
 ### Filesystem
 
