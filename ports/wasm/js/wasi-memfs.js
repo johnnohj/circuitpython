@@ -98,24 +98,12 @@ export class WasiMemfs {
     }
 
     // Write hardware state from JS into memfs (for reads by C common-hal).
-    // Also sets dirty flags in port_mem so C hal_step() knows what changed.
-    // pinIndex is optional — if provided, marks that specific pin dirty.
-    updateHardwareState(path, data, pinIndex) {
+    // Input changes (button press, analog slider) should go through the
+    // semihosting event ring (submitHwChange) instead — that route
+    // preserves individual events and lets C set dirty flags + latch.
+    // This method is for bulk/setup writes (I2C device seeding, test data).
+    updateHardwareState(path, data) {
         this.files.set(path, new Uint8Array(data));
-
-        // Set dirty flags via exported WASM functions
-        if (this.instance && pinIndex !== undefined) {
-            const e = this.instance.exports;
-            if (path === '/hal/gpio' && e.hal_mark_gpio_dirty) {
-                e.hal_mark_gpio_dirty(pinIndex);
-            } else if (path === '/hal/analog' && e.hal_mark_analog_dirty) {
-                e.hal_mark_analog_dirty(pinIndex);
-            } else if (path === '/hal/pwm' && e.hal_mark_pwm_dirty) {
-                e.hal_mark_pwm_dirty(pinIndex);
-            } else if (path === '/hal/neopixel' && e.hal_mark_neopixel_dirty) {
-                e.hal_mark_neopixel_dirty();
-            }
-        }
     }
 
     _view() { return new DataView(this.memory.buffer); }

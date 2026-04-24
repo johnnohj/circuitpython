@@ -728,11 +728,61 @@ void sh_on_event(const sh_event_t *evt) {
          * data = ctx_id (or -1 for broadcast). */
         cp_wake((int16_t)evt->event_data);
         break;
-    case SH_EVT_HW_CHANGE:
-        /* Hardware state changed from JS — the MEMFS write already
-         * happened, but we may need to wake a context waiting on
-         * this pin/device.  Future: match against WFE registrations. */
+    case SH_EVT_HW_CHANGE: {
+        /* Hardware input from JS — routed through the event ring so
+         * each change is an individual event (button press + release
+         * = two events, not one collapsed dirty flag).
+         *
+         * data = pin number
+         * arg  = (hal_type << 16) | value */
+        uint8_t pin = (uint8_t)evt->event_data;
+        uint32_t hal_type = (evt->arg >> 16) & 0xFFFF;
+        uint32_t new_value = evt->arg & 0xFFFF;
+
+        if (hal_type == HAL_TYPE_GPIO) {
+            int fd = hal_gpio_fd();
+            if (fd >= 0 && pin < 64) {
+                uint8_t slot[HAL_GPIO_SLOT_SIZE];
+                lseek(fd, pin * HAL_GPIO_SLOT_SIZE, SEEK_SET);
+                read(fd, slot, HAL_GPIO_SLOT_SIZE);
+
+                /* Only write if pin is enabled and configured as input */
+                if (slot[HAL_GPIO_OFF_ENABLED] != 0 &&
+                    slot[HAL_GPIO_OFF_DIRECTION] == HAL_DIR_INPUT) {
+                    slot[HAL_GPIO_OFF_VALUE] = new_value ? 1 : 0;
+                    slot[HAL_GPIO_OFF_FLAGS] |= HAL_FLAG_JS_WROTE;
+
+                    /* Latch immediately if DIGITAL_IN and not already
+                     * latched — first edge wins, like edge-triggered IRQ. */
+                    if (slot[HAL_GPIO_OFF_ROLE] == HAL_ROLE_DIGITAL_IN &&
+                        !(slot[HAL_GPIO_OFF_FLAGS] & HAL_FLAG_LATCHED)) {
+                        slot[HAL_GPIO_OFF_LATCHED] = slot[HAL_GPIO_OFF_VALUE];
+                        slot[HAL_GPIO_OFF_FLAGS] |= HAL_FLAG_LATCHED;
+                    }
+
+                    lseek(fd, pin * HAL_GPIO_SLOT_SIZE, SEEK_SET);
+                    write(fd, slot, HAL_GPIO_SLOT_SIZE);
+                }
+                hal_mark_gpio_dirty(pin);
+            }
+        } else if (hal_type == HAL_TYPE_ANALOG) {
+            int fd = hal_analog_fd();
+            if (fd >= 0 && pin < 64) {
+                uint8_t slot[4];
+                lseek(fd, pin * 4, SEEK_SET);
+                read(fd, slot, 4);
+
+                if (slot[0] && !slot[1]) {  /* enabled + input */
+                    slot[2] = new_value & 0xFF;
+                    slot[3] = (new_value >> 8) & 0xFF;
+                    lseek(fd, pin * 4, SEEK_SET);
+                    write(fd, slot, 4);
+                }
+                hal_mark_analog_dirty(pin);
+            }
+        }
         break;
+    }
     case SH_EVT_EXEC:
         /* Execute code — data=kind (0=string, 1=file), arg=len.
          * Input is already in the shared input buffer. */

@@ -99,7 +99,11 @@ typedef struct {
 #define SH_EVT_KEY_UP        0x02  /* data=keycode, arg=modifiers       */
 #define SH_EVT_TIMER_FIRE    0x10  /* data=timer_id, arg=0              */
 #define SH_EVT_FETCH_DONE    0x11  /* data=request_id, arg=http_status  */
-#define SH_EVT_HW_CHANGE     0x20  /* data=hal_type, arg=pin/channel    */
+#define SH_EVT_HW_CHANGE     0x20  /* data=pin, arg=(halType<<16|value) */
+
+/* HAL subsystem types for SH_EVT_HW_CHANGE arg encoding */
+#define HAL_TYPE_GPIO     1
+#define HAL_TYPE_ANALOG   2
 #define SH_EVT_PERSIST_DONE  0x30  /* data=0, arg=0                     */
 #define SH_EVT_RESIZE        0x40  /* data=width, arg=height            */
 #define SH_EVT_WAKE          0x50  /* data=ctx_id (-1=all), arg=reason  */

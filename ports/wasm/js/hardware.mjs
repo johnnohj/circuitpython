@@ -2,9 +2,13 @@
  * hardware.mjs — Hardware state for CircuitPython WASM.
  *
  * Single HardwareState class reads /hal/ MEMFS state on demand.
- * No shadow arrays — pin_meta in WASM linear memory is the source
- * of truth for role, category, and flags.  MEMFS endpoints hold the
- * raw data (pin values, pixel bytes, register maps).
+ * All pin state — electrical and metadata — lives in MEMFS at
+ * /hal/gpio (12 bytes per pin).  No shadow arrays, no linear-memory
+ * reads.  MEMFS is the single source of truth.
+ *
+ * JS→C input changes are routed through the semihosting event ring
+ * (submitHwChange) so each change is an individual event.  C's
+ * sh_on_event handler writes to MEMFS, sets flags, and latches values.
  *
  * Compatibility: board.hardware('gpio') returns a lightweight view
  * object with the same API as the old per-module classes.
@@ -18,10 +22,12 @@
  *   i2c.addDevice(0x44, new SHT40Device());
  */
 
+import { HAL_TYPE_GPIO, HAL_TYPE_ANALOG } from './semihosting.js';
+
 // ── Slot layouts (shared with targets.mjs) ──
 
-// GPIO: 8 bytes/pin — [enabled, direction, value, pull, open_drain, never_reset, reserved, reserved]
-export const GPIO_SLOT = 8;
+// GPIO: 12 bytes/pin — [enabled, direction, value, pull, role, flags, category, latched, reserved×4]
+export const GPIO_SLOT = 12;
 export const GPIO_MAX_PINS = 32;
 
 // NeoPixel: header + pixel data per pin region
@@ -35,11 +41,16 @@ export const ANALOG_SLOT = 4;
 // PWM: 8 bytes/pin — [enabled, variable_freq, duty_lo, duty_hi, freq(u32 LE)]
 export const PWM_SLOT = 8;
 
-// ── Pin metadata constants (must match supervisor/hal.h) ──
+// ── Pin metadata offsets within GPIO slot (must match supervisor/hal.h) ──
 
-const HAL_FLAG_JS_WROTE = 0x01;
-const HAL_FLAG_C_WROTE  = 0x02;
-const HAL_FLAG_C_READ   = 0x04;
+const GPIO_OFF_ENABLED   = 0;
+const GPIO_OFF_DIRECTION = 1;
+const GPIO_OFF_VALUE     = 2;
+const GPIO_OFF_PULL      = 3;
+const GPIO_OFF_ROLE      = 4;
+const GPIO_OFF_FLAGS     = 5;
+const GPIO_OFF_CATEGORY  = 6;
+const GPIO_OFF_LATCHED   = 7;
 
 export const HAL_CAT_NONE     = 0x00;
 export const HAL_CAT_DIGITAL  = 0x01;
@@ -86,8 +97,7 @@ export class HardwareState {
     constructor() {
         this._exports = null;
         this._memfs = null;
-        this._pinMetaAddr = 0;
-        this._pinMetaStride = 4;
+        this._semihosting = null;
         this._onChange = null;
         this._i2cDevices = new Map();
         this._views = null;
@@ -97,13 +107,10 @@ export class HardwareState {
 
     setExports(exports) {
         this._exports = exports;
-        if (exports.hal_pin_meta_addr) {
-            this._pinMetaAddr = exports.hal_pin_meta_addr();
-            this._pinMetaStride = exports.hal_pin_meta_stride?.() || 4;
-        }
     }
 
     setMemfs(memfs) { this._memfs = memfs; }
+    setSemihosting(sh) { this._semihosting = sh; }
 
     reset(memfs) {
         const m = memfs || this._memfs;
@@ -119,17 +126,18 @@ export class HardwareState {
         }
     }
 
-    // ── Pin meta readers (from WASM linear memory) ──
+    // ── Pin meta readers (from MEMFS GPIO slot) ──
 
     getPinMeta(pin) {
-        if (!this._exports || pin < 0 || pin >= 64) return null;
-        const mem = new Uint8Array(this._exports.memory.buffer);
-        const base = this._pinMetaAddr + pin * this._pinMetaStride;
+        const data = this._memfs?.readFile('/hal/gpio');
+        if (!data || pin < 0 || pin >= 64) return null;
+        const off = pin * GPIO_SLOT;
+        if (off + GPIO_SLOT > data.length) return null;
         return {
-            role: mem[base],
-            flags: mem[base + 1],
-            category: mem[base + 2],
-            latched: mem[base + 3],
+            role: data[off + GPIO_OFF_ROLE],
+            flags: data[off + GPIO_OFF_FLAGS],
+            category: data[off + GPIO_OFF_CATEGORY],
+            latched: data[off + GPIO_OFF_LATCHED],
         };
     }
 
@@ -140,12 +148,15 @@ export class HardwareState {
         if (!data || pin * GPIO_SLOT + GPIO_SLOT > data.length) return null;
         const off = pin * GPIO_SLOT;
         if (!data[off]) return null;  // not enabled
+        const dir = data[off + GPIO_OFF_DIRECTION];
         return {
             enabled: true,
-            direction: data[off + 1],
-            value: data[off + 2],
-            pull: data[off + 3],
-            openDrain: data[off + 4],
+            direction: dir === 0 ? 0 : 1,  // 0=input, 1=output (either kind)
+            value: data[off + GPIO_OFF_VALUE],
+            pull: data[off + GPIO_OFF_PULL],
+            openDrain: dir === 2,  // HAL_DIR_OUTPUT_OPEN_DRAIN
+            role: data[off + GPIO_OFF_ROLE],
+            category: data[off + GPIO_OFF_CATEGORY],
         };
     }
 
@@ -157,29 +168,23 @@ export class HardwareState {
             const off = pin * GPIO_SLOT;
             if (off + GPIO_SLOT > data.length) break;
             if (!data[off]) continue;
+            const dir = data[off + GPIO_OFF_DIRECTION];
             pins[pin] = {
                 enabled: true,
-                direction: data[off + 1],
-                value: data[off + 2],
-                pull: data[off + 3],
-                openDrain: data[off + 4],
+                direction: dir === 0 ? 0 : 1,
+                value: data[off + GPIO_OFF_VALUE],
+                pull: data[off + GPIO_OFF_PULL],
+                openDrain: dir === 2,
+                role: data[off + GPIO_OFF_ROLE],
+                category: data[off + GPIO_OFF_CATEGORY],
             };
         }
         return pins;
     }
 
     setGpioInput(pin, value) {
-        const data = this._memfs?.readFile('/hal/gpio');
-        if (!data || pin * GPIO_SLOT + 2 >= data.length) return;
-        const off = pin * GPIO_SLOT;
-        if (!data[off] || data[off + 1] !== 0) return;  // not enabled or not input
-
-        const buf = new Uint8Array(data);
-        buf[off + 2] = value ? 1 : 0;
-        this._memfs.updateHardwareState('/hal/gpio', buf, pin);
-        if (this._exports?.hal_set_pin_flag) {
-            this._exports.hal_set_pin_flag(pin, HAL_FLAG_JS_WROTE);
-        }
+        if (!this._semihosting) return;
+        this._semihosting.submitHwChange(pin, HAL_TYPE_GPIO, value ? 1 : 0);
     }
 
     // ── Analog (on-demand from MEMFS) ──
@@ -214,18 +219,8 @@ export class HardwareState {
     }
 
     setAnalogInput(pin, value) {
-        const data = this._memfs?.readFile('/hal/analog');
-        if (!data || pin * ANALOG_SLOT + ANALOG_SLOT > data.length) return;
-        const off = pin * ANALOG_SLOT;
-        if (!data[off] || data[off + 1] !== 0) return;  // not enabled or is output
-
-        const buf = new Uint8Array(data);
-        buf[off + 2] = value & 0xff;
-        buf[off + 3] = (value >> 8) & 0xff;
-        this._memfs.updateHardwareState('/hal/analog', buf, pin);
-        if (this._exports?.hal_set_pin_flag) {
-            this._exports.hal_set_pin_flag(pin, HAL_FLAG_JS_WROTE);
-        }
+        if (!this._semihosting) return;
+        this._semihosting.submitHwChange(pin, HAL_TYPE_ANALOG, value & 0xFFFF);
     }
 
     // ── PWM (on-demand from MEMFS) ──
@@ -361,12 +356,15 @@ export class HardwareState {
             const off = pin * GPIO_SLOT;
             if (off + GPIO_SLOT > data.length) break;
             if (!data[off]) continue;
+            const dir = data[off + GPIO_OFF_DIRECTION];
             this._onChange('gpio', pin, {
                 enabled: true,
-                direction: data[off + 1],
-                value: data[off + 2],
-                pull: data[off + 3],
-                openDrain: data[off + 4],
+                direction: dir === 0 ? 0 : 1,
+                value: data[off + GPIO_OFF_VALUE],
+                pull: data[off + GPIO_OFF_PULL],
+                openDrain: dir === 2,
+                role: data[off + GPIO_OFF_ROLE],
+                category: data[off + GPIO_OFF_CATEGORY],
             });
         }
     }

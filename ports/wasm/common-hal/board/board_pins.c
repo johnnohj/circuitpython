@@ -143,7 +143,6 @@ mp_obj_dict_t board_module_globals = {
 };
 
 /* ---- Pin category initialization ---- */
-#include "supervisor/port_memory.h"
 #include "supervisor/hal.h"
 
 /* Classify a board qstr name into a HAL category.
@@ -183,7 +182,7 @@ void hal_init_pin_categories(void) {
         uint8_t cat = _classify_qstr(q);
 
         /* Higher specificity wins (BUTTON > DIGITAL, BUS > ANALOG) */
-        if (cat > port_mem.pin_meta[pin->number].category) {
+        if (cat > hal_get_category(pin->number)) {
             hal_set_category(pin->number, cat);
         }
     }

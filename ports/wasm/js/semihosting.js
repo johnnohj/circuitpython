@@ -30,7 +30,11 @@ const SH_EVT_KEY_DOWN      = 0x01;
 const SH_EVT_KEY_UP        = 0x02;
 const SH_EVT_TIMER_FIRE    = 0x10;
 const SH_EVT_FETCH_DONE    = 0x11;
-const SH_EVT_HW_CHANGE     = 0x20;
+const SH_EVT_HW_CHANGE     = 0x20;  // data=pin, arg=(halType<<16|value)
+
+// HAL subsystem types for SH_EVT_HW_CHANGE (must match semihosting.h)
+const HAL_TYPE_GPIO   = 1;
+const HAL_TYPE_ANALOG = 2;
 const SH_EVT_PERSIST_DONE  = 0x30;
 const SH_EVT_RESIZE        = 0x40;
 const SH_EVT_WAKE          = 0x50;
@@ -144,12 +148,16 @@ export class Semihosting {
         this.pushEvent(SH_EVT_TIMER_FIRE, ctxId & 0xFFFF, 0);
     }
 
-    /** Hardware state changed from JS.
-     *  @param {number} pin — pin/channel that changed (matches wake registrations)
-     *  @param {number} [halType=0] — hal subsystem (gpio=1, neopixel=2, etc.)
+    /** Hardware input from JS — routed through the event ring so each
+     *  change is an individual event (press + release = two events).
+     *  C's sh_on_event handler writes the value to MEMFS, sets flags,
+     *  and latches input values.
+     *  @param {number} pin — pin number
+     *  @param {number} halType — HAL_TYPE_GPIO (1) or HAL_TYPE_ANALOG (2)
+     *  @param {number} value — 0/1 for GPIO, 0-65535 for analog
      */
-    submitHwChange(pin, halType = 0) {
-        this.pushEvent(SH_EVT_HW_CHANGE, pin, halType);
+    submitHwChange(pin, halType, value = 0) {
+        this.pushEvent(SH_EVT_HW_CHANGE, pin, (halType << 16) | (value & 0xFFFF));
     }
 
     /** Display resize. */
@@ -265,6 +273,7 @@ export {
     SH_EVT_HW_CHANGE, SH_EVT_PERSIST_DONE,
     SH_EVT_RESIZE, SH_EVT_WAKE,
     SH_EVT_EXEC, SH_EVT_CTRL_C, SH_EVT_CLEANUP,
+    HAL_TYPE_GPIO, HAL_TYPE_ANALOG,
     SH_TRACE_LINE, SH_TRACE_CALL, SH_TRACE_RETURN, SH_TRACE_EXCEPTION,
     WASM_PORT_QUIET, WASM_PORT_EVENTS, WASM_PORT_BG_PENDING, WASM_PORT_HW_CHANGED,
     WASM_SUP_IDLE, WASM_SUP_SCHEDULED, WASM_SUP_CTX_DONE, WASM_SUP_ALL_SLEEPING,

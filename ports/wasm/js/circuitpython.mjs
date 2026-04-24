@@ -766,6 +766,7 @@ export class CircuitPython {
         jsffi_init(instance);
         this._exports = instance.exports;
         this._hw.setExports(instance.exports);
+        this._hw.setSemihosting(this._sh);
 
         if (this._statusEl) this._statusEl.textContent = 'Initializing...';
 
