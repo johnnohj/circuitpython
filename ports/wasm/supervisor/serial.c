@@ -15,7 +15,7 @@
  *
  * Owns the rx buffer.  supervisor.c pushes bytes via serial_push_byte()
  * (from sh_on_event) and checks for Ctrl-C via serial_check_interrupt()
- * (from wasm_background_tasks).
+ * (from wasm_vm_hook_loop, at every backwards branch).
  */
 
 #include <stdbool.h>

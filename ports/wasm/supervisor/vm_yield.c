@@ -131,8 +131,8 @@ void mp_vm_request_yield(int reason, uint32_t arg) {
 /* background tasks are guaranteed to have run right before any yield. */
 /* ------------------------------------------------------------------ */
 
-/* Forward declaration — implemented in supervisor.c */
-extern void wasm_background_tasks(void);
+/* serial.c provides Ctrl-C detection */
+extern void serial_check_interrupt(void);
 
 /* CLI mode + JS time source — live in port_mem. */
 #include "supervisor/port_memory.h"
@@ -140,8 +140,17 @@ extern void wasm_background_tasks(void);
 void wasm_vm_hook_loop(const void *code_state_ptr) {
     const mp_code_state_t *code_state = (const mp_code_state_t *)code_state_ptr;
 
-    /* 1. Run port background tasks (Ctrl-C check) */
-    wasm_background_tasks();
+    /* 1. Check for Ctrl-C (keyboard interrupt).
+     *    This is the only work needed at every backwards branch.
+     *    All other background work (display, HAL, callbacks) runs via
+     *    RUN_BACKGROUND_TASKS at function returns (MICROPY_VM_HOOK_RETURN)
+     *    and once per frame in cp_hw_step().
+     *
+     *    If mid-frame hardware polling is needed in the future (e.g.,
+     *    reading I2C device state during long-running loops), add it
+     *    here or promote this hook to call RUN_BACKGROUND_TASKS — the
+     *    time-gated port_background_task() keeps the cost bounded. */
+    serial_check_interrupt();
 
     /* 2. Extract current line number for JS coordination.
      *    This runs at every backwards branch — cheap enough to always do.

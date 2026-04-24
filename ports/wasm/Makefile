@@ -39,9 +39,9 @@ INC +=  -I$(TOP)
 INC += -I$(BUILD)
 
 # ── wasi-sdk ──
-WASI_SDK ?= $(HOME)/.local/bin/wasi-sdk-30.0-x86_64-linux
+WASI_SDK ?= $(HOME)/.local/bin/wasi-sdk-32.0-x86_64-linux
 WASI_SYSROOT = $(WASI_SDK)/share/wasi-sysroot
-WASI_CC = $(WASI_SDK)/bin/clang-21
+WASI_CC = $(WASI_SDK)/bin/clang-22
 CC  = $(WASI_CC)
 LD  = $(WASI_CC)
 
@@ -51,7 +51,7 @@ CWARN += -Wextra -Wno-unused-parameter -Wpointer-arith -Wdouble-promotion -Wfloa
 # wasm32 stream protocol function pointers trigger this
 CWARN += -Wno-incompatible-function-pointer-types
 CFLAGS += $(INC) $(CWARN) -std=gnu99 -I$(VARIANT_DIR) $(CFLAGS_EXTRA)
-CFLAGS += --target=wasm32-wasi --sysroot=$(WASI_SYSROOT)
+CFLAGS += --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT)
 CFLAGS += -D_WASI_EMULATED_PROCESS_CLOCKS
 
 # CircuitPython module flags — must match mpconfigboard.h.
@@ -87,7 +87,7 @@ STRIP =
 SIZE = true
 
 # Linker
-LDFLAGS += --target=wasm32-wasi --sysroot=$(WASI_SYSROOT)
+LDFLAGS += --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mllvm -wasm-enable-sjlj -fwasm-exceptions
 LDFLAGS += -lsetjmp -lwasi-emulated-process-clocks
 LDFLAGS += -Wl,--initial-memory=4194304

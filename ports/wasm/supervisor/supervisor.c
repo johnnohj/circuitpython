@@ -152,21 +152,9 @@ void sup_print_soft_reboot(void) {
 
 /* Static buffers (GC heap, input buffer) now live in port_mem. */
 
-/* ------------------------------------------------------------------ */
-/* Background tasks — called from MICROPY_VM_HOOK_LOOP (vm_yield.c)    */
-/*                                                                     */
-/* "Things Python needs the platform to do to keep going."             */
-/* ------------------------------------------------------------------ */
-
 /* serial.c owns the rx buffer and provides these */
 extern void serial_push_byte(uint8_t c);
 extern void serial_check_interrupt(void);
-
-void wasm_background_tasks(void) {
-    serial_check_interrupt();
-
-    /* Future: check MEMFS hw endpoints, cursor blink, display dirty */
-}
 
 /* ------------------------------------------------------------------ */
 /* Core init — called once, sets up the VM                             */
@@ -361,12 +349,30 @@ extern void hal_step(void);
 extern void hal_export_dirty(void);
 
 /* ------------------------------------------------------------------ */
-/* cp_hw_step — VH work: display refresh, HAL sync, background tasks.  */
+/* cp_hw_step — Port layer: JS↔C sync + background task drain.         */
 /*                                                                     */
 /* Must be called EVERY frame regardless of VM state.                  */
 /* In READY: refreshes supervisor terminal + cursor.                   */
 /* In EXECUTING: refreshes user's displayio output.                    */
 /* In SUSPENDED: keeps display alive while VM sleeps.                  */
+/*                                                                     */
+/* This is the once-per-frame entry point for all port-level work:     */
+/*   hal_step()            — drain JS events, latch input pins         */
+/*   RUN_BACKGROUND_TASKS  — port_background_task (~1ms tick gate)     */
+/*                           + drain callback queue (displayio, etc.)  */
+/*   hal_export_dirty()    — flush HAL state back to MEMFS             */
+/*                                                                     */
+/* The VM also drains callbacks via MICROPY_VM_HOOK_RETURN (on every   */
+/* function return).  Between those drains, the only per-branch work   */
+/* is serial_check_interrupt() + budget check (wasm_vm_hook_loop).     */
+/*                                                                     */
+/* If mid-frame hardware polling is needed (e.g., I2C device reads     */
+/* during long-running Python loops), either:                          */
+/*   (a) add the work to port_background_task() — it already runs at  */
+/*       every callback drain (function returns + here), or            */
+/*   (b) promote MICROPY_VM_HOOK_LOOP to also call RUN_BACKGROUND_TASKS*/
+/*       for per-branch draining.  The time-gated port_background_task */
+/*       keeps the cost bounded either way.                            */
 /* ------------------------------------------------------------------ */
 
 __attribute__((export_name("cp_hw_step")))

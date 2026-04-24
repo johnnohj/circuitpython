@@ -295,12 +295,26 @@ void mp_hal_delay_ms(mp_uint_t ms);
 #define mp_hal_delay_ms mp_hal_delay_ms
 #endif
 
-// ── VM hook: background tasks + budget check at every branch ──
-// MICROPY_VM_HOOK_LOOP runs at backwards branches in py/vm.c, immediately
-// before the MICROPY_VM_YIELD_ENABLED check.  This is where we service
-// background tasks (display, hw endpoints, Ctrl-C) and check the wall-clock
-// budget.  When budget is expired, we call mp_vm_request_yield() so the
-// yield check right after will save state and return.
+// ── VM hooks ──
+// Matches the upstream circuitpy_mpconfig.h contract:
+//   MICROPY_VM_HOOK_LOOP   — backwards branches (loop iterations)
+//   MICROPY_VM_HOOK_RETURN — function returns
+// Both are entry points for background work.
+//
+// HOOK_LOOP is the port's custom hook: serial interrupt check, debug
+// trace export, and wall-clock budget check.  It does NOT call
+// RUN_BACKGROUND_TASKS because nothing queues callbacks during VM
+// execution (JS can't call into WASM while the VM is running).
+//
+// HOOK_RETURN drains the callback queue via RUN_BACKGROUND_TASKS,
+// matching upstream's guarantee that callbacks registered during a
+// function call drain promptly.  port_background_task() is time-gated
+// (~1ms) so the cost per return is a cheap compare-and-bail.
+//
+// If mid-frame hardware polling is needed in the future (e.g., reading
+// sensors from the I2C device registry during VM execution), promote
+// HOOK_LOOP to also call RUN_BACKGROUND_TASKS — the time-gated
+// port_background_task() keeps it bounded.
 #if MICROPY_VM_YIELD_ENABLED
 extern void wasm_vm_hook_loop(const void *code_state_ptr);
 #define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop(code_state);
@@ -308,6 +322,6 @@ extern void wasm_vm_hook_loop(const void *code_state_ptr);
 #define MICROPY_VM_HOOK_LOOP
 #endif
 
-// CIRCUITPY-CHANGE: wire to port-local background_callback_run_all()
 extern void background_callback_run_all(void);
-#define RUN_BACKGROUND_TASKS (background_callback_run_all())
+#define RUN_BACKGROUND_TASKS    (background_callback_run_all())
+#define MICROPY_VM_HOOK_RETURN  RUN_BACKGROUND_TASKS;

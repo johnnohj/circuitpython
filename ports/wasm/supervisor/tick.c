@@ -4,20 +4,17 @@
  * Adapted from supervisor/shared/tick.c.
  * Same interface (tick.h), WASM-specific changes:
  *   - No BLE HCI, keypad, watchdog, filesystem tick
- *   - No displayio_background() yet (stubbed)
- *   - supervisor_background_tick queued via background_callback
+ *   - No ISR → no callback-queue indirection (direct call)
  *   - supervisor_ticks_ms64/32 derive from port_get_raw_ticks
  *   - mp_hal_delay_ms NOT defined here (vm_yield.c provides yield-based version)
  *   - supervisor_enable/disable_tick use port_enable/disable_tick
  *
- * supervisor_tick() is called by port_background_task() in port.c
- * once per elapsed millisecond (soft-simulated from CLOCK_MONOTONIC).
+ * supervisor_tick() is called by port_background_task() in port.c,
+ * time-gated to ~1ms via port_get_raw_ticks().
  */
 
 #include "supervisor/shared/tick.h"
-#include "supervisor/background_callback.h"
 #include "supervisor/port.h"
-#include "supervisor/shared/stack.h"
 
 #include "mpthreadport.h"
 
@@ -25,56 +22,33 @@
 #include "shared-module/displayio/__init__.h"
 #endif
 
-/* Cursor rendering is handled by JS on the canvas — not in C.
- * JS reads cursor position from a shared struct in linear memory
- * (exported via wasm_cursor_info_addr) and draws a blinking
- * rectangle on top of the framebuffer paint.  No XOR, no burn-in. */
-
 /* ------------------------------------------------------------------ */
 /* Tick state                                                          */
 /* ------------------------------------------------------------------ */
 
-static background_callback_t tick_callback;
 static volatile uint64_t last_finished_tick = 0;
 static volatile size_t tick_enable_count = 0;
 
 /* ------------------------------------------------------------------ */
-/* supervisor_background_tick — tier 2 work, runs from callback queue  */
+/* supervisor_tick — called ~1ms by port_background_task()             */
+/*                                                                     */
+/* On upstream, supervisor_tick() is called from a 1ms ISR and enqueues */
+/* supervisor_background_tick as a callback for later draining.  The   */
+/* queue decouples ISR context (can't call displayio) from main context */
+/* (can).  WASM has no ISR — everything runs in main context — so we   */
+/* call the tick work directly, avoiding the round-trip.               */
 /* ------------------------------------------------------------------ */
 
-static void supervisor_background_tick(void *unused) {
-    (void)unused;
-
-    port_start_background_tick();
-
-    assert_heap_ok();
-
+void supervisor_tick(void) {
     #if CIRCUITPY_DISPLAYIO
     displayio_background();
     #endif
 
-    /* TODO: filesystem_background() when filesystem is wired */
-
-    port_background_tick();
-
-    assert_heap_ok();
-
     last_finished_tick = port_get_raw_ticks(NULL);
-
-    port_finish_background_tick();
 }
 
 bool supervisor_background_ticks_ok(void) {
     return port_get_raw_ticks(NULL) - last_finished_tick < 1024;
-}
-
-/* ------------------------------------------------------------------ */
-/* supervisor_tick — called once per ms by port_background_task()      */
-/* ------------------------------------------------------------------ */
-
-void supervisor_tick(void) {
-    /* Queue supervisor_background_tick to run in background_callback_run_all */
-    background_callback_add(&tick_callback, supervisor_background_tick, NULL);
 }
 
 /* ------------------------------------------------------------------ */

@@ -47,10 +47,6 @@
 
 extern void supervisor_tick(void);
 
-void port_background_task(void) {
-    supervisor_tick();
-}
-
 /* CircuitPython ticks are 1/1024 second (~0.977ms). */
 uint64_t port_get_raw_ticks(uint8_t *subticks) {
     struct timespec ts;
@@ -61,6 +57,27 @@ uint64_t port_get_raw_ticks(uint8_t *subticks) {
         *subticks = 0;
     }
     return ticks;
+}
+
+/* Time-gate supervisor_tick() to ~1ms (one raw tick = 1/1024s ≈ 0.977ms).
+ *
+ * Upstream, supervisor_tick() is called from a 1ms SysTick ISR — hardware
+ * limits the rate.  We have no ISR, so port_background_task() is called
+ * every background_callback_run_all() invocation (potentially frequent now
+ * that MICROPY_VM_HOOK_RETURN drains callbacks on every function return).
+ * The time gate keeps the tick cadence ~1ms, matching upstream behavior.
+ *
+ * If mid-frame hardware polling is added (e.g., I2C device registry reads),
+ * this is where that work would go — it runs at every callback drain, so
+ * keep it cheap.  Expensive periodic work belongs in supervisor_tick(). */
+static uint64_t _last_tick_ticks = 0;
+
+void port_background_task(void) {
+    uint64_t now = port_get_raw_ticks(NULL);
+    if (now != _last_tick_ticks) {
+        _last_tick_ticks = now;
+        supervisor_tick();
+    }
 }
 
 void port_enable_tick(void) {}
