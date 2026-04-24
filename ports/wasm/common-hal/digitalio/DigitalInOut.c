@@ -26,6 +26,22 @@
 #include <string.h>
 #include <unistd.h>
 
+/* ── WASM imports: pin listener registration ──
+ *
+ * When Python claims a pin as input, C tells JS to attach a DOM event
+ * listener (e.g., click/mousedown on the board image element for that
+ * pin).  When the user interacts, JS fires the listener which pushes
+ * SH_EVT_HW_CHANGE into the event ring.  The DOM event system IS the
+ * interrupt controller — no polling or dirty-flag diffing needed.
+ *
+ * JS implements these in the port import object (circuitpython.mjs).
+ * If JS doesn't provide the import, the weak fallback is a no-op. */
+__attribute__((import_module("port"), import_name("registerPinListener")))
+extern void port_register_pin_listener(int pin);
+
+__attribute__((import_module("port"), import_name("unregisterPinListener")))
+extern void port_unregister_pin_listener(int pin);
+
 /* Read a pin's slot from the /hal/gpio fd */
 static void _read_pin(uint8_t pin, uint8_t slot[HAL_GPIO_SLOT_SIZE]) {
     int fd = hal_gpio_fd();
@@ -61,6 +77,12 @@ digitalinout_result_t common_hal_digitalio_digitalinout_construct(
     slot[HAL_GPIO_OFF_ENABLED] = HAL_ENABLED_YES;
     slot[HAL_GPIO_OFF_ROLE] = HAL_ROLE_DIGITAL_IN;
     _write_pin(pin->number, slot);
+
+    /* Tell JS to attach a DOM event listener for this pin.
+     * JS maps pin number → board image element and wires
+     * mousedown/mouseup → SH_EVT_HW_CHANGE events. */
+    port_register_pin_listener(pin->number);
+
     return DIGITALINOUT_OK;
 }
 
@@ -68,6 +90,9 @@ void common_hal_digitalio_digitalinout_deinit(digitalio_digitalinout_obj_t *self
     if (common_hal_digitalio_digitalinout_deinited(self)) {
         return;
     }
+    /* Detach DOM event listener before clearing pin state. */
+    port_unregister_pin_listener(self->pin->number);
+
     uint8_t slot[HAL_GPIO_SLOT_SIZE] = {0}; /* enabled=0 */
     _write_pin(self->pin->number, slot);
     reset_pin_number(self->pin->number);

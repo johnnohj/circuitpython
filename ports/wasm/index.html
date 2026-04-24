@@ -730,6 +730,7 @@ function renderBoardSvg() {
         if (!v) continue;
         const g = document.createElementNS(ns, 'g');
         g.setAttribute('data-pin', pin.name);
+        g.setAttribute('data-pin-id', pin.id);  // GPIO number for C-side listener lookup
 
         const circle = document.createElementNS(ns, 'circle');
         circle.setAttribute('cx', v.x); circle.setAttribute('cy', v.y);

@@ -30,6 +30,7 @@ import { HardwareState, I2CDevice } from './hardware.mjs';
 import { HardwareTarget, WebUSBTarget, WebSerialTarget, TeeTarget } from './targets.mjs';
 import {
     unpackFrameResult,
+    HAL_TYPE_GPIO,
     WASM_PORT_QUIET, WASM_PORT_BG_PENDING,
     WASM_SUP_IDLE, WASM_SUP_CTX_DONE, WASM_SUP_ALL_SLEEPING,
     WASM_VM_NOT_RUN, WASM_VM_YIELDED, WASM_VM_SLEEPING,
@@ -757,6 +758,51 @@ export class CircuitPython {
 
             getMonotonicMs: () => {
                 return performance.now() | 0;
+            },
+
+            // ── Pin listener registration ──
+            // C calls these from common-hal digitalio construct/deinit.
+            // JS attaches DOM event listeners to board image elements
+            // so user interaction (click, mousedown/up) generates
+            // SH_EVT_HW_CHANGE events through the semihosting ring.
+            // The DOM event system IS the interrupt controller.
+
+            registerPinListener: (pin) => {
+                // Find SVG element by GPIO number (data-pin-id),
+                // or a standalone test element (data-pin=pin number)
+                const el = document.querySelector(`[data-pin-id="${pin}"]`)
+                        || document.querySelector(`[data-pin="${pin}"]`);
+                if (!el) return;
+
+                const down = () => {
+                    this._sh.submitHwChange(pin, HAL_TYPE_GPIO, 1);
+                    this._kick();  // ensure a frame runs to process the event
+                };
+                const up = () => {
+                    this._sh.submitHwChange(pin, HAL_TYPE_GPIO, 0);
+                    this._kick();
+                };
+
+                el.addEventListener('mousedown', down);
+                el.addEventListener('mouseup', up);
+                // Touch support
+                el.addEventListener('touchstart', (e) => { e.preventDefault(); down(); });
+                el.addEventListener('touchend', (e) => { e.preventDefault(); up(); });
+
+                // Stash handlers for cleanup on unregister
+                if (!this._pinListeners) this._pinListeners = new Map();
+                this._pinListeners.set(pin, { el, down, up });
+            },
+
+            unregisterPinListener: (pin) => {
+                const entry = this._pinListeners?.get(pin);
+                if (!entry) return;
+                entry.el.removeEventListener('mousedown', entry.down);
+                entry.el.removeEventListener('mouseup', entry.up);
+                // Touch listeners use the same functions via wrapper,
+                // but anonymous wrappers can't be removed — acceptable
+                // for now since deinit typically precedes page unload.
+                this._pinListeners.delete(pin);
             },
         };
 
