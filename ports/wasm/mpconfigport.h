@@ -299,22 +299,21 @@ void mp_hal_delay_ms(mp_uint_t ms);
 // Matches the upstream circuitpy_mpconfig.h contract:
 //   MICROPY_VM_HOOK_LOOP   — backwards branches (loop iterations)
 //   MICROPY_VM_HOOK_RETURN — function returns
-// Both are entry points for background work.
 //
-// HOOK_LOOP is the port's custom hook: serial interrupt check, debug
-// trace export, and wall-clock budget check.  It does NOT call
-// RUN_BACKGROUND_TASKS because nothing queues callbacks during VM
-// execution (JS can't call into WASM while the VM is running).
+// HOOK_LOOP runs lightweight work at every backwards branch:
+//   - Ctrl-C check (serial_check_interrupt)
+//   - ~1ms supervisor_tick (time-gated): checks module dirty flags,
+//     kicks lightweight ticks (keypad_tick, etc.), SCHEDULES heavy
+//     work (displayio_background) as a callback — does NOT execute it
+//   - Debug trace export (source line for JS)
+//   - Wall-clock budget check (yield if >= 13ms)
 //
-// HOOK_RETURN drains the callback queue via RUN_BACKGROUND_TASKS,
-// matching upstream's guarantee that callbacks registered during a
-// function call drain promptly.  port_background_task() is time-gated
-// (~1ms) so the cost per return is a cheap compare-and-bail.
-//
-// If mid-frame hardware polling is needed in the future (e.g., reading
-// sensors from the I2C device registry during VM execution), promote
-// HOOK_LOOP to also call RUN_BACKGROUND_TASKS — the time-gated
-// port_background_task() keeps it bounded.
+// HOOK_RETURN drains via RUN_BACKGROUND_TASKS so callbacks registered
+// during a function call are processed promptly.  The frame model is:
+//   cp_hw_step → drain events + callbacks (before VM)
+//   VM burst   → lean hook (Ctrl-C + budget)
+//   return     → drain callbacks (after VM, via HOOK_RETURN)
+//   JS idle    → UI rendering, user input
 #if MICROPY_VM_YIELD_ENABLED
 extern void wasm_vm_hook_loop(const void *code_state_ptr);
 #define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop(code_state);

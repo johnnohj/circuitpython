@@ -134,23 +134,50 @@ void mp_vm_request_yield(int reason, uint32_t arg) {
 /* serial.c provides Ctrl-C detection */
 extern void serial_check_interrupt(void);
 
+/* tick.c provides the lightweight tick (schedules heavy work) */
+extern void supervisor_tick(void);
+
+/* port.c provides port_get_raw_ticks for the time gate */
+#include "supervisor/port.h"
+
 /* CLI mode + JS time source — live in port_mem. */
 #include "supervisor/port_memory.h"
+
+/* Time gate for supervisor_tick — matches the ~1ms gate in
+ * port_background_task() (port.c).  We duplicate the gate here
+ * rather than calling port_background_task() because HOOK_LOOP
+ * must not trigger a full callback drain — only schedule work.
+ *
+ * port_background_task() calls supervisor_tick() when called from
+ * background_callback_run_all() (frame bookends / HOOK_RETURN).
+ * This gate covers the HOOK_LOOP path so supervisor_tick() also
+ * fires during tight Python loops that don't return from functions. */
+static uint64_t _hook_last_tick = 0;
 
 void wasm_vm_hook_loop(const void *code_state_ptr) {
     const mp_code_state_t *code_state = (const mp_code_state_t *)code_state_ptr;
 
-    /* 1. Check for Ctrl-C (keyboard interrupt).
-     *    This is the only work needed at every backwards branch.
-     *    All other background work (display, HAL, callbacks) runs via
-     *    RUN_BACKGROUND_TASKS at function returns (MICROPY_VM_HOOK_RETURN)
-     *    and once per frame in cp_hw_step().
-     *
-     *    If mid-frame hardware polling is needed in the future (e.g.,
-     *    reading I2C device state during long-running loops), add it
-     *    here or promote this hook to call RUN_BACKGROUND_TASKS — the
-     *    time-gated port_background_task() keeps the cost bounded. */
+    /* 1. Ctrl-C check — runs every backwards branch so keyboard
+     *    interrupts are responsive. */
     serial_check_interrupt();
+
+    /* 2. Lightweight tick — time-gated to ~1ms.
+     *    supervisor_tick() checks module dirty flags, kicks lightweight
+     *    module ticks (future: keypad_tick, filesystem_tick), and
+     *    SCHEDULES heavyweight work (displayio_background) as a
+     *    background callback.  The scheduled work does NOT execute
+     *    here — it drains at the next frame boundary (cp_hw_step)
+     *    or function return (MICROPY_VM_HOOK_RETURN).
+     *
+     *    This separation keeps HOOK_LOOP lean while giving modules
+     *    a ~1ms heartbeat even during tight Python loops. */
+    {
+        uint64_t now = port_get_raw_ticks(NULL);
+        if (now != _hook_last_tick) {
+            _hook_last_tick = now;
+            supervisor_tick();
+        }
+    }
 
     /* 2. Extract current line number for JS coordination.
      *    This runs at every backwards branch — cheap enough to always do.
