@@ -281,45 +281,39 @@ static inline unsigned long mp_random_seed_init(void) {
 #define MICROPY_PY_BLUETOOTH_ENABLE_L2CAP_CHANNELS (MICROPY_BLUETOOTH_NIMBLE)
 #endif
 
-// ── VM yield protocol ──
-// When enabled, the VM checks mp_vm_should_yield() at backwards branches
-// and returns MP_VM_RETURN_YIELD with state saved for resumption.
-#if MICROPY_VM_YIELD_ENABLED
-extern int mp_vm_should_yield(void);
-extern void *mp_vm_yield_state;
-#define MICROPY_VM_YIELD_SAVE_STATE(cs) do { mp_vm_yield_state = (void *)(cs); } while (0)
-
-// Override mp_hal_delay_ms — yield-as-sleep instead of busy-wait.
-// The #define prevents unix_mphal.c from providing a blocking version.
+// ── Abort-resume protocol ──
+// The chassis halts the VM via mp_sched_vm_abort() and resumes by
+// calling mp_execute_bytecode() again with the same code_state.
+// Two pointer saves in HOOK_LOOP make this safe — ip/sp are written
+// to code_state (on pystack, in port_mem) before the abort can fire.
+//
+// Override mp_hal_delay_ms — cooperative yield instead of busy-wait.
 void mp_hal_delay_ms(mp_uint_t ms);
 #define mp_hal_delay_ms mp_hal_delay_ms
-#endif
+
+// WFE (Wait For Event) — the VM calls this when idle (asyncio sleep,
+// time.sleep, blocking I/O).  We abort back to the chassis.
+void wasm_wfe(int timeout_ms);
+#define MICROPY_INTERNAL_WFE(timeout_ms) wasm_wfe(timeout_ms)
 
 // ── VM hooks ──
-// Matches the upstream circuitpy_mpconfig.h contract:
-//   MICROPY_VM_HOOK_LOOP   — backwards branches (loop iterations)
-//   MICROPY_VM_HOOK_RETURN — function returns
 //
-// HOOK_LOOP runs lightweight work at every backwards branch:
-//   - Ctrl-C check (serial_check_interrupt)
-//   - ~1ms supervisor_tick (time-gated): checks module dirty flags,
-//     kicks lightweight ticks (keypad_tick, etc.), SCHEDULES heavy
-//     work (displayio_background) as a callback — does NOT execute it
-//   - Debug trace export (source line for JS)
-//   - Wall-clock budget check (yield if >= 13ms)
+// HOOK_LOOP: saves ip/sp to code_state, then checks budget.
+//   The two stores ensure code_state is always resumable if
+//   nlr_jump_abort fires from mp_handle_pending.
 //
-// HOOK_RETURN drains via RUN_BACKGROUND_TASKS so callbacks registered
-// during a function call are processed promptly.  The frame model is:
-//   cp_hw_step → drain events + callbacks (before VM)
-//   VM burst   → lean hook (Ctrl-C + budget)
-//   return     → drain callbacks (after VM, via HOOK_RETURN)
-//   JS idle    → UI rendering, user input
-#if MICROPY_VM_YIELD_ENABLED
-extern void wasm_vm_hook_loop(const void *code_state_ptr);
-#define MICROPY_VM_HOOK_LOOP    wasm_vm_hook_loop(code_state);
-#else
-#define MICROPY_VM_HOOK_LOOP
-#endif
+// HOOK_RETURN: drains background callbacks.
+//
+// Frame model:
+//   chassis_frame → drain events + callbacks (before VM)
+//   VM burst      → HOOK_LOOP saves ip/sp, checks budget
+//   return        → HOOK_RETURN drains callbacks
+//   JS idle       → UI rendering, user input
+extern void wasm_vm_hook_loop(void);
+#define MICROPY_VM_HOOK_LOOP \
+    code_state->ip = ip; \
+    code_state->sp = sp; \
+    wasm_vm_hook_loop();
 
 extern void background_callback_run_all(void);
 #define RUN_BACKGROUND_TASKS    (background_callback_run_all())

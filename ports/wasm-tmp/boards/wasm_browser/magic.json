@@ -1,0 +1,61 @@
+{
+  "components": [
+    {
+      "type": "led",
+      "name": "Status LED",
+      "pin": "D13",
+      "led": { "color": "red", "activeHigh": true },
+      "visual": { "x": 300, "y": 40, "w": 12, "h": 12, "shape": "circle" }
+    },
+    {
+      "type": "neopixel",
+      "name": "NeoPixel Strip",
+      "pin": "NEOPIXEL",
+      "neopixel": { "count": 10, "order": "GRB", "brightness": 0.2 },
+      "visual": { "x": 140, "y": 90, "w": 120, "h": 16, "shape": "strip" }
+    },
+    {
+      "type": "push_button",
+      "name": "Button A",
+      "pin": "BUTTON_A",
+      "button": { "pull": "UP", "activeHigh": false },
+      "visual": { "x": 90, "y": 100, "w": 24, "h": 24, "shape": "circle" }
+    },
+    {
+      "type": "push_button",
+      "name": "Button B",
+      "pin": "BUTTON_B",
+      "button": { "pull": "UP", "activeHigh": false },
+      "visual": { "x": 290, "y": 100, "w": 24, "h": 24, "shape": "circle" }
+    },
+    {
+      "type": "light_sensor",
+      "name": "Light Sensor",
+      "pin": "A1",
+      "sensor": {
+        "mode": "analog",
+        "range": { "min": 0, "max": 65535, "unit": "lux" },
+        "defaultValue": 32768
+      },
+      "visual": { "x": 60, "y": 70, "w": 16, "h": 16, "shape": "circle",
+                  "svgElement": "#light-sensor" }
+    },
+    {
+      "type": "temperature_sensor",
+      "name": "Temperature Sensor",
+      "pin": "A0",
+      "sensor": {
+        "mode": "analog",
+        "range": { "min": -40, "max": 85, "unit": "°C" },
+        "defaultValue": 22
+      },
+      "visual": { "x": 40, "y": 70, "w": 16, "h": 16, "shape": "rect" }
+    },
+    {
+      "type": "speaker",
+      "name": "Speaker",
+      "pin": "D3",
+      "visual": { "x": 200, "y": 130, "w": 32, "h": 32, "shape": "circle" }
+    }
+  ]
+}

@@ -30,11 +30,11 @@
 // Enable extra Unix features.
 #include "../mpconfigvariant_common.h"
 
-// ── VM yield: cooperative stepping for browser frame budget ──
-// Pystack puts Python frames on the heap (not C stack) so yield/resume works.
+// ── Abort-resume: halt/resume via nlr_jump_abort ──
+// Pystack puts Python frames on the heap (not C stack) so resume works.
 // Stackless ensures function calls don't recurse on the C stack.
-// VM yield enables MP_VM_RETURN_YIELD at backwards branches.
+// VM abort lets the port halt the VM from HOOK_LOOP and land at the chassis.
 #define MICROPY_ENABLE_PYSTACK      (1)
 #define MICROPY_STACKLESS           (1)
 #define MICROPY_STACKLESS_STRICT    (1)
-#define MICROPY_VM_YIELD_ENABLED    (1)
+#define MICROPY_ENABLE_VM_ABORT     (1)

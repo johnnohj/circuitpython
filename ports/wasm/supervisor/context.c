@@ -129,8 +129,10 @@ void cp_context_set_delay(int id, uint64_t delay_until) {
 /* Context switching                                                   */
 /* ------------------------------------------------------------------ */
 
+#if !MICROPY_ENABLE_VM_ABORT
 /* Yield state — single global, valid only for the active context. */
 extern void *mp_vm_yield_state;
+#endif
 
 void cp_context_save(int id) {
     if (id < 0 || id >= CP_MAX_CONTEXTS) return;
@@ -141,13 +143,15 @@ void cp_context_save(int id) {
     _meta[id].pystack_cur_off =
         (uint32_t)(MP_STATE_THREAD(pystack_cur) - base);
 
-    /* Save yield_state as offset from base. */
+    #if !MICROPY_ENABLE_VM_ABORT
+    /* Save yield_state as offset from base (old yield protocol). */
     if (mp_vm_yield_state != NULL) {
         _meta[id].yield_state_off =
             (uint32_t)((uint8_t *)mp_vm_yield_state - base);
     } else {
         _meta[id].yield_state_off = CTX_NO_YIELD_STATE;
     }
+    #endif
 
     /* Save globals/locals. */
     _meta[id].globals_ptr = (uint32_t)(uintptr_t)MP_STATE_THREAD(dict_globals);
@@ -164,12 +168,14 @@ void cp_context_restore(int id) {
     MP_STATE_THREAD(pystack_cur)   = base + _meta[id].pystack_cur_off;
     MP_STATE_THREAD(pystack_end)   = _pystack_end(id);
 
-    /* Restore yield_state. */
+    #if !MICROPY_ENABLE_VM_ABORT
+    /* Restore yield_state (old yield protocol). */
     if (_meta[id].yield_state_off != CTX_NO_YIELD_STATE) {
         mp_vm_yield_state = base + _meta[id].yield_state_off;
     } else {
         mp_vm_yield_state = NULL;
     }
+    #endif
 
     /* Restore globals/locals. */
     MP_STATE_THREAD(dict_globals) = (mp_obj_dict_t *)(uintptr_t)_meta[id].globals_ptr;

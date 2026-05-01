@@ -3,6 +3,10 @@
 Architecture exploration and design sketches for the CircuitPython WASM port.
 These documents capture design decisions and rationale — not implementation status.
 
+Plans for a significant rewrite/migration, based on the design work and testing outlined in [memfs=port-chassis.md](memfs-port-chassis.md) and [abort-resume.md](abort-resume.md), began to be developed 25 April 2026. Included were [board-as-ui.md](board-as-ui.md) and [thread-frame-model.md](thread-frame-model.md).
+
+Older design documents were placed into a separate directory sibling to this file [history/](ports/wasm/design/history/) on 27 April 2026 to retain a history of design choices while reducing the risk of confusion or accidental reversion. They still represent a useful touchstone, but may now reference functions, patterns, or implementations that have been superseded by the newer designs.
+
 ## Documents
 
 - [yield-suspend-separation.md](yield-suspend-separation.md) — MP_VM_RETURN_SUSPEND architecture, NLR sentinel propagation, future directions (WFE integration, per-task contexts, FRAME_* observability)
@@ -21,6 +25,3 @@ These documents capture design decisions and rationale — not implementation st
    event ring in) uses exported C pointers (`sh_state_addr()`, `sh_event_ring_addr()`)
    for direct linear memory access. WASI fds remain valid for init-time setup and
    low-frequency semihosting calls (fetch, timer, persist).
-6. **Single VM, single worker.** Earlier split-port explorations (supervisor.wasm
-   + fiber.wasm, reactor+worker) are abandoned. The single-VM-in-Worker model
-   with OffscreenCanvas for display is what ships.

@@ -37,6 +37,7 @@ include $(TOP)/extmod/extmod.mk
 INC +=  -I.
 INC +=  -I$(TOP)
 INC += -I$(BUILD)
+INC += -Ichassis
 
 # ── wasi-sdk ──
 WASI_SDK ?= $(HOME)/.local/bin/wasi-sdk-32.0-x86_64-linux
@@ -116,6 +117,8 @@ SRC_C += \
 	supervisor/context.c \
 	supervisor/port_memory.c \
 	supervisor/vm_yield.c \
+	chassis/vm_abort.c \
+	chassis/budget.c \
 	supervisor/serial.c \
 	supervisor/micropython.c \
 	supervisor/background_callback.c \
@@ -224,3 +227,28 @@ test: $(BUILD)/$(PROG)
 test-all: build-standard/circuitpython.wasm build-browser/circuitpython.wasm
 	$(NODE) test_standard.mjs
 	$(NODE) test_browser.mjs
+
+# ── Abort-resume test ──
+# Builds a minimal WASI binary linking MicroPython core + chassis budget/memory
+# against a test harness that validates nlr_jump_abort halt/resume.
+
+TEST_ABORT_SRC = chassis/test_abort_resume.c chassis/vm_abort.c \
+	chassis/budget.c chassis/port_memory.c
+TEST_ABORT_OBJ = $(addprefix $(BUILD)/, $(TEST_ABORT_SRC:.c=.o))
+
+# Need the py core objects but NOT the supervisor (which has its own main)
+TEST_ABORT_OBJ += $(PY_O) $(addprefix $(BUILD)/, $(SHARED_SRC_C:.c=.o))
+
+$(BUILD)/chassis/%.o: chassis/%.c | $(BUILD)/chassis
+	$(CC) $(CFLAGS) -Ichassis -c -o $@ $<
+
+$(BUILD)/chassis:
+	mkdir -p $(BUILD)/chassis
+
+$(BUILD)/test_abort_resume.wasm: $(TEST_ABORT_OBJ)
+	$(LD) $(LDFLAGS) -Wl,--allow-undefined -o $@ $^
+
+test-abort-resume: $(BUILD)/test_abort_resume.wasm
+	$(NODE) test_abort_resume.mjs $(BUILD)/test_abort_resume.wasm
+
+.PHONY: test-abort-resume

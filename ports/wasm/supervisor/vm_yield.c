@@ -19,6 +19,12 @@
  * replaced with wall-clock budget.
  */
 
+// This file is only used with the old YIELD protocol.
+// When MICROPY_ENABLE_VM_ABORT is set, chassis/vm_abort.c provides
+// the hook and yield functions instead.
+#include "py/mpconfig.h"
+#if !MICROPY_ENABLE_VM_ABORT
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -396,3 +402,5 @@ void vm_yield_stop(void) {
     cp_context_set_delay(cp_context_active(), 0);
     _yield_requested = false;
 }
+
+#endif // !MICROPY_ENABLE_VM_ABORT
