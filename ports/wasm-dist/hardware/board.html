@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; }
+body { background: transparent; overflow: hidden; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="board-canvas"></canvas>
+<script type="module">
+import { init } from './hardware.mjs';
+
+// Get definition URL from query string or use default
+const params = new URLSearchParams(location.search);
+const defUrl = params.get('def') || '../boards/wasm_browser/definition.json';
+
+const canvas = document.getElementById('board-canvas');
+await init(canvas, { definitionUrl: defUrl });
+
+// Signal parent that we're ready
+if (window.parent !== window) {
+    window.parent.postMessage({ source: 'hardware', type: 'ready' }, '*');
+}
+</script>
+</body>
+</html>

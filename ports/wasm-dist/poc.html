@@ -11,17 +11,15 @@ h1 { font-size: 14px; color: #888; margin-bottom: 8px; }
 .row { display: flex; gap: 16px; margin-bottom: 12px; }
 .col { display: flex; flex-direction: column; gap: 8px; }
 
-canvas { border: 1px solid #444; background: #000; image-rendering: pixelated; }
-
 #serial {
-    width: 500px; height: 200px;
+    width: 500px; height: 180px;
     background: #111; border: 1px solid #333;
     padding: 8px; overflow-y: auto; white-space: pre-wrap;
     font-size: 12px; color: #0f0;
 }
 
 #editor {
-    width: 500px; height: 180px;
+    width: 500px; height: 200px;
     background: #111; border: 1px solid #333;
     padding: 8px; font-family: monospace; font-size: 12px;
     color: #fff; resize: none;
@@ -33,32 +31,17 @@ button {
     cursor: pointer;
 }
 button:hover { background: #555; }
-button.active { background: #2a6; }
 
-.hw-panel {
-    display: flex; gap: 8px; align-items: center;
-    padding: 8px; background: #222; border: 1px solid #333;
+#board-frame {
+    border: 1px solid #444;
+    background: #000;
 }
-.hw-panel label { font-size: 11px; color: #999; }
 
-.gpio-grid {
-    display: grid; grid-template-columns: repeat(8, 28px); gap: 2px;
-}
-.gpio-dot {
-    width: 28px; height: 28px; border-radius: 50%;
-    border: 1px solid #444; background: #222;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 8px; color: #666; cursor: pointer;
-}
-.gpio-dot.claimed { border-color: #48f; }
-.gpio-dot.high { background: #4a4; }
-.gpio-dot.low { background: #633; }
-.gpio-dot.input { border-color: #f84; }
-
-.neopixel-strip { display: flex; gap: 3px; }
-.neopixel-led {
-    width: 20px; height: 20px; border-radius: 50%;
-    border: 1px solid #333; background: #111;
+#pin-tooltip {
+    position: fixed;
+    background: #222; border: 1px solid #666; color: #ccc;
+    padding: 4px 8px; font-size: 11px;
+    pointer-events: none; display: none; z-index: 100;
 }
 
 #status { font-size: 11px; color: #666; }
@@ -69,13 +52,17 @@ button.active { background: #2a6; }
 <div id="status">Loading...</div>
 
 <div class="row" style="margin-top: 12px;">
-  <!-- Left: Display + Serial -->
+  <!-- Left: Board renderer (Emscripten iframe) + Serial -->
   <div class="col">
-    <canvas id="display" width="240" height="180"></canvas>
+    <iframe id="board-frame"
+            src="hardware/board.html?def=../boards/wasm_browser/definition.json"
+            width="420" height="240"
+            sandbox="allow-scripts allow-same-origin"
+            style="border: none;"></iframe>
     <div id="serial"></div>
   </div>
 
-  <!-- Right: Code + Controls + Hardware -->
+  <!-- Right: Code editor + Controls -->
   <div class="col">
     <div class="row">
       <button id="btn-run">Run</button>
@@ -103,24 +90,10 @@ while True:
             time.sleep(0.05)
     time.sleep(0.1)
 </textarea>
-
-    <!-- Hardware state (read from hardware.wasm) -->
-    <div class="hw-panel">
-      <label>GPIO:</label>
-      <div class="gpio-grid" id="gpio-grid"></div>
-    </div>
-
-    <div class="hw-panel">
-      <label>NeoPixels:</label>
-      <div class="neopixel-strip" id="neopixel-strip"></div>
-    </div>
-
-    <div class="hw-panel">
-      <button id="btn-a">BTN A</button>
-      <button id="btn-b">BTN B</button>
-    </div>
   </div>
 </div>
+
+<div id="pin-tooltip"></div>
 
 <script type="module">
 import { CircuitPython } from './js/circuitpython.mjs';
@@ -128,82 +101,81 @@ import { CircuitPython } from './js/circuitpython.mjs';
 const $status   = document.getElementById('status');
 const $serial   = document.getElementById('serial');
 const $editor   = document.getElementById('editor');
-const $canvas   = document.getElementById('display');
-const $gpioGrid = document.getElementById('gpio-grid');
-const $neoStrip = document.getElementById('neopixel-strip');
+const $frame    = document.getElementById('board-frame');
+const $tooltip  = document.getElementById('pin-tooltip');
 
 let cp = null;
+let boardFrameReady = false;
 
-// ── Build GPIO visualization ──
-const gpioDots = [];
-for (let i = 0; i < 32; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'gpio-dot';
-    dot.textContent = i;
-    $gpioGrid.appendChild(dot);
-    gpioDots.push(dot);
+// ── Send state to iframe hardware renderer ──
+
+function sendToBoard(type, data) {
+    if (!boardFrameReady) return;
+    $frame.contentWindow.postMessage({ type, data }, '*');
 }
 
-// ── Build NeoPixel visualization ──
-const neoLeds = [];
-for (let i = 0; i < 10; i++) {
-    const led = document.createElement('div');
-    led.className = 'neopixel-led';
-    $neoStrip.appendChild(led);
-    neoLeds.push(led);
-}
-
-// ── Render hardware state from hardware.wasm ──
-let lastGpioChanges = 0;
-let lastNeoChanges = 0;
-
-function renderHardware() {
+// Forward VM state to the iframe renderer each frame
+function onFrame() {
     if (!cp) return;
 
-    // GPIO — read from hardware.wasm every frame
+    // GPIO → iframe
     const gpio = new Uint8Array(cp.hwMemory.buffer, cp.hwGpioAddr, 32 * 12);
-    for (let i = 0; i < 32; i++) {
-        const off = i * 12;
-        const enabled = gpio[off];
-        const direction = gpio[off + 1];
-        const value = gpio[off + 2];
-        const dot = gpioDots[i];
-        dot.className = 'gpio-dot'
-            + (enabled ? ' claimed' : '')
-            + (enabled && direction === 0 ? ' input' : '')
-            + (enabled && value ? ' high' : '')
-            + (enabled && !value && direction === 1 ? ' low' : '');
-    }
+    sendToBoard('gpio', Array.from(gpio));
 
-    // NeoPixels — read from hardware.wasm every frame
-    // Header: [pin:u8][enabled:u8][num_bytes:u16le]
-    // Data: GRB bytes (NeoPixel wire format)
+    // NeoPixel → iframe
     const neo = new Uint8Array(cp.hwMemory.buffer, cp.hwNeopixelAddr, 4 + 64 * 4);
-    const enabled = neo[1];
-    const numBytes = neo[2] | (neo[3] << 8);
-    const bpp = 3;  // GRB
-    const count = enabled ? Math.min(Math.floor(numBytes / bpp), 10) : 0;
-    for (let i = 0; i < 10; i++) {
-        if (i < count) {
-            const base = 4 + i * bpp;
-            const g = neo[base], r = neo[base + 1], b = neo[base + 2];
-            neoLeds[i].style.background = `rgb(${r},${g},${b})`;
-            neoLeds[i].style.borderColor = (r + g + b > 0) ? '#fff' : '#333';
-        } else {
-            neoLeds[i].style.background = '#111';
-            neoLeds[i].style.borderColor = '#333';
-        }
-    }
+    sendToBoard('neopixel', Array.from(neo));
 }
 
+// ── Receive messages from iframe ──
+
+window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || msg.source !== 'hardware') return;
+
+    switch (msg.type) {
+        case 'ready':
+            boardFrameReady = true;
+            $status.textContent = $status.textContent.replace('Loading', 'Board ready');
+            break;
+
+        case 'hover':
+            if (msg.pin !== null && msg.name) {
+                $tooltip.textContent = msg.name;
+                $tooltip.style.display = 'block';
+                // Position near the iframe
+                const rect = $frame.getBoundingClientRect();
+                $tooltip.style.left = (rect.left + msg.x + 15) + 'px';
+                $tooltip.style.top = (rect.top + msg.y - 5) + 'px';
+            } else {
+                $tooltip.style.display = 'none';
+            }
+            break;
+
+        case 'press':
+            // Board button pressed — forward to VM
+            if (cp && msg.pin !== undefined) {
+                cp.setInput(msg.pin, 0);  // pressed = LOW
+            }
+            break;
+
+        case 'release':
+            // Board button released — forward to VM
+            if (cp && msg.pin !== undefined) {
+                cp.setInput(msg.pin, 1);  // released = HIGH
+            }
+            break;
+    }
+});
+
 // ── Init ──
+
 async function init() {
     try {
         const base = new URL('.', location.href).href;
         cp = await CircuitPython.create({
             wasmUrl: base + 'build-browser/circuitpython.wasm',
             hardwareUrl: base + 'hardware/hardware.wasm',
-            canvas: $canvas,
             onStdout: (text) => {
                 $serial.textContent += text;
                 $serial.scrollTop = $serial.scrollHeight;
@@ -212,10 +184,10 @@ async function init() {
                 $serial.textContent += text;
                 $serial.scrollTop = $serial.scrollHeight;
             },
-            onFrame: renderHardware,
+            onFrame,
         });
 
-        $status.textContent = 'Ready — VM in Worker, hardware on main thread';
+        $status.textContent = 'Ready — VM in Worker | board in iframe (Emscripten SDL2)';
     } catch (err) {
         $status.textContent = 'Error: ' + err.message;
         console.error(err);
@@ -223,6 +195,7 @@ async function init() {
 }
 
 // ── Controls ──
+
 document.getElementById('btn-run').addEventListener('click', () => {
     if (!cp) return;
     $serial.textContent = '';
@@ -243,6 +216,7 @@ document.getElementById('btn-stop').addEventListener('click', () => {
 });
 
 // ── Keyboard → serial ──
+
 document.addEventListener('keydown', (e) => {
     if (!cp || e.target.tagName === 'TEXTAREA') return;
     if (e.ctrlKey && e.key === 'c') { cp.ctrlC(); e.preventDefault(); return; }
@@ -254,17 +228,6 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
     }
 });
-
-// ── Button hardware inputs ──
-// BUTTON_A = pin 21, BUTTON_B = pin 22 (from board_pins.c)
-function setupHwButton(elId, pin) {
-    const el = document.getElementById(elId);
-    el.addEventListener('mousedown', () => { if (cp) cp.setInput(pin, 0); });
-    el.addEventListener('mouseup',   () => { if (cp) cp.setInput(pin, 1); });
-    el.addEventListener('mouseleave',() => { if (cp) cp.setInput(pin, 1); });
-}
-setupHwButton('btn-a', 21);
-setupHwButton('btn-b', 22);
 
 init();
 </script>

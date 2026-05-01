@@ -61,13 +61,15 @@
       "visual": { "x": 140, "y": 200, "side": "bottom" } },
 
     { "name": "NEOPIXEL", "id": 20,
-      "capabilities": { "digital": true } },
+      "capabilities": { "digital": true, "neopixel": true },
+      "neopixelCount": 10,
+      "visual": { "x": 120, "y": 150, "side": "internal" } },
 
     { "name": "BUTTON_A", "id": 21,
-      "capabilities": { "digital": true },
+      "capabilities": { "digital": true, "button": true },
       "visual": { "x": 60, "y": 110, "side": "internal" } },
     { "name": "BUTTON_B", "id": 22,
-      "capabilities": { "digital": true },
+      "capabilities": { "digital": true, "button": true },
       "visual": { "x": 340, "y": 110, "side": "internal" } }
   ],
 
