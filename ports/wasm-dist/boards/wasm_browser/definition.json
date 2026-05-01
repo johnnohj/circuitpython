@@ -1,0 +1,94 @@
+{
+  "boardName": "wasm_browser",
+  "displayName": "CircuitPython WASM Browser Board",
+  "vendor": "CircuitPython",
+  "mcuName": "wasm",
+  "mcuRefVoltage": 3.3,
+  "productURL": "https://circuitpython.org",
+  "documentationURL": "https://docs.circuitpython.org",
+
+  "visual": {
+    "image": "board.svg",
+    "width": 400,
+    "height": 220,
+    "pinDistance": 20
+  },
+
+  "pins": [
+    { "name": "D0",  "id": 0,  "capabilities": { "digital": true, "uart_rx": true },
+      "visual": { "x": 40, "y": 20, "side": "top" } },
+    { "name": "D1",  "id": 1,  "capabilities": { "digital": true, "uart_tx": true },
+      "visual": { "x": 60, "y": 20, "side": "top" } },
+    { "name": "D2",  "id": 2,  "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 80, "y": 20, "side": "top" } },
+    { "name": "D3",  "id": 3,  "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 100, "y": 20, "side": "top" } },
+    { "name": "D4",  "id": 4,  "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 120, "y": 20, "side": "top" } },
+    { "name": "D5",  "id": 5,  "capabilities": { "digital": true, "pwm": true, "touch": true },
+      "visual": { "x": 140, "y": 20, "side": "top" } },
+    { "name": "D6",  "id": 6,  "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 160, "y": 20, "side": "top" } },
+    { "name": "D7",  "id": 7,  "capabilities": { "digital": true },
+      "visual": { "x": 180, "y": 20, "side": "top" } },
+    { "name": "D8",  "id": 8,  "capabilities": { "digital": true },
+      "visual": { "x": 200, "y": 20, "side": "top" } },
+    { "name": "D9",  "id": 9,  "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 220, "y": 20, "side": "top" } },
+    { "name": "D10", "id": 10, "capabilities": { "digital": true, "pwm": true },
+      "visual": { "x": 240, "y": 20, "side": "top" } },
+    { "name": "D11", "id": 11, "capabilities": { "digital": true, "pwm": true, "spi_mosi": true },
+      "visual": { "x": 260, "y": 20, "side": "top" } },
+    { "name": "D12", "id": 12, "capabilities": { "digital": true, "spi_miso": true },
+      "visual": { "x": 280, "y": 20, "side": "top" } },
+    { "name": "D13", "id": 13, "aliases": ["LED", "LED_BUILTIN"],
+      "capabilities": { "digital": true, "pwm": true, "spi_sck": true },
+      "visual": { "x": 300, "y": 20, "side": "top" } },
+
+    { "name": "A0",  "id": 14, "capabilities": { "digital": true, "analog_in": true, "analog_out": true, "touch": true },
+      "visual": { "x": 40, "y": 200, "side": "bottom" } },
+    { "name": "A1",  "id": 15, "capabilities": { "digital": true, "analog_in": true, "pwm": true, "touch": true },
+      "visual": { "x": 60, "y": 200, "side": "bottom" } },
+    { "name": "A2",  "id": 16, "capabilities": { "digital": true, "analog_in": true, "pwm": true, "touch": true },
+      "visual": { "x": 80, "y": 200, "side": "bottom" } },
+    { "name": "A3",  "id": 17, "capabilities": { "digital": true, "analog_in": true, "pwm": true },
+      "visual": { "x": 100, "y": 200, "side": "bottom" } },
+    { "name": "A4",  "id": 18, "aliases": ["SDA"],
+      "capabilities": { "digital": true, "analog_in": true, "i2c_sda": true },
+      "visual": { "x": 120, "y": 200, "side": "bottom" } },
+    { "name": "A5",  "id": 19, "aliases": ["SCL"],
+      "capabilities": { "digital": true, "analog_in": true, "i2c_scl": true },
+      "visual": { "x": 140, "y": 200, "side": "bottom" } },
+
+    { "name": "NEOPIXEL", "id": 20,
+      "capabilities": { "digital": true } },
+
+    { "name": "BUTTON_A", "id": 21,
+      "capabilities": { "digital": true },
+      "visual": { "x": 60, "y": 110, "side": "internal" } },
+    { "name": "BUTTON_B", "id": 22,
+      "capabilities": { "digital": true },
+      "visual": { "x": 340, "y": 110, "side": "internal" } }
+  ],
+
+  "power": {
+    "threeVolt": [{ "x": 320, "y": 20, "label": "3V3" }],
+    "fiveVolt":  [{ "x": 340, "y": 20, "label": "5V" }],
+    "ground":    [
+      { "x": 360, "y": 20, "label": "GND" },
+      { "x": 160, "y": 200, "label": "GND" }
+    ]
+  },
+
+  "i2c": [
+    { "id": 0, "sda": "SDA", "scl": "SCL", "frequency": 100000 }
+  ],
+
+  "spi": [
+    { "id": 0, "mosi": "D11", "miso": "D12", "sck": "D13" }
+  ],
+
+  "uart": [
+    { "id": 0, "tx": "D1", "rx": "D0", "baudrate": 115200 }
+  ]
+}
