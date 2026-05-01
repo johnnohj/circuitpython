@@ -1,14 +1,16 @@
-/*
- * SPI.c — Virtual SPI backed by MEMFS transfer files.
- *
- * SPI is simpler than I2C: full-duplex byte transfers. We use a
- * transfer file at /hal/spi/xfer. Write puts data there; read pulls
- * from it. A sensor simulator writes response bytes before the
- * driver reads.
- *
- * For CS-addressed devices, the reactor's Python shim handles chip
- * select via digitalio and routes to per-device files if needed.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/busio/SPI.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// SPI.c — Virtual SPI backed by MEMFS transfer files.
+//
+// SPI is simpler than I2C: full-duplex byte transfers. We use a
+// transfer file at /hal/spi/xfer. Write puts data there; read pulls
+// from it. A sensor simulator writes response bytes before the
+// driver reads.
 
 #include "common-hal/busio/SPI.h"
 #include "shared-bindings/busio/SPI.h"
@@ -100,7 +102,7 @@ bool common_hal_busio_spi_read(busio_spi_obj_t *self,
     uint8_t *data, size_t len, uint8_t write_value) {
     int fd = open(SPI_XFER_PATH, O_RDONLY);
     if (fd < 0) {
-        /* No response file — fill with write_value (loopback). */
+        // No response file — fill with write_value (loopback).
         memset(data, write_value, len);
         return true;
     }
@@ -114,7 +116,7 @@ bool common_hal_busio_spi_read(busio_spi_obj_t *self,
 
 bool common_hal_busio_spi_transfer(busio_spi_obj_t *self,
     const uint8_t *data_out, uint8_t *data_in, size_t len) {
-    /* Write out data, then read response. */
+    // Write out data, then read response.
     if (data_out) {
         int fd = open(SPI_XFER_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (fd >= 0) {

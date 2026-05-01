@@ -1,15 +1,20 @@
-/*
- * supervisor/status_bar.c — Port-local status bar for WASM.
- *
- * Adapted from supervisor/shared/status_bar.c.
- * Same interface (status_bar.h), WASM-specific changes:
- *   - No BLE, USB keyboard, or web workflow status
- *   - Uses our port-local serial_write for output
- *   - Background callback queues updates for lazy rendering
- *
- * The status bar writes an OSC terminal title sequence that the
- * supervisor terminal renders in its top row.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/status_bar.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// Port-local status bar for WASM.
+//
+// Adapted from supervisor/shared/status_bar.c.
+// Same interface (status_bar.h), WASM-specific changes:
+//   - No BLE, USB keyboard, or web workflow status
+//   - Uses our port-local serial_write for output
+//   - Background callback queues updates for lazy rendering
+//
+// The status bar writes an OSC terminal title sequence that the
+// supervisor terminal renders in its top row.
 
 #include <stdbool.h>
 #include "genhdr/mpversion.h"

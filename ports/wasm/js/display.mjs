@@ -33,6 +33,10 @@ export class Display {
             canvas.style.height = this._fbHeight + 'px';
         }
 
+        // Dirty tracking — only repaint when framebuffer changes
+        this._frameCountAddr = exports.wasm_display_frame_count_addr();
+        this._lastFrameCount = 0;
+
         // Cursor blink state
         this._cursorOn = true;
         this._cursorLastToggle = performance.now();
@@ -41,9 +45,16 @@ export class Display {
     get width() { return this._fbWidth; }
     get height() { return this._fbHeight; }
 
-    /** Convert RGB565 framebuffer to RGBA and paint to canvas. */
+    /** Convert RGB565 framebuffer to RGBA and paint to canvas.
+     *  Returns true if the framebuffer was dirty (repaint happened). */
     paint() {
-        if (!this._ctx || !this._fbAddr || this._fbWidth === 0) return;
+        if (!this._ctx || !this._fbAddr || this._fbWidth === 0) return false;
+
+        // Check display frame_count — skip if framebuffer hasn't changed.
+        const fc = new DataView(this._exports.memory.buffer)
+            .getUint32(this._frameCountAddr, true);
+        if (fc === this._lastFrameCount) return false;
+        this._lastFrameCount = fc;
 
         const fb = new Uint16Array(
             this._exports.memory.buffer, this._fbAddr,
@@ -59,6 +70,7 @@ export class Display {
             rgba[j + 3] = 255;
         }
         this._ctx.putImageData(this._imageData, 0, 0);
+        return true;
     }
 
     /**
@@ -70,13 +82,6 @@ export class Display {
      */
     drawCursor() {
         if (!this._ctx) return;
-
-        const now = performance.now();
-        if (now - this._cursorLastToggle >= CURSOR_BLINK_MS) {
-            this._cursorOn = !this._cursorOn;
-            this._cursorLastToggle = now;
-        }
-        if (!this._cursorOn) return;
 
         const mem = this._exports.memory.buffer;
         const ci = new DataView(mem, this._cursorInfoAddr, 20);

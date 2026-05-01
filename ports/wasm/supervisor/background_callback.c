@@ -1,12 +1,19 @@
-/*
- * supervisor/background_callback.c — Port-local background callback queue.
- *
- * Adapted from supervisor/shared/background_callback.c.
- * Same interface (background_callback.h), WASM-specific changes:
- *   - Critical sections use mpthreadport.c atomic sections
- *   - No USB/BLE wake (port_wake_main_task is a no-op)
- *   - No shared-bindings/microcontroller dependency
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/background_callback.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// supervisor/background_callback.c — Background callback queue.
+//
+// Adapted from supervisor/shared/background_callback.c.
+// Same interface (background_callback.h), wasm-layer specifics:
+//   - Critical sections use mpthreadport.c atomic sections
+//   - port_wake_main_task sets a flag in port_mem (no USB/BLE wake)
+//
+// Design refs:
+//   design/wasm-layer.md  (wasm layer)
 
 #include <string.h>
 
@@ -14,30 +21,26 @@
 #include "py/mpconfig.h"
 #include "supervisor/background_callback.h"
 #include "supervisor/port.h"
-#include "supervisor/semihosting.h"
 
 #include "mpthreadport.h"
 
-/* ------------------------------------------------------------------ */
-/* Critical sections — use mpthreadport atomic sections                */
-/* ------------------------------------------------------------------ */
+// ── Critical sections ──
 
 #define CALLBACK_CRITICAL_BEGIN mp_thread_begin_atomic_section()
 #define CALLBACK_CRITICAL_END   mp_thread_end_atomic_section()
 
-/* ------------------------------------------------------------------ */
-/* Callback queue                                                      */
-/* ------------------------------------------------------------------ */
+// ── Callback queue ──
 
 static volatile background_callback_t *volatile callback_head;
 static volatile background_callback_t *volatile callback_tail;
 
-/* On real hardware, this unblocks the main RTOS task so it runs
- * background callbacks immediately.  On WASM, JS is the main task —
- * we set a flag in semihosting state so JS knows to call cp_hw_step()
- * even when the VM is idle. */
+// On real hardware, this unblocks the main RTOS task so it runs
+// background callbacks immediately.  On WASM, we tell JS to schedule
+// another frame so callbacks drain promptly.
+#include "port/ffi_imports.h"
+
 void port_wake_main_task(void) {
-    sh_set_bg_pending();
+    ffi_request_frame(0);  // ASAP — background work needs a frame
 }
 
 void background_callback_add_core(background_callback_t *cb) {
@@ -71,7 +74,7 @@ bool background_callback_pending(void) {
 static int background_prevention_count;
 
 void background_callback_run_all(void) {
-    /* Tier 3: port background tasks (tick simulation) run first */
+    // Port background tasks (tick simulation) run first
     port_background_task();
 
     if (!background_callback_pending()) {

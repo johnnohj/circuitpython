@@ -1,9 +1,13 @@
-/*
- * DigitalInOut.h — Virtual GPIO via /hal/gpio fd endpoint.
- *
- * Pin state lives at the /hal/gpio WASI fd, not in a C array.
- * Each pin occupies 8 bytes at offset pin_number * 8.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/digitalio/DigitalInOut.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// DigitalInOut.h — Virtual GPIO via direct memory access.
+//
+// Pin state lives in port_mem.hal_gpio, accessed via gpio_slot().
 #pragma once
 
 #include "common-hal/microcontroller/Pin.h"

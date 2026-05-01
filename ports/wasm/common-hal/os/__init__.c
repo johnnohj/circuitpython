@@ -1,10 +1,15 @@
-/*
- * common-hal/os — WASI port-specific functions
- *
- * Only the functions NOT provided by shared-module/os/__init__.c.
- * The shared-module handles chdir, getcwd, listdir, mkdir, remove,
- * rename, rmdir, stat via mp_vfs_* calls.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/os/__init__.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// common-hal/os — WASM port-specific functions
+//
+// Only the functions NOT provided by shared-module/os/__init__.c.
+// The shared-module handles chdir, getcwd, listdir, mkdir, remove,
+// rename, rmdir, stat via mp_vfs_* calls.
 
 #include <fcntl.h>
 #include <unistd.h>

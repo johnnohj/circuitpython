@@ -1,15 +1,20 @@
-/*
- * wasm_framebuffer.h — WASM framebuffer display for browser Canvas
- *
- * A simple framebuffer in WASM linear memory that implements the
- * CircuitPython framebuffer protocol. The display pipeline renders
- * the REPL terminal (terminalio) into this buffer. The browser host
- * reads the buffer directly from WASM memory and paints it onto a
- * Canvas element.
- *
- * RGB565 format, configurable dimensions. The host discovers the
- * buffer address, width, and height via exported WASM functions.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/wasm_framebuffer.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// wasm_framebuffer.h — WASM framebuffer display for browser Canvas
+//
+// A simple framebuffer in WASM linear memory that implements the
+// CircuitPython framebuffer protocol. The display pipeline renders
+// the REPL terminal (terminalio) into this buffer. The browser host
+// reads the buffer directly from WASM memory and paints it onto a
+// Canvas element.
+//
+// RGB565 format, configurable dimensions. The host discovers the
+// buffer address, width, and height via exported WASM functions.
 
 #pragma once
 

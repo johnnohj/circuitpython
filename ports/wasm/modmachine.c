@@ -1,24 +1,29 @@
-/*
- * WASM machine module — memory-mapped access to MEMFS regions.
- *
- * On Linux, machine.mem8/16/32 reads /dev/mem via mmap to access
- * physical hardware registers.  On WASM, there's no physical memory —
- * but we have WASM linear memory, and MEMFS regions within it serve
- * the same purpose: named regions of bytes that represent hardware state.
- *
- * For now, mod_machine_mem_get_addr returns the address directly within
- * WASM linear memory.  This means machine.mem8[addr] reads/writes byte
- * at WASM linear memory address `addr` — useful for:
- *
- *   - Reading/writing MEMFS hw_state regions from Python
- *   - Inspecting GC heap, pystack, or other internal state
- *   - Future: mapped MEMFS device endpoints at known base addresses
- *
- * This is the same model as /dev/mem but without the open/mmap dance —
- * WASM linear memory IS the flat address space.
- *
- * This file is included by extmod/modmachine.c via MICROPY_PY_MACHINE_INCLUDEFILE.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/modmachine.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// WASM machine module — memory-mapped access to MEMFS regions.
+//
+// On Linux, machine.mem8/16/32 reads /dev/mem via mmap to access
+// physical hardware registers.  On WASM, there's no physical memory —
+// but we have WASM linear memory, and MEMFS regions within it serve
+// the same purpose: named regions of bytes that represent hardware state.
+//
+// For now, mod_machine_mem_get_addr returns the address directly within
+// WASM linear memory.  This means machine.mem8[addr] reads/writes byte
+// at WASM linear memory address `addr` — useful for:
+//
+//   - Reading/writing MEMFS hw_state regions from Python
+//   - Inspecting GC heap, pystack, or other internal state
+//   - Future: mapped MEMFS device endpoints at known base addresses
+//
+// This is the same model as /dev/mem but without the open/mmap dance —
+// WASM linear memory IS the flat address space.
+//
+// This file is included by extmod/modmachine.c via MICROPY_PY_MACHINE_INCLUDEFILE.
 
 // On Linux this would be /dev/mem + mmap.  On WASM, linear memory is
 // directly addressable — no file descriptor or mapping needed.

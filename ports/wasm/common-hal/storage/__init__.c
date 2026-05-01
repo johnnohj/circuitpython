@@ -1,16 +1,21 @@
-/*
- * common-hal/storage/__init__.c — WASM storage module.
- *
- * On real boards, the storage module manages the CIRCUITPY FatFS drive
- * and its USB-writable / Python-writable state.  On WASM, the filesystem
- * is VfsPosix over WASI (backed by wasi-memfs.js + IndexedDB), so:
- *
- *   - Always writable by Python (no USB host to conflict with)
- *   - mount/umount work via the standard mp_vfs layer
- *   - remount is a no-op (no readonly ↔ writable toggle needed)
- *   - erase_filesystem clears /CIRCUITPY and soft-reboots
- *   - USB drive enable/disable always return False
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/storage/__init__.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// common-hal/storage/__init__.c — WASM storage module.
+//
+// On real boards, the storage module manages the CIRCUITPY FatFS drive
+// and its USB-writable / Python-writable state.  On WASM, the filesystem
+// is VfsPosix over WASI (backed by wasi-memfs.js + IndexedDB), so:
+//
+//   - Always writable by Python (no USB host to conflict with)
+//   - mount/umount work via the standard mp_vfs layer
+//   - remount is a no-op (no readonly <-> writable toggle needed)
+//   - erase_filesystem clears /CIRCUITPY and soft-reboots
+//   - USB drive enable/disable always return False
 
 #include <string.h>
 
@@ -21,9 +26,9 @@
 #include "shared-bindings/os/__init__.h"
 #include "shared-bindings/storage/__init__.h"
 
-/* ------------------------------------------------------------------ */
-/* mount / umount / getmount                                           */
-/* ------------------------------------------------------------------ */
+// ──────────────────────────────────────────────────────────────────────
+// mount / umount / getmount
+// ──────────────────────────────────────────────────────────────────────
 
 void common_hal_storage_mount(mp_obj_t vfs_obj, const char *mount_path,
                               bool readonly) {
@@ -35,7 +40,7 @@ void common_hal_storage_mount(mp_obj_t vfs_obj, const char *mount_path,
     vfs->obj = vfs_obj;
     vfs->next = NULL;
 
-    /* Check mount point exists (skip for "/"). */
+    // Check mount point exists (skip for "/").
     if (strcmp(vfs->str, "/") != 0) {
         nlr_buf_t nlr;
         if (nlr_push(&nlr) == 0) {
@@ -52,18 +57,18 @@ void common_hal_storage_mount(mp_obj_t vfs_obj, const char *mount_path,
         }
     }
 
-    /* Check mount point not already in use. */
+    // Check mount point not already in use.
     const char *path_out;
     mp_vfs_mount_t *existing = mp_vfs_lookup_path(abs_mount_path, &path_out);
     if (existing != MP_VFS_NONE && existing != MP_VFS_ROOT) {
         if (vfs->len != 1 && existing->len == 1) {
-            /* Root is mounted — allow sub-mount. */
+            // Root is mounted — allow sub-mount.
         } else {
             mp_raise_OSError(MP_EPERM);
         }
     }
 
-    /* Call VFS object's mount method. */
+    // Call VFS object's mount method.
     mp_obj_t args[2] = { mp_const_false, mp_const_false };
     mp_obj_t meth[4];
     mp_load_method(vfs->obj, MP_QSTR_mount, meth);
@@ -71,7 +76,7 @@ void common_hal_storage_mount(mp_obj_t vfs_obj, const char *mount_path,
     meth[3] = args[1];
     mp_call_method_n_kw(2, 0, meth);
 
-    /* Insert into mount table. */
+    // Insert into mount table.
     mp_vfs_mount_t **vfsp = &MP_STATE_VM(vfs_mount_table);
     vfs->next = *vfsp;
     *vfsp = vfs;
@@ -121,36 +126,36 @@ mp_obj_t common_hal_storage_getmount(const char *mount_path) {
     mp_raise_OSError(MP_EINVAL);
 }
 
-/* ------------------------------------------------------------------ */
-/* remount — no-op on WASM (always writable, no USB)                   */
-/* ------------------------------------------------------------------ */
+// ──────────────────────────────────────────────────────────────────────
+// remount — no-op on WASM (always writable, no USB)
+// ──────────────────────────────────────────────────────────────────────
 
 void common_hal_storage_remount(const char *mount_path, bool readonly,
                                 bool disable_concurrent_write_protection) {
     (void)mount_path;
     (void)readonly;
     (void)disable_concurrent_write_protection;
-    /* VfsPosix over WASI is always writable by Python.
-     * No USB host to share the drive with. */
+    // VfsPosix over WASI is always writable by Python.
+    // No USB host to share the drive with.
 }
 
-/* ------------------------------------------------------------------ */
-/* erase_filesystem — clear CIRCUITPY, soft reboot                     */
-/* ------------------------------------------------------------------ */
+// ──────────────────────────────────────────────────────────────────────
+// erase_filesystem — clear CIRCUITPY, soft reboot
+// ──────────────────────────────────────────────────────────────────────
 
 NORETURN void common_hal_storage_erase_filesystem(bool extended) {
     (void)extended;
-    /* On WASM, "erase filesystem" means clear wasi-memfs and reload.
-     * Since we can't truly reboot, raise SystemExit. */
+    // On WASM, "erase filesystem" means clear wasi-memfs and reload.
+    // Since we can't truly reboot, raise SystemExit.
     mp_raise_msg(&mp_type_SystemExit,
                  MP_ERROR_TEXT("Filesystem erased. Reload to continue."));
-    /* Unreachable — mp_raise is NORETURN. */
+    // Unreachable — mp_raise is NORETURN.
     for (;;) {}
 }
 
-/* ------------------------------------------------------------------ */
-/* USB drive — not applicable on WASM                                  */
-/* ------------------------------------------------------------------ */
+// ──────────────────────────────────────────────────────────────────────
+// USB drive — not applicable on WASM
+// ──────────────────────────────────────────────────────────────────────
 
 bool common_hal_storage_disable_usb_drive(void) {
     return false;

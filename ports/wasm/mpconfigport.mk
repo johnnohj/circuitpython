@@ -7,10 +7,10 @@ MICROPY_USE_READLINE = 1
 # Threading — disabled for WASM (single-threaded)
 MICROPY_PY_THREAD = 0
 
-# Terminal I/O — disabled (no termios in WASI, explore adaptation later)
+# Terminal I/O — disabled (no termios in WASI)
 MICROPY_PY_TERMIOS = 0
 
-# FFI — disabled (no dynamic library loading, explore JS interop later)
+# FFI — disabled (no dynamic library loading)
 MICROPY_PY_FFI = 0
 
 # Socket, SSL, BTree, JNI — not applicable

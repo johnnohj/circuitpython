@@ -1,10 +1,10 @@
-# Browser variant — the board running in a browser.
-# Adds displayio, common-hal, and the supervisor terminal to standard.
+# Browser variant — adds the display pipeline to the base build.
+# Hardware modules (digitalio, analogio, busio, etc.) are in the
+# base Makefile — shared by both variants.
 
 FROZEN_MANIFEST ?= $(VARIANT_DIR)/manifest.py
 
 # ── DisplayIO rendering pipeline ──
-# Supervisor terminal (REPL + Blinka logo) renders through this.
 CIRCUITPY_DISPLAYIO = 1
 
 SRC_DISPLAYIO = \
@@ -64,90 +64,22 @@ SRC_C += \
 	wasm_framebuffer.c \
 	board_display.c \
 	supervisor/display.c \
-	supervisor/status_bar.c
+	supervisor/status_bar.c \
+	common-hal/displayio/__init__.c
 
-# ── Common-HAL sources ──
+# ── Display utility modules (browser only) ──
+CFLAGS += -DCIRCUITPY_VECTORIO=1
+CFLAGS += -DCIRCUITPY_BITMAPTOOLS=1
 SRC_C += \
-	common-hal/digitalio/DigitalInOut.c \
-	common-hal/analogio/AnalogIn.c \
-	common-hal/analogio/AnalogOut.c \
-	common-hal/pwmio/PWMOut.c \
-	common-hal/neopixel_write/__init__.c \
-	common-hal/microcontroller/__init__.c \
-	common-hal/microcontroller/Pin.c \
-	common-hal/microcontroller/Processor.c \
-	common-hal/board/__init__.c \
-	common-hal/board/board_pins.c \
-	common-hal/busio/I2C.c \
-	common-hal/busio/SPI.c \
-	common-hal/busio/UART.c \
-	common-hal/os/__init__.c \
-	common-hal/displayio/__init__.c \
-	shared/runtime/context_manager_helpers.c \
-	shared/runtime/buffer_helper.c
-
-# ── Shared-bindings (register Python modules) ──
-SRC_C += \
-	shared-bindings/digitalio/__init__.c \
-	shared-bindings/digitalio/DigitalInOut.c \
-	shared-bindings/digitalio/DigitalInOutProtocol.c \
-	shared-bindings/digitalio/Direction.c \
-	shared-bindings/digitalio/DriveMode.c \
-	shared-bindings/digitalio/Pull.c \
-	shared-bindings/analogio/__init__.c \
-	shared-bindings/analogio/AnalogIn.c \
-	shared-bindings/analogio/AnalogOut.c \
-	shared-bindings/pwmio/__init__.c \
-	shared-bindings/pwmio/PWMOut.c \
-	shared-bindings/busio/__init__.c \
-	shared-bindings/busio/I2C.c \
-	shared-bindings/busio/SPI.c \
-	shared-bindings/busio/UART.c \
-	shared-bindings/microcontroller/__init__.c \
-	shared-bindings/microcontroller/Pin.c \
-	shared-bindings/microcontroller/Processor.c \
-	shared-bindings/microcontroller/ResetReason.c \
-	shared-bindings/microcontroller/RunMode.c \
-	shared-bindings/board/__init__.c \
-	shared-bindings/neopixel_write/__init__.c \
-	shared-module/board/__init__.c
-
-# ── CIRCUITPY flags ──
-CFLAGS += \
-	-DCIRCUITPY_DISPLAYIO=1 \
-	-DCIRCUITPY_FRAMEBUFFERIO=1 \
-	-DCIRCUITPY_TERMINALIO=1 \
-	-DCIRCUITPY_FONTIO=1 \
-	-DCIRCUITPY_REPL_LOGO=1 \
-	-DCIRCUITPY_DIGITALIO=1 \
-	-DCIRCUITPY_ANALOGIO=1 \
-	-DCIRCUITPY_PWMIO=1 \
-	-DCIRCUITPY_NEOPIXEL_WRITE=1 \
-	-DCIRCUITPY_MICROCONTROLLER=1 \
-	-DCIRCUITPY_BOARD=1 \
-	-DCIRCUITPY_BUSIO=1 \
-	-DCIRCUITPY_BUSIO_I2C=1 \
-	-DCIRCUITPY_BUSIO_SPI=1 \
-	-DCIRCUITPY_BUSIO_UART=1
-
-# busio Make-level flag (for circuitpy_defns.mk SRC_PATTERNS)
-CIRCUITPY_BUSIO = 1
-
-# ── Pure software modules (no common-hal needed) ──
-# These are commonly available on popular boards and essential
-# for running Adafruit Learn Guide examples.
-
-# rainbowio — colorwheel() used in nearly every NeoPixel guide
-CIRCUITPY_RAINBOWIO = 1
-CFLAGS += -DCIRCUITPY_RAINBOWIO=1
-SRC_C += shared-bindings/rainbowio/__init__.c shared-module/rainbowio/__init__.c
-
-# keypad — deferred (needs supervisor_acquire_lock, port_malloc_zero stubs)
-
-# touchio — software capacitive touch (uses analogio internally)
-CIRCUITPY_TOUCHIO = 1
-CFLAGS += -DCIRCUITPY_TOUCHIO=1 -DCIRCUITPY_TOUCHIO_USE_NATIVE=0
-SRC_C += \
-	shared-bindings/touchio/__init__.c \
-	shared-bindings/touchio/TouchIn.c \
-	shared-module/touchio/TouchIn.c
+	shared-bindings/vectorio/__init__.c \
+	shared-bindings/vectorio/Circle.c \
+	shared-bindings/vectorio/Polygon.c \
+	shared-bindings/vectorio/Rectangle.c \
+	shared-bindings/vectorio/VectorShape.c \
+	shared-module/vectorio/__init__.c \
+	shared-module/vectorio/Circle.c \
+	shared-module/vectorio/Polygon.c \
+	shared-module/vectorio/Rectangle.c \
+	shared-module/vectorio/VectorShape.c \
+	shared-bindings/bitmaptools/__init__.c \
+	shared-module/bitmaptools/__init__.c

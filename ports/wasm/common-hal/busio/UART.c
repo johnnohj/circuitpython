@@ -1,11 +1,16 @@
-/*
- * UART.c — Virtual UART backed by MEMFS files.
- *
- * TX goes to /hal/uart/{port}/tx — the worker or JS reads it.
- * RX comes from /hal/uart/{port}/rx — simulated device or JS writes it.
- *
- * Supports up to 8 UART ports. Port ID is auto-assigned on construct.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/busio/UART.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// UART.c — Virtual UART backed by MEMFS files.
+//
+// TX goes to /hal/uart/{port}/tx — the worker or JS reads it.
+// RX comes from /hal/uart/{port}/rx — simulated device or JS writes it.
+//
+// Supports up to 8 UART ports. Port ID is auto-assigned on construct.
 
 #include "common-hal/busio/UART.h"
 #include "shared-bindings/busio/UART.h"
@@ -57,11 +62,11 @@ void common_hal_busio_uart_construct(busio_uart_obj_t *self,
 
     if (tx) claim_pin(tx);
     if (rx) claim_pin(rx);
-    /* rts, cts, rs485_dir ignored — no flow control in simulation */
+    // rts, cts, rs485_dir ignored — no flow control in simulation
 
     _ensure_dirs(self->port_id);
 
-    /* Create empty rx/tx files */
+    // Create empty rx/tx files
     char path[64];
     _uart_path(path, sizeof(path), self->port_id, "rx");
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -102,9 +107,7 @@ size_t common_hal_busio_uart_read(busio_uart_obj_t *self,
         return 0;
     }
 
-    /* Consume: truncate the file by rewriting without the bytes we read.
-     * Simple approach: read remainder, rewrite file. */
-    /* For now, just truncate — assumes single consumer. */
+    // Consume: truncate the file (assumes single consumer).
     fd = open(path, O_WRONLY | O_TRUNC, 0666);
     if (fd >= 0) close(fd);
 
@@ -163,7 +166,7 @@ void common_hal_busio_uart_clear_rx_buffer(busio_uart_obj_t *self) {
 }
 
 bool common_hal_busio_uart_ready_to_tx(busio_uart_obj_t *self) {
-    return true;  /* always ready — file I/O doesn't block */
+    return true;  // always ready — file I/O doesn't block
 }
 
 void common_hal_busio_uart_never_reset(busio_uart_obj_t *self) {

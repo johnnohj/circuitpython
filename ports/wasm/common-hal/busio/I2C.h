@@ -1,13 +1,18 @@
-/*
- * I2C.h — Virtual I2C backed by MEMFS register files.
- *
- * Each I2C device address maps to a file at /hal/i2c/dev/{addr_hex}.
- * The file contains the device's register space (up to 256 bytes).
- * Reads/writes go through POSIX lseek + read/write on these files.
- *
- * To simulate a sensor: write register values to the device file.
- * An Adafruit driver reading register 0xF7 reads byte 0xF7 from the file.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/busio/I2C.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// I2C.h — Virtual I2C backed by MEMFS register files.
+//
+// Each I2C device address maps to a file at /hal/i2c/dev/{addr_dec}.
+// The file contains the device's register space (up to 256 bytes).
+// Reads/writes go through POSIX lseek + read/write on these files.
+//
+// To simulate a sensor: write register values to the device file.
+// An Adafruit driver reading register 0xF7 reads byte 0xF7 from the file.
 #pragma once
 
 #include "common-hal/microcontroller/Pin.h"
