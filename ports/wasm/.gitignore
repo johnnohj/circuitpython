@@ -1,9 +1,0 @@
-# Build output
-build-*/
-
-# CIRCUITPY drive (test data, persisted via IndexedDB in browser)
-CIRCUITPY/
-
-# WASI runtime artifacts
-sys/
-hal/

@@ -6,9 +6,8 @@
  * /hal/gpio (12 bytes per pin).  No shadow arrays, no linear-memory
  * reads.  MEMFS is the single source of truth.
  *
- * JS→C input changes are routed through the semihosting event ring
- * (submitHwChange) so each change is an individual event.  C's
- * sh_on_event handler writes to MEMFS, sets flags, and latches values.
+ * JS→C input changes write directly to port_mem GPIO/analog slots
+ * via live views, then call hal_mark_*_dirty() to notify C.
  *
  * Compatibility: board.hardware('gpio') returns a lightweight view
  * object with the same API as the old per-module classes.
@@ -22,18 +21,14 @@
  *   i2c.addDevice(0x44, new SHT40Device());
  */
 
-import { HAL_TYPE_GPIO, HAL_TYPE_ANALOG } from './semihosting.js';
-
 // ── Slot layouts (shared with targets.mjs) ──
 
 // GPIO: 12 bytes/pin — [enabled, direction, value, pull, role, flags, category, latched, reserved×4]
 export const GPIO_SLOT = 12;
 export const GPIO_MAX_PINS = 32;
 
-// NeoPixel: header + pixel data per pin region
+// NeoPixel: single flat region — [pin:u8, enabled:u8, num_bytes:u16le, data...]
 export const NEOPIXEL_HEADER = 4;
-export const NEOPIXEL_MAX_BYTES = 1024;
-export const NEOPIXEL_REGION = NEOPIXEL_HEADER + NEOPIXEL_MAX_BYTES;
 
 // Analog: 4 bytes/pin — [enabled, is_output, value_lo, value_hi]
 export const ANALOG_SLOT = 4;
@@ -97,7 +92,7 @@ export class HardwareState {
     constructor() {
         this._exports = null;
         this._memfs = null;
-        this._semihosting = null;
+        // (semihosting removed)
         this._onChange = null;
         this._i2cDevices = new Map();
         this._views = null;
@@ -110,7 +105,7 @@ export class HardwareState {
     }
 
     setMemfs(memfs) { this._memfs = memfs; }
-    setSemihosting(sh) { this._semihosting = sh; }
+    // setSemihosting removed — hardware uses live views directly
 
     reset(memfs) {
         const m = memfs || this._memfs;
@@ -183,8 +178,14 @@ export class HardwareState {
     }
 
     setGpioInput(pin, value) {
-        if (!this._semihosting) return;
-        this._semihosting.submitHwChange(pin, HAL_TYPE_GPIO, value ? 1 : 0);
+        // Write directly to the GPIO slot in port_memory (via MEMFS live view)
+        // and mark the pin dirty so hal_step() picks it up.
+        const data = this._memfs?.readFile('/hal/gpio');
+        if (!data) return;
+        const off = pin * GPIO_SLOT;
+        if (off + GPIO_SLOT > data.length) return;
+        data[off + GPIO_OFF_VALUE] = value ? 1 : 0;
+        this._exports?.hal_mark_gpio_dirty?.(pin);
     }
 
     // ── Analog (on-demand from MEMFS) ──
@@ -219,8 +220,16 @@ export class HardwareState {
     }
 
     setAnalogInput(pin, value) {
-        if (!this._semihosting) return;
-        this._semihosting.submitHwChange(pin, HAL_TYPE_ANALOG, value & 0xFFFF);
+        // Write directly to the analog slot in port_memory (via MEMFS live view)
+        // and mark the channel dirty so hal_step() picks it up.
+        const data = this._memfs?.readFile('/hal/analog');
+        if (!data) return;
+        const off = pin * ANALOG_SLOT;
+        if (off + ANALOG_SLOT > data.length) return;
+        const v = value & 0xFFFF;
+        data[off + 2] = v & 0xFF;
+        data[off + 3] = (v >> 8) & 0xFF;
+        this._exports?.hal_mark_analog_dirty?.(pin);
     }
 
     // ── PWM (on-demand from MEMFS) ──
@@ -264,47 +273,49 @@ export class HardwareState {
 
     // ── NeoPixel (on-demand from MEMFS) ──
 
+    /** Read NeoPixel strip data for a specific pin.
+     *  The flat region has one strip: [pin:u8, enabled:u8, num_bytes:u16le, GRB data...] */
     getNeopixelStrip(pin) {
         const data = this._memfs?.readFile('/hal/neopixel');
-        if (!data) return null;
-        const base = pin * NEOPIXEL_REGION;
-        if (base + NEOPIXEL_HEADER > data.length) return null;
-        if (!data[base + 1]) return null;  // not enabled
+        if (!data || data.length < NEOPIXEL_HEADER) return null;
+        if (data[0] !== pin) return null;  // different pin
+        if (!data[1]) return null;         // not enabled
 
-        const numBytes = data[base + 2] | (data[base + 3] << 8);
+        const numBytes = data[2] | (data[3] << 8);
         if (numBytes === 0) return null;
 
         const bpp = numBytes % 4 === 0 && numBytes >= 4 ? 4 : 3;
         const numPixels = Math.floor(numBytes / bpp);
         const pixels = [];
         for (let i = 0; i < numPixels; i++) {
-            const off = base + NEOPIXEL_HEADER + i * bpp;
+            const off = NEOPIXEL_HEADER + i * bpp;
             if (off + bpp > data.length) break;
+            // NeoPixel wire order is GRB
             pixels.push({ r: data[off + 1], g: data[off], b: data[off + 2] });
         }
         return { numPixels, pixels };
     }
 
+    /** Read all active NeoPixel strips (currently at most one). */
     _readAllNeopixelStrips() {
-        const data = this._memfs?.readFile('/hal/neopixel');
         const strips = new Map();
-        if (!data) return strips;
-        for (let pin = 0; pin < GPIO_MAX_PINS; pin++) {
-            const base = pin * NEOPIXEL_REGION;
-            if (base + NEOPIXEL_HEADER > data.length) break;
-            if (!data[base + 1]) continue;
-            const numBytes = data[base + 2] | (data[base + 3] << 8);
-            if (numBytes === 0) continue;
-            const bpp = numBytes % 4 === 0 && numBytes >= 4 ? 4 : 3;
-            const numPixels = Math.floor(numBytes / bpp);
-            const pixels = [];
-            for (let i = 0; i < numPixels; i++) {
-                const off = base + NEOPIXEL_HEADER + i * bpp;
-                if (off + bpp > data.length) break;
-                pixels.push({ r: data[off + 1], g: data[off], b: data[off + 2] });
-            }
-            strips.set(pin, { numPixels, pixels });
+        const data = this._memfs?.readFile('/hal/neopixel');
+        if (!data || data.length < NEOPIXEL_HEADER) return strips;
+        if (!data[1]) return strips;  // not enabled
+
+        const pin = data[0];
+        const numBytes = data[2] | (data[3] << 8);
+        if (numBytes === 0) return strips;
+
+        const bpp = numBytes % 4 === 0 && numBytes >= 4 ? 4 : 3;
+        const numPixels = Math.floor(numBytes / bpp);
+        const pixels = [];
+        for (let i = 0; i < numPixels; i++) {
+            const off = NEOPIXEL_HEADER + i * bpp;
+            if (off + bpp > data.length) break;
+            pixels.push({ r: data[off + 1], g: data[off], b: data[off + 2] });
         }
+        strips.set(pin, { numPixels, pixels });
         return strips;
     }
 

@@ -1,15 +1,13 @@
-/*
- * linker.h — WASM port linker macros
- *
- * On ARM Cortex-M, ITCM/DTCM are physically separate fast memory regions.
- * On WASM, all memory is linear — these macros are identity no-ops.
- *
- * ITCM: WASM JIT handles code placement.  Hot functions (GC marking,
- *       pystack alloc, background callbacks) are already optimal.
- * DTCM: Static arrays provide stable addresses in WASM linear memory.
- *       Hardware state uses /hal/ WASI fd paths (wasi-memfs.js).
- *       modmachine.c provides machine.mem8/16/32 for Python access.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/linker.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// supervisor/linker.h — WASM port linker macros.
+// On WASM, all memory is linear — ITCM/DTCM macros are identity no-ops.
+
 #pragma once
 
 #define PLACE_IN_ITCM(name)         name

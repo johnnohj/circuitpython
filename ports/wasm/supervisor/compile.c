@@ -1,15 +1,22 @@
-/*
- * supervisor/compile.c — Unified compilation service.
- *
- * All paths that turn source text into a runnable code_state go through
- * here: REPL expressions, code.py, JS-injected snippets, CLI mode.
- *
- * Returns a code_state allocated on pystack, ready for either:
- *   - vm_yield_step() (browser mode — yield-driven stepping)
- *   - mp_call_function_0() (CLI mode — blocking execution)
- *
- * Errors are printed to mp_plat_print and NULL is returned.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/compile.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// supervisor/compile.c — Unified compilation service.
+//
+// All paths that turn source text into a runnable code_state go through
+// here: REPL expressions, code.py, JS-injected snippets, CLI mode.
+//
+// Returns a code_state allocated on pystack, ready for either:
+//   - VM execution via abort-resume (browser mode)
+//   - mp_call_function_0() (CLI mode — blocking execution)
+//
+// Design refs:
+//   design/behavior/04-script-execution.md  (compile step)
+//   design/behavior/05-vm-lifecycle.md      (code_state on pystack)
 
 #include <stdio.h>
 
@@ -19,15 +26,6 @@
 
 #include "supervisor/compile.h"
 
-/*
- * Compile source text to a ready-to-run code_state on pystack.
- *
- *   src      — source text (need not be NUL-terminated; len is authoritative)
- *   len      — length of source text
- *   mode     — MP_PARSE_SINGLE_INPUT (REPL), FILE_INPUT (exec), EVAL_INPUT
- *
- * Returns NULL on compile error (already printed).
- */
 mp_code_state_t *cp_compile_str(const char *src, size_t len,
                                  mp_parse_input_kind_t mode) {
     mp_obj_t module_fun = MP_OBJ_NULL;
@@ -56,13 +54,6 @@ mp_code_state_t *cp_compile_str(const char *src, size_t len,
     return cs;
 }
 
-/*
- * Compile a .py file to a ready-to-run code_state on pystack.
- *
- *   path — filesystem path (e.g. "/code.py")
- *
- * Returns NULL if file doesn't exist or has compile errors.
- */
 mp_code_state_t *cp_compile_file(const char *path) {
     mp_obj_t module_fun = MP_OBJ_NULL;
 

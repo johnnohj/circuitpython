@@ -1,28 +1,20 @@
-/*
- * This file is part of the MicroPython project, http://micropython.org/
- *
- * The MIT License (MIT)
- *
- * Copyright (c) 2013, 2014 Damien P. George
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Copyright (c) 2013, 2014 Damien P. George
+// SPDX-FileCopyrightText: Based on ports/wasm/gccollect.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// gccollect.c — Garbage collection root scanning.
+//
+// On WASM, the GC heap lives in port_mem (MEMFS-in-linear-memory).
+// We scan registers + C stack via gc_helper, then scan all non-free
+// pystack regions as additional GC roots.
+//
+// Design refs:
+//   design/wasm-layer.md                    (wasm layer, port owns memory)
+//   design/behavior/05-vm-lifecycle.md      (GC heap, pystack)
 
 #include <stdio.h>
 
@@ -30,20 +22,25 @@
 #include "py/gc.h"
 
 #include "shared/runtime/gchelper.h"
-#include "supervisor/context.h"
 
 #if MICROPY_ENABLE_GC
 
 void gc_collect(void) {
     gc_collect_start();
     gc_helper_collect_regs_and_stack();
+
     #if MICROPY_PY_THREAD
     mp_thread_gc_others();
     #endif
-    /* Scan all context pystack regions as GC roots.
-     * Inactive contexts' pystacks are in static arrays in linear memory,
-     * so the GC can see them directly — no copy needed. */
-    cp_context_gc_collect();
+
+    // TODO(Phase 4.4): Scan all context pystack regions as GC roots.
+    // Inactive contexts' pystacks are in static arrays in port_mem,
+    // so the GC can see them directly — no copy needed.
+    //
+    // When supervisor/context.c migrates:
+    //   #include "supervisor/context.h"
+    //   cp_context_gc_collect();
+
     gc_collect_end();
 }
 

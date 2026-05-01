@@ -1,28 +1,14 @@
-/*
- * This file is part of the MicroPython project, http://micropython.org/
- *
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Damien P. George
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Copyright (c) 2019 Damien P. George
+// SPDX-FileCopyrightText: Based on ports/wasm/variants/standard/mpconfigvariant.h
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// Standard variant — CLI REPL, no display.
+// Hardware modules (digitalio, analogio, busio, etc.) are enabled
+// via mpconfigboard.h, shared with the browser variant.
 
 // Set base feature level.
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
@@ -30,11 +16,16 @@
 // Enable extra Unix features.
 #include "../mpconfigvariant_common.h"
 
-// ── VM yield: cooperative stepping for browser frame budget ──
-// Pystack puts Python frames on the heap (not C stack) so yield/resume works.
-// Stackless ensures function calls don't recurse on the C stack.
-// VM yield enables MP_VM_RETURN_YIELD at backwards branches.
+// Board config — pin definitions, CIRCUITPY_* hardware flags
+#include "mpconfigboard.h"
+
+// ── Abort-resume: halt/resume via nlr_jump_abort ──
 #define MICROPY_ENABLE_PYSTACK      (1)
 #define MICROPY_STACKLESS           (1)
 #define MICROPY_STACKLESS_STRICT    (1)
-#define MICROPY_VM_YIELD_ENABLED    (1)
+#define MICROPY_ENABLE_VM_ABORT     (1)
+
+// ── Event-driven REPL ──
+// Both variants use the frame loop, so the REPL must be non-blocking.
+// pyexec_event_repl_process_char() processes one character at a time.
+#define MICROPY_REPL_EVENT_DRIVEN   (1)

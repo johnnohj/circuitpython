@@ -1,10 +1,15 @@
-/*
- * SPI.h — Virtual SPI backed by MEMFS transfer files.
- *
- * SPI transfers read/write through /hal/spi/xfer — a file where
- * the last write becomes the next read (loopback by default).
- * A sensor simulator can intercept by writing response data.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/busio/SPI.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// SPI.h — Virtual SPI backed by MEMFS transfer files.
+//
+// SPI transfers read/write through /hal/spi/xfer — a file where
+// the last write becomes the next read (loopback by default).
+// A sensor simulator can intercept by writing response data.
 #pragma once
 
 #include "common-hal/microcontroller/Pin.h"

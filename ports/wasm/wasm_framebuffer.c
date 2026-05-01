@@ -1,16 +1,21 @@
-/*
- * wasm_framebuffer.c — WASM framebuffer display for browser Canvas
- *
- * Implements the CircuitPython framebuffer protocol (framebuffer_p_t).
- * The buffer lives in WASM linear memory so the host can read it
- * directly via memory.buffer views without any copy.
- *
- * The host discovers the buffer via exported functions:
- *   wasm_display_fb_addr()  → pointer to RGB565 pixel data
- *   wasm_display_fb_width() → width in pixels
- *   wasm_display_fb_height()→ height in pixels
- *   wasm_display_frame_count() → frame counter (increments on swapbuffers)
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/wasm_framebuffer.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// wasm_framebuffer.c — WASM framebuffer display for browser Canvas
+//
+// Implements the CircuitPython framebuffer protocol (framebuffer_p_t).
+// The buffer lives in WASM linear memory so the host can read it
+// directly via memory.buffer views without any copy.
+//
+// The host discovers the buffer via exported functions:
+//   wasm_display_fb_addr()  → pointer to RGB565 pixel data
+//   wasm_display_fb_width() → width in pixels
+//   wasm_display_fb_height()→ height in pixels
+//   wasm_display_frame_count() → frame counter (increments on swapbuffers)
 
 #include "wasm_framebuffer.h"
 

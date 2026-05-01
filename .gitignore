@@ -117,3 +117,6 @@ TAGS
 # Zephyr trace files
 **/channel0_0
 **/*.perfetto-trace
+
+# Local dev
+*.code-workspace

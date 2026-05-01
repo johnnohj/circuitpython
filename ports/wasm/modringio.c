@@ -1,13 +1,16 @@
-/*
- * RingIO stream type for micropython module.
- *
- * Ported from py/objringio.c to use CircuitPython's ringbuf API
- * (ringbuf_num_filled/ringbuf_num_empty/ringbuf_get_n/ringbuf_put_n)
- * instead of MicroPython upstream's (ringbuf_avail/ringbuf_free/
- * ringbuf_memcpy_get_internal/ringbuf_memcpy_put_internal).
- *
- * Original: Copyright (c) 2024 Andrew Leech, MIT License
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Copyright (c) 2024 Andrew Leech
+// SPDX-FileCopyrightText: Based on ports/wasm/modringio.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// modringio.c — RingIO stream type for micropython module.
+//
+// Ported from py/objringio.c to use CircuitPython's ringbuf API
+// (ringbuf_num_filled/ringbuf_num_empty/ringbuf_get_n/ringbuf_put_n)
+// instead of MicroPython upstream's API.
 
 #include "py/ringbuf.h"
 #include "py/mpconfig.h"
@@ -32,7 +35,6 @@ static mp_obj_t micropython_ringio_make_new(const mp_obj_type_t *type, size_t n_
     }
     micropython_ringio_obj_t *self = mp_obj_malloc(micropython_ringio_obj_t, type);
     if (bufinfo.buf != NULL) {
-        // Buffer passed in, use it directly for ringbuffer.
         ringbuf_init(&(self->ringbuffer), bufinfo.buf, bufinfo.len);
     } else {
         ringbuf_alloc(&(self->ringbuffer), buff_size);

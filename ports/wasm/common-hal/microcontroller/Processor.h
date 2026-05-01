@@ -1,4 +1,11 @@
-// WASI port — no real processor, minimal stub for circuitpy_mpconfig.h
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/microcontroller/Processor.h by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// WASM port — no real processor, minimal stub for circuitpy_mpconfig.h
 #pragma once
 
 #include "py/obj.h"

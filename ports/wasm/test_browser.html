@@ -16,7 +16,7 @@ canvas { border: 1px solid #444; image-rendering: pixelated; }
 <div id="serial"></div>
 
 <script type="module">
-import { CircuitPython } from './js/circuitpython.mjs';
+import { CircuitPython } from './js/board.mjs';
 
 const board = await CircuitPython.create({
     wasmUrl: 'build-browser/circuitpython.wasm',

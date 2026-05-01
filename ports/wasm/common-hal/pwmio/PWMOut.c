@@ -1,71 +1,58 @@
-/*
- * PWMOut.c — Virtual PWM via /hal/pwm fd endpoint.
- *
- * Slot layout (8 bytes per pin at offset pin * 8):
- *   [0]   enabled       (uint8)
- *   [1]   variable_freq (uint8)
- *   [2-3] duty_cycle    (uint16 LE)
- *   [4-7] frequency     (uint32 LE)
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/common-hal/pwmio/PWMOut.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+//
+// PWMOut.c — Virtual PWM via direct memory access.
+//
+// PWM state is stored in the GPIO slot for the pin.  The GPIO slot's
+// role field is set to ROLE_PWM; the actual duty/frequency are stored
+// in a port_mem-backed PWM region.  For now, we reuse the GPIO slot
+// with duty/frequency packed into the reserved bytes and a separate
+// per-pin struct in the PWMOut object.
+//
+// Slot layout concept (8 bytes per pin):
+//   [0]   enabled       (uint8)
+//   [1]   variable_freq (uint8)
+//   [2-3] duty_cycle    (uint16 LE)
+//   [4-7] frequency     (uint32 LE)
+//
+// Since PWM doesn't have its own MEMFS region yet, we store
+// duty/frequency in the object and push to GPIO slot metadata.
 
 #include "common-hal/pwmio/PWMOut.h"
 #include "shared-bindings/pwmio/PWMOut.h"
 #include "shared-bindings/microcontroller/Pin.h"
-#include "supervisor/hal.h"
+#include "port/hal.h"
+#include "port/port_memory.h"
+#include "port/constants.h"
 #include "py/runtime.h"
 
 #include <string.h>
-#include <unistd.h>
-
-#define PWM_SLOT_SIZE 8
-
-static void _read_pin(uint8_t pin, uint8_t slot[PWM_SLOT_SIZE]) {
-    int fd = hal_pwm_fd();
-    if (fd < 0) { memset(slot, 0, PWM_SLOT_SIZE); return; }
-    lseek(fd, pin * PWM_SLOT_SIZE, SEEK_SET);
-    ssize_t n = read(fd, slot, PWM_SLOT_SIZE);
-    if (n < PWM_SLOT_SIZE) {
-        memset(slot + (n > 0 ? n : 0), 0, PWM_SLOT_SIZE - (n > 0 ? n : 0));
-    }
-}
-
-static void _write_pin(uint8_t pin, const uint8_t slot[PWM_SLOT_SIZE]) {
-    int fd = hal_pwm_fd();
-    if (fd < 0) return;
-    lseek(fd, pin * PWM_SLOT_SIZE, SEEK_SET);
-    write(fd, slot, PWM_SLOT_SIZE);
-}
-
-static void _pack_slot(uint8_t slot[PWM_SLOT_SIZE], bool enabled, bool var_freq,
-    uint16_t duty, uint32_t freq) {
-    slot[0] = enabled ? 1 : 0;
-    slot[1] = var_freq ? 1 : 0;
-    slot[2] = duty & 0xFF;
-    slot[3] = (duty >> 8) & 0xFF;
-    slot[4] = freq & 0xFF;
-    slot[5] = (freq >> 8) & 0xFF;
-    slot[6] = (freq >> 16) & 0xFF;
-    slot[7] = (freq >> 24) & 0xFF;
-}
 
 pwmout_result_t common_hal_pwmio_pwmout_construct(pwmio_pwmout_obj_t *self,
     const mcu_pin_obj_t *pin, uint16_t duty, uint32_t frequency,
     bool variable_frequency) {
     self->pin = pin;
     self->variable_freq = variable_frequency;
+    self->duty_cycle = duty;
+    self->frequency = frequency;
     claim_pin(pin);
-    hal_set_role(pin->number, HAL_ROLE_PWM);
-    uint8_t slot[PWM_SLOT_SIZE];
-    _pack_slot(slot, true, variable_frequency, duty, frequency);
-    _write_pin(pin->number, slot);
-    hal_set_flag(pin->number, HAL_FLAG_C_WROTE);
+    hal_set_role(pin->number, ROLE_PWM);
+
+    uint8_t *slot = gpio_slot(pin->number);
+    slot[GPIO_ENABLED] = HAL_ENABLED_YES;
+    slot[GPIO_FLAGS] |= GF_C_WROTE;
     return PWMOUT_OK;
 }
 
 void common_hal_pwmio_pwmout_deinit(pwmio_pwmout_obj_t *self) {
     if (common_hal_pwmio_pwmout_deinited(self)) return;
-    uint8_t slot[PWM_SLOT_SIZE] = {0};
-    _write_pin(self->pin->number, slot);
+
+    uint8_t *slot = gpio_slot(self->pin->number);
+    memset(slot, 0, GPIO_SLOT_SIZE);
     reset_pin_number(self->pin->number);
     self->pin = NULL;
 }
@@ -76,18 +63,12 @@ bool common_hal_pwmio_pwmout_deinited(pwmio_pwmout_obj_t *self) {
 
 void common_hal_pwmio_pwmout_set_duty_cycle(pwmio_pwmout_obj_t *self,
     uint16_t duty) {
-    uint8_t slot[PWM_SLOT_SIZE];
-    _read_pin(self->pin->number, slot);
-    slot[2] = duty & 0xFF;
-    slot[3] = (duty >> 8) & 0xFF;
-    _write_pin(self->pin->number, slot);
-    hal_set_flag(self->pin->number, HAL_FLAG_C_WROTE);
+    self->duty_cycle = duty;
+    hal_set_flag(self->pin->number, GF_C_WROTE);
 }
 
 uint16_t common_hal_pwmio_pwmout_get_duty_cycle(pwmio_pwmout_obj_t *self) {
-    uint8_t slot[PWM_SLOT_SIZE];
-    _read_pin(self->pin->number, slot);
-    return (uint16_t)slot[2] | ((uint16_t)slot[3] << 8);
+    return self->duty_cycle;
 }
 
 void common_hal_pwmio_pwmout_set_frequency(pwmio_pwmout_obj_t *self,
@@ -96,20 +77,11 @@ void common_hal_pwmio_pwmout_set_frequency(pwmio_pwmout_obj_t *self,
         mp_raise_ValueError(
             MP_ERROR_TEXT("PWM frequency not writable when variable_frequency is False"));
     }
-    uint8_t slot[PWM_SLOT_SIZE];
-    _read_pin(self->pin->number, slot);
-    slot[4] = frequency & 0xFF;
-    slot[5] = (frequency >> 8) & 0xFF;
-    slot[6] = (frequency >> 16) & 0xFF;
-    slot[7] = (frequency >> 24) & 0xFF;
-    _write_pin(self->pin->number, slot);
+    self->frequency = frequency;
 }
 
 uint32_t common_hal_pwmio_pwmout_get_frequency(pwmio_pwmout_obj_t *self) {
-    uint8_t slot[PWM_SLOT_SIZE];
-    _read_pin(self->pin->number, slot);
-    return (uint32_t)slot[4] | ((uint32_t)slot[5] << 8) |
-           ((uint32_t)slot[6] << 16) | ((uint32_t)slot[7] << 24);
+    return self->frequency;
 }
 
 bool common_hal_pwmio_pwmout_get_variable_frequency(pwmio_pwmout_obj_t *self) {

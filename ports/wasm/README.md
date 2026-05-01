@@ -1,51 +1,29 @@
-CircuitPython WASM Port
-=======================
+# CircuitPython-compatible WASM Port, mkIII
 
-This port runs CircuitPython as a WebAssembly module in browsers and
-Node.js. It provides a virtual CircuitPython board with simulated
-hardware (GPIO, analog, PWM, NeoPixels, I2C, display) driven by
-JavaScript, so users can run CircuitPython code without physical
-hardware.
+**The following discusses an independent project that is not an official
+CircuitPython port. Though it aspires to provide true port quality, it is
+currently an experimental work-in-progress and not officially supported or
+maintained.**
 
-The guiding principle: **if it works on real hardware, it should work
-here.** The port targets the same shared-bindings API as physical
-boards; differences arise from timing, JavaScript runtime behavior,
-and the virtual nature of the hardware.
+CircuitPython running in the browser and Node.js via WebAssembly.
 
-For project background and design discussion, see `DEV_NOTES.md`.
-For architecture documents, see the `design/` directory.
+## Quick Start
 
-Visit the sample on [GitHub pages](https://johnnohj.github.io/wasm/) to try out a recent build!
+```bash
+# Build standard variant (CLI, no display)
+make VARIANT=standard
 
-Variants
---------
+# Build browser variant (display + board UI)
+make VARIANT=browser
 
-| Variant    | Purpose | Key modules |
-|------------|---------|-------------|
-| `standard` | WASI CLI — Node.js testing, REPL | time, random, os, math, json, re, collections |
-| `browser`  | Full board simulation in browser | + displayio, digitalio, analogio, pwmio, neopixel, busio, board |
+# Run tests
+make test
+```
 
-The `browser` variant adds a virtual board with 64 GPIO pins, a
-160×128 framebuffer display, NeoPixel output, I2C/SPI/UART buses,
-and a board module matching `boards/wasm_browser/definition.json`.
+Requires [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (v32+).
+See source repo [README](https://github.com/WebAssembly/wasi-sdk/blob/main/README.md#install) for fuller installation and configuration details
 
-Building
---------
-
-### Dependencies
-
-CircuitPython WASM port substitutes the `wasi-sdk` in place of the `arm-none-eabi` toolchain typically used for builds targeting development boards. Configuring your build environment follows similar steps to those for [Building Circuitpython](../../BUILDING.md#building-circuitpython).
-
-- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk)
-  (example path: `/home/${USER_DIR}/wasi-sdk-30.0-x86_64-linux`; configure
-  with `WASI_SDK_PATH=`; see source repo [README](https://github.com/WebAssembly/wasi-sdk/blob/main/README.md#install) for fuller installation and configuration details)
-- Python 3.x
-- `mpy-cross` (built from the repo)
-
-No system `libffi` or `pkg-config` is needed — this port compiles
-entirely with wasi-sdk's clang.
-
-### Build steps
+## Build steps
 
 From the repository root:
 
@@ -59,111 +37,53 @@ Outputs:
 - `build-standard/circuitpython.wasm` — WASI binary for Node.js
 - `build-browser/circuitpython.wasm` — browser board binary
 
-**Important:** after changing config macros in `mpconfigboard.h` or
-variant headers, do a clean rebuild (`rm -rf build-<variant>`).
-Incremental builds can miss header changes.
+## Architecture
 
-### Debug builds
+```
+JS runtime (host)
+  └─ wasm layer (ALL port-specific C code)
+      └─ CircuitPython (supervisor/shared/, shared-bindings/, shared-module/)
+          └─ MicroPython VM (py/)
+              └─ Python (code.py)
+```
 
-    $ make DEBUG=1             # assertions + debug symbols, -Og
-    $ make STRIP=              # keep symbols, full optimization
+The JS runtime acts as a **coprocessor** — it handles DOM events,
+canvas rendering, serial I/O, and external hardware bridges while the
+VM runs Python bytecode in WASM.  Communication uses shared linear
+memory (MEMFS) with dirty flags and an event ring.
 
-Running
--------
+See `design/wasm-layer.md` and `design/js-coprocessor.md` for details.
 
-### Node.js (standard variant)
-
-    $ node run ./build-standard/circuitpython
-    >>> import sys; print(sys.platform)
-    wasi
-
-Use `Ctrl-D` to exit.
-
-### Node.js (browser variant)
-
-    $ node --input-type=module -e "
-    import { CircuitPython } from './js/circuitpython.mjs';
-    const cp = await CircuitPython.create({
-        wasmUrl: 'build-browser/circuitpython.wasm',
-        onStdout: t => process.stdout.write(t),
-    });
-    "
-
-### Browser
-
-Serve the port directory and open `index.html`:
-
-    $ python3 -m http.server 8080
-    # open http://localhost:8080/index.html
-
-The browser UI provides a code editor, display canvas, board
-visualization with pin state, a sensor panel for analog input,
-and NeoPixel rendering.
-
-### Package manager
-
-**Experimental**
-The built-in `fwip` package manager fetches libraries from the
-[Adafruit CircuitPython Bundle](https://github.com/adafruit/Adafruit_CircuitPython_Bundle):
-
-    >>> import fwip
-    >>> fwip.install("display_text")
-
-In browsers, installed packages persist in IndexedDB. In Node.js,
-they are written to the WASI filesystem.
-
-Testing
--------
-
-    $ node test_standard.mjs           # standard variant tests
-    $ node test_node.mjs               # Node.js integration tests
-    $ node test_node_board.mjs         # board lifecycle tests (Node)
-    $ node test_browser.mjs            # browser variant lifecycle tests
-
-Filter tests:
-
-    $ node test_browser.mjs --filter repl --verbose
-
-Architecture
-------------
-
-### Key files
+## Key files
 
 | File | Purpose |
 |------|---------|
 | `mpconfigboard.h` | CIRCUITPY_* feature flags |
-| `supervisor/supervisor.c` | cp_init / cp_step / cp_exec / cp_ctrl_c/d, main() |
-| `supervisor/port_memory.h` | port_memory_t — single struct owns all port state |
-| `supervisor/vm_yield.c` | cooperative yield + SUSPEND mechanism |
-| `supervisor/compile.c` | unified compile service (string + file) |
+| `port/main.c` | port_init / port_frame / hal_init / hal_frame |
+| `port/port_memory.h` | port_memory_t — single struct owns all port state |
 | `js/circuitpython.mjs` | JS API: CircuitPython.create(), lifecycle, contexts |
-| `js/wasi-memfs.js` | in-memory WASI runtime + IndexedDB persistence |
-| `js/semihosting.js` | JS↔WASM FFI: event ring + linear memory state export |
-| `js/board-adapter.mjs` | pin name ↔ GPIO index bridge for visual renderers |
-| `common-hal/board/board_pins.c` | mutable board dict (dynamic board definition) |
+| `js/wasi.js` | in-memory WASI runtime + IndexedDB persistence |
 | `boards/wasm_browser/definition.json` | default board pin layout |
 
-### Execution model
+## Variants
 
-The port uses cooperative multitasking within a single WASM instance:
+Both variants share the same hardware modules (digitalio, analogio,
+busio, etc.).  The only difference is the display pipeline.
 
-1. **C supervisor** (`cp_step`) runs per frame with a ~13ms wall-clock
-   budget. The VM yields at backward branches when the budget expires.
-2. **JS frame loop** calls `wasm_frame()` each animation frame. C
-   requests the next frame via a WASM import (`port.requestFrame`).
-3. **SUSPEND mechanism** allows the VM to pause mid-execution (for
-   `time.sleep`, I/O wait, etc.) and resume on the next frame without
-   blocking the browser's event loop.
+| Variant | Size | Display | Use case |
+|---------|------|---------|----------|
+| standard | ~1.1M | No | Node.js CLI testing |
+| browser | ~1.5M | framebufferio + terminalio + Blinka | Browser with board UI |
 
-### Hardware simulation
+## Hardware simulation
 
 Virtual hardware state lives in WASM linear memory as flat arrays
 (GPIO direction/value, analog values, PWM duty cycles, NeoPixel
 buffers). JS reads/writes these via MEMFS.
 
-### Filesystem
+## Filesystem
 
 The port uses WASI POSIX filesystem calls (`fd_read`, `fd_write`,
-etc.) backed by an in-memory filesystem (`wasi-memfs.js`). The
+etc.) backed by an in-memory filesystem (`wasi.js`). The
 `/CIRCUITPY/` drive is optionally persisted to IndexedDB across
 browser page reloads. No block device or FAT filesystem is used.

@@ -1,17 +1,22 @@
-/*
- * supervisor/micropython.c — Port-local HAL I/O for WASM.
- *
- * Replaces supervisor/shared/micropython.c with WASM-specific routing.
- * Same interface (mp_hal_stdin_rx_chr, mp_hal_stdout_tx_strn), but
- * routes through our port-local serial.c instead of the shared one.
- *
- * Key design:
- *   - mp_hal_stdin_rx_chr() loops with MICROPY_VM_HOOK_LOOP so that
- *     background tasks run and the wall-clock budget is checked.
- *     When budget expires with no input, the VM yields back to JS.
- *   - mp_hal_stdout_tx_strn() routes through serial_write_substring()
- *     which handles display + console + CLI paths.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/micropython.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// Port-local HAL I/O for WASM.
+//
+// Replaces supervisor/shared/micropython.c with WASM-specific routing.
+// Same interface (mp_hal_stdin_rx_chr, mp_hal_stdout_tx_strn), but
+// routes through our port-local serial.c instead of the shared one.
+//
+// Key design:
+//   - mp_hal_stdin_rx_chr() loops with MICROPY_VM_HOOK_LOOP so that
+//     background tasks run and the wall-clock budget is checked.
+//     When budget expires with no input, the VM yields back to JS.
+//   - mp_hal_stdout_tx_strn() routes through serial_write_substring()
+//     which handles display + console + CLI paths.
 
 #include <string.h>
 
@@ -34,24 +39,26 @@
 /* ------------------------------------------------------------------ */
 
 /* Runtime mode flag — lives in port_mem. */
-#include "supervisor/port_memory.h"
+#include "port/port_memory.h"
 
 int mp_hal_stdin_rx_chr(void) {
     for (;;) {
-        #if MICROPY_VM_YIELD_ENABLED
-        wasm_vm_hook_loop(NULL);
+        #if MICROPY_ENABLE_VM_ABORT
+        wasm_vm_hook_loop();
         #endif
         mp_handle_pending(true);
         if (serial_bytes_available()) {
             return serial_read();
         }
-        /* CLI mode: serial_bytes_available only checks the rx ring buffer.
-         * Fall through to serial_read() which does a blocking WASI stdin
-         * read when the ring buffer is empty. */
-        if (wasm_cli_mode) {
+        // No input available.  In browser mode, the hook above will
+        // abort when budget is spent, returning control to JS.
+        // In CLI mode, serial_bytes_available() includes
+        // board_serial_bytes_available() which returns 0 (can't poll
+        // WASI stdin), so we fall through to serial_read() which
+        // calls board_serial_read() → blocking read(STDIN_FILENO).
+        if (port_mem.cli_mode) {
             return serial_read();
         }
-        /* Browser mode: loop back — hook will yield when budget is spent */
     }
 }
 

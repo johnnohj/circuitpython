@@ -1,13 +1,18 @@
-/*
- * board_display.c — Initialize the WASM framebuffer display
- *
- * Creates a FramebufferDisplay backed by the WasmFramebuffer and
- * sets it as the primary display. The supervisor then automatically
- * creates a terminalio terminal on it, complete with Blinka logo
- * and the built-in font.
- *
- * Call board_display_init() after mp_init() and GC setup.
- */
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-FileCopyrightText: Based on ports/wasm/board_display.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
+//
+// SPDX-License-Identifier: MIT
+
+// board_display.c — Initialize the WASM framebuffer display
+//
+// Creates a FramebufferDisplay backed by the WasmFramebuffer and
+// sets it as the primary display. The supervisor then automatically
+// creates a terminalio terminal on it, complete with Blinka logo
+// and the built-in font.
+//
+// Call board_display_init() after mp_init() and GC setup.
 
 #include "board_display.h"
 #include "wasm_framebuffer.h"

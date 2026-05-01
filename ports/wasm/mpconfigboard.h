@@ -39,33 +39,23 @@
 #define CIRCUITPY_USB_DEVICE        (0)
 #define USB_NUM_ENDPOINT_PAIRS      (0)
 
-// ---- Hardware peripherals ----
-// Default: off. The browser variant enables these via mpconfigvariant.h
-// and provides C common-hal backed by MEMFS endpoints (/hal/*).
-#ifndef CIRCUITPY_MICROCONTROLLER
-#define CIRCUITPY_MICROCONTROLLER   (0)
-#endif
-#define CIRCUITPY_PROCESSOR_COUNT   (1)
-#ifndef CIRCUITPY_DIGITALIO
-#define CIRCUITPY_DIGITALIO         (0)
-#endif
-#ifndef CIRCUITPY_ANALOGIO
-#define CIRCUITPY_ANALOGIO          (0)
-#endif
-#ifndef CIRCUITPY_PWMIO
-#define CIRCUITPY_PWMIO             (0)
-#endif
-#ifndef CIRCUITPY_NEOPIXEL_WRITE
-#define CIRCUITPY_NEOPIXEL_WRITE    (0)
-#endif
-#ifndef CIRCUITPY_BOARD
-#define CIRCUITPY_BOARD             (0)
-#endif
+// ---- Port serial (port_mem ring buffers) ----
+#define CIRCUITPY_PORT_SERIAL       (1)
 
-// ---- Bus I/O: worker enables via mpconfigvariant.h ----
-#ifndef CIRCUITPY_BUSIO
-#define CIRCUITPY_BUSIO             (0)
-#endif
+// ---- Hardware peripherals ----
+// Always enabled — both standard and browser variants have the same
+// common-hal backed by MEMFS endpoints (/hal/*).  The only difference
+// between variants is whether the display pipeline is included.
+#define CIRCUITPY_MICROCONTROLLER   (1)
+#define CIRCUITPY_PROCESSOR_COUNT   (1)
+#define CIRCUITPY_DIGITALIO         (1)
+#define CIRCUITPY_ANALOGIO          (1)
+#define CIRCUITPY_PWMIO             (1)
+#define CIRCUITPY_NEOPIXEL_WRITE    (1)
+#define CIRCUITPY_BOARD             (1)
+
+// ---- Bus I/O ----
+#define CIRCUITPY_BUSIO             (1)
 #define CIRCUITPY_NVM               (0)
 #define CIRCUITPY_WATCHDOG          (0)
 #define CIRCUITPY_AUDIOBUSIO        (0)

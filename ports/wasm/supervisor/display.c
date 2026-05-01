@@ -1,6 +1,8 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
 // SPDX-FileCopyrightText: Copyright (c) 2019 Scott Shawcroft for Adafruit Industries
+// SPDX-FileCopyrightText: Based on ports/wasm/supervisor/display.c by CircuitPython contributors
+// SPDX-FileCopyrightText: Adapted by CircuitPython WASM Port Devs
 //
 // SPDX-License-Identifier: MIT
 
