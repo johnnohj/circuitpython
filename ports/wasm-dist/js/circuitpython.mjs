@@ -37,6 +37,7 @@ export class CircuitPython {
         this._fbHeight = 0;
         this._framebuffer = null;  // Uint8Array RGB565 (direct path, not on bus)
         this._cursor = null;  // { x, y, sx, sy, tly, htiles, gw, gh, scale }
+        this._latchTimers = new Map();  // pin → timeout ID (decaying latch)
     }
 
     static async create(options = {}) {
@@ -121,15 +122,33 @@ export class CircuitPython {
         this._worker.postMessage({ type: 'serial_push', byte });
     }
 
-    setInput(pin, value) {
-        // Write to GPIO slot on the bus
-        const slot = new Uint8Array(GPIO_SLOT_SIZE);
-        const existing = this._busPort.readSlot('gpio', pin);
-        slot.set(existing);
-        slot[2] = value ? 1 : 0;  // offset 2 = value
-        this._busPort.writeSlot('gpio', pin, slot);
-        // Also tell the Worker directly (low latency path)
-        this._worker.postMessage({ type: 'gpio_input', pin, value: value ? 1 : 0 });
+    setInput(pin, value, latchMs = 150) {
+        const writeValue = (v) => {
+            const slot = new Uint8Array(GPIO_SLOT_SIZE);
+            const existing = this._busPort.readSlot('gpio', pin);
+            slot.set(existing);
+            slot[2] = v ? 1 : 0;
+            this._busPort.writeSlot('gpio', pin, slot);
+            this._worker.postMessage({ type: 'gpio_input', pin, value: v ? 1 : 0 });
+        };
+
+        // Clear any pending latch release for this pin
+        const existing = this._latchTimers.get(pin);
+        if (existing) clearTimeout(existing);
+
+        writeValue(value);
+
+        // If pressing (value=0 for active-low buttons), hold for latchMs
+        // so the VM's polling loop catches it even with time.sleep
+        if (!value && latchMs > 0) {
+            const timer = setTimeout(() => {
+                writeValue(1);  // release
+                this._latchTimers.delete(pin);
+            }, latchMs);
+            this._latchTimers.set(pin, timer);
+        } else {
+            this._latchTimers.delete(pin);
+        }
     }
 
     writeFile(path, content) {
