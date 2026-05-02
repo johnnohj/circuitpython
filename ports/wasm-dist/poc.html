@@ -337,16 +337,16 @@ function onFrame() {
         port.acknowledge('neopixel');
     }
 
-    // Framebuffer — render to parent canvas (not iframe)
-    if (port.changed('framebuffer') && cp.fbWidth > 0) {
+    // Framebuffer — direct path to canvas (not on sync bus)
+    const rawFb = cp.consumeFramebuffer();
+    if (rawFb && cp.fbWidth > 0) {
         const w = cp.fbWidth, h = cp.fbHeight;
         if (!imageData || imageData.width !== w) {
             $display.width = w;
             $display.height = h;
             imageData = ctx2d.createImageData(w, h);
         }
-        const raw = port.read('framebuffer');
-        const fb = new Uint16Array(raw.buffer, raw.byteOffset, w * h);
+        const fb = new Uint16Array(rawFb.buffer, rawFb.byteOffset, w * h);
         const rgba = imageData.data;
         for (let i = 0; i < fb.length; i++) {
             const px = fb[i];
@@ -357,7 +357,6 @@ function onFrame() {
             rgba[j + 3] = 255;
         }
         ctx2d.putImageData(imageData, 0, 0);
-        port.acknowledge('framebuffer');
     }
 
     // Cursor — solid white rectangle, REPL only
@@ -381,8 +380,7 @@ function onFrame() {
     // Bus status display
     $busStatus.textContent =
         `bus: gpio seq=${port._readSeq(cp.bus._regionInfo('gpio'))} ` +
-        `neo seq=${port._readSeq(cp.bus._regionInfo('neopixel'))} ` +
-        `fb seq=${port._readSeq(cp.bus._regionInfo('framebuffer'))}`;
+        `neo seq=${port._readSeq(cp.bus._regionInfo('neopixel'))}`;
 }
 
 // ── Receive messages from iframe ──

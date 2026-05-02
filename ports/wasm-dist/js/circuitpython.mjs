@@ -1,12 +1,12 @@
 /**
  * circuitpython.mjs — main thread API for the three-piece architecture
  *
- * The sync bus is the central broker.  All state flows through named regions:
- *   - VM Worker writes: serial_tx, gpio (outputs), neopixel, framebuffer
- *   - Parent writes: serial_rx (keystrokes), gpio (button presses)
- *   - Hardware iframe reads: gpio, neopixel, framebuffer
+ * Sync bus brokers all data except framebuffer:
+ *   - Bus: serial_tx/rx, gpio, neopixel, analog, protocol messages
+ *   - Direct: framebuffer (one consumer: canvas, pure pixels)
  *
- * No ad-hoc state — everything is a bus region with dirty tracking.
+ * The bus provides dirty tracking, multiple consumers, and attachment
+ * points for external hardware (WebSerial, cloud, sensor panels).
  */
 
 import { SyncBus } from '../sync/sync.mjs';
@@ -20,7 +20,7 @@ const ANALOG_SLOTS = 8;
 const ANALOG_SLOT_SIZE = 4;
 const ANALOG_SIZE = ANALOG_SLOTS * ANALOG_SLOT_SIZE;
 const SERIAL_RING_SIZE = 4096;
-const FB_MAX_SIZE = 480 * 360 * 2;  // RGB565
+// Framebuffer is direct path (not on bus) — no size constant needed
 
 export class CircuitPython {
     constructor() {
@@ -35,6 +35,7 @@ export class CircuitPython {
         this._raf = null;
         this._fbWidth = 0;
         this._fbHeight = 0;
+        this._framebuffer = null;  // Uint8Array RGB565 (direct path, not on bus)
         this._cursor = null;  // { x, y, sx, sy, tly, htiles, gw, gh, scale }
     }
 
@@ -58,7 +59,7 @@ export class CircuitPython {
         this._bus.region('gpio',      { size: GPIO_SIZE, type: 'slots', slotSize: GPIO_SLOT_SIZE });
         this._bus.region('analog',    { size: ANALOG_SIZE, type: 'slots', slotSize: ANALOG_SLOT_SIZE });
         this._bus.region('neopixel',  { size: NEOPIXEL_REGION_SIZE, type: 'slab' });
-        this._bus.region('framebuffer', { size: FB_MAX_SIZE, type: 'slab' });
+        // Framebuffer is NOT on the bus — direct path to canvas only
 
         this._busPort = this._bus.port();
 
@@ -92,9 +93,18 @@ export class CircuitPython {
 
     get bus() { return this._bus; }
     get port() { return this._busPort; }
+    get bus() { return this._bus; }
     get fbWidth() { return this._fbWidth; }
     get fbHeight() { return this._fbHeight; }
     get cursor() { return this._cursor; }
+
+    /** Consume the latest framebuffer (direct path, not on bus).
+     *  Returns Uint8Array (RGB565) or null if no new frame. */
+    consumeFramebuffer() {
+        const fb = this._framebuffer;
+        this._framebuffer = null;
+        return fb;
+    }
 
     execFile(path) {
         this._worker.postMessage({ type: 'exec_file', path });
@@ -143,7 +153,7 @@ export class CircuitPython {
                 if (this._onReady) this._onReady();
                 break;
             case 'frame':
-                this._applyPacketToBus(msg.packet);
+                this._applyPacket(msg.packet);
                 break;
             case 'stderr':
                 if (this._onStderr) this._onStderr(msg.text);
@@ -151,9 +161,14 @@ export class CircuitPython {
         }
     }
 
-    // ── Apply Worker outbound packet to sync bus ──
+    // ── Apply Worker outbound packet ──
+    //
+    // All data except framebuffer goes through the sync bus broker.
+    // Framebuffer is direct (one consumer: canvas, pure pixels).
 
-    _applyPacketToBus(packet) {
+    _applyPacket(packet) {
+        // ── Bus path: serial, GPIO, NeoPixel, analog, protocol ──
+
         // Serial TX → bus ring
         if (packet.serial && packet.serial.length > 0) {
             this._busPort.push('serial_tx', new Uint8Array(packet.serial));
@@ -173,14 +188,7 @@ export class CircuitPython {
             this._busPort.writeSlab('neopixel', new Uint8Array(packet.neopixel));
         }
 
-        // Framebuffer → bus slab (store dimensions too)
-        if (packet.framebuffer) {
-            this._fbWidth = packet.fbWidth || this._fbWidth;
-            this._fbHeight = packet.fbHeight || this._fbHeight;
-            this._busPort.writeSlab('framebuffer', new Uint8Array(packet.framebuffer));
-        }
-
-        // Protocol messages → callback
+        // Protocol messages → bus + callback
         if (packet.protocol && packet.protocol.length > 0) {
             if (this._onProtocol) {
                 for (const msg of packet.protocol) {
@@ -189,7 +197,14 @@ export class CircuitPython {
             }
         }
 
-        // Cursor info
+        // ── Direct path: framebuffer + cursor (no bus) ──
+
+        if (packet.framebuffer) {
+            this._fbWidth = packet.fbWidth || this._fbWidth;
+            this._fbHeight = packet.fbHeight || this._fbHeight;
+            this._framebuffer = new Uint8Array(packet.framebuffer);
+        }
+
         if (packet.cursor) {
             const c = new DataView(new Uint8Array(packet.cursor).buffer);
             this._cursor = {
