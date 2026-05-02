@@ -29,6 +29,7 @@ export class CircuitPython {
         this._worker = null;    // Web Worker running vm.wasm
         this._onStdout = null;
         this._onStderr = null;
+        this._onProtocol = null;
         this._onFrame = null;
         this._onReady = null;
         this._raf = null;
@@ -64,6 +65,7 @@ export class CircuitPython {
         // ── 2. Callbacks ──
         this._onStdout = options.onStdout || null;
         this._onStderr = options.onStderr || null;
+        this._onProtocol = options.onProtocol || null;
         this._onFrame = options.onFrame || null;
 
         // ── 3. Start Worker with VM ──
@@ -176,6 +178,15 @@ export class CircuitPython {
             this._fbWidth = packet.fbWidth || this._fbWidth;
             this._fbHeight = packet.fbHeight || this._fbHeight;
             this._busPort.writeSlab('framebuffer', new Uint8Array(packet.framebuffer));
+        }
+
+        // Protocol messages → callback
+        if (packet.protocol && packet.protocol.length > 0) {
+            if (this._onProtocol) {
+                for (const msg of packet.protocol) {
+                    this._onProtocol(msg);
+                }
+            }
         }
 
         // Cursor info

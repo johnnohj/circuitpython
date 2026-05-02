@@ -50,7 +50,7 @@ export class WasiMemfs {
 
         // File descriptor table
         this.fds = new Map();
-        this.nextFd = 4; // 0=stdin, 1=stdout, 2=stderr, 3=root preopen
+        this.nextFd = 5; // 0=stdin, 1=stdout, 2=stderr, 3=root preopen, 4=protocol
 
         // fd 3 = preopened root "/"
         this.fds.set(3, { type: 'dir', path: '/' });
@@ -58,6 +58,7 @@ export class WasiMemfs {
         // Callbacks
         this.onStdout = options.onStdout || null;
         this.onStderr = options.onStderr || null;
+        this.onProtocol = options.onProtocol || null;
         this.onHardwareWrite = options.onHardwareWrite || null;
         this.onHardwareRead = options.onHardwareRead || null;
         this.onHardwareCommand = options.onHardwareCommand || null;
@@ -170,6 +171,13 @@ export class WasiMemfs {
                         const text = self._decoder.decode(data);
                         if (self.onStderr) self.onStderr(text);
                         else console.error(text);
+                        self._view().setUint32(nwritten, data.length, true);
+                        return ERRNO.SUCCESS;
+                    }
+                    if (fd === 4) {
+                        // Protocol channel — WS protocol messages as JSON lines
+                        const text = self._decoder.decode(data);
+                        if (self.onProtocol) self.onProtocol(text);
                         self._view().setUint32(nwritten, data.length, true);
                         return ERRNO.SUCCESS;
                     }

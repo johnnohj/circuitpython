@@ -15,6 +15,7 @@ let wasi = null;     // WasiMemfs instance
 let regions = {};    // path → { ptr, size }
 let running = false;
 let frameTimer = null;
+let protocolBuf = '';
 
 // ── Message handler ──
 
@@ -67,6 +68,7 @@ async function init(msg) {
         args: ['circuitpython'],
         onStdout: () => {},
         onStderr: (text) => self.postMessage({ type: 'stderr', text }),
+        onProtocol: (text) => { protocolBuf += text; },
     });
 
     const pendingRegistrations = [];
@@ -156,7 +158,7 @@ function buildOutboundPacket() {
     const mem = vm.memory.buffer;
     const packet = { transfers: [] };
 
-    // Serial TX — drain ring
+    // Serial TX — drain ring (clean serial only, no protocol mixing)
     const txReg = regions['/hal/serial/tx'];
     if (txReg) {
         const view = new DataView(mem);
@@ -173,6 +175,19 @@ function buildOutboundPacket() {
             }
             view.setUint32(txReg.ptr + 4, readHead, true);
             packet.serial = new Uint8Array(chars);
+        }
+    }
+
+    // Protocol messages — drain from fd 4 buffer
+    if (protocolBuf.length > 0) {
+        const text = protocolBuf.trim();
+        protocolBuf = '';
+        if (text) {
+            try {
+                packet.protocol = text.split('\n').map(line => JSON.parse(line));
+            } catch (e) {
+                // malformed — skip
+            }
         }
     }
 
@@ -207,6 +222,8 @@ function buildOutboundPacket() {
     if (displayInfo?.cursorAddr) {
         packet.cursor = Array.from(new Uint8Array(mem, displayInfo.cursorAddr, 20));
     }
+
+
 
     return packet;
 }

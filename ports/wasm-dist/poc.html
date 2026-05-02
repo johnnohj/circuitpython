@@ -74,6 +74,10 @@ button:hover { background: #555; }
             sandbox="allow-scripts allow-same-origin"
             style="border: none;"></iframe>
     <div id="serial"></div>
+    <details>
+      <summary>Protocol Log</summary>
+      <div id="protocol-log" style="height:120px; overflow:auto; background:#1a1a2e; color:#7fdbca; font-family:monospace; font-size:11px; padding:4px; white-space:pre;"></div>
+    </details>
   </div>
 
   <!-- Right: Code editor + Controls -->
@@ -278,6 +282,19 @@ async function init() {
             onStderr: (text) => {
                 $serial.textContent += text;
                 $serial.scrollTop = $serial.scrollHeight;
+            },
+            onProtocol: (msg) => {
+                const $proto = document.getElementById('protocol-log');
+                if ($proto) {
+                    const line = `${msg.type}: ${JSON.stringify(msg, null, 0)}\n`;
+                    $proto.textContent += line;
+                    $proto.scrollTop = $proto.scrollHeight;
+                    // Keep last 200 lines
+                    const lines = $proto.textContent.split('\n');
+                    if (lines.length > 200) {
+                        $proto.textContent = lines.slice(-200).join('\n');
+                    }
+                }
             },
             onFrame,
         });

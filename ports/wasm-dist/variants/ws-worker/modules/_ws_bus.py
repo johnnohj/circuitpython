@@ -1,14 +1,16 @@
 # _ws_bus.py — Protocol bus interface for WS protocol wrappers.
 #
-# This module provides the bridge between Python-level hardware
-# operations and the sync bus.  Each wrapper module calls emit()
-# to broadcast state changes as WS-aligned protocol messages.
+# Protocol messages are written to fd 4 (the protocol channel),
+# bypassing the serial path entirely.  The WASI shim routes fd 4
+# to the onProtocol callback.  User-visible serial output (print,
+# REPL) goes through fd 1 (stdout) → serial_tx ring → displayio
+# terminal as normal.
 #
-# In the simulated board, emit() writes to a ringbuffer that JS
-# reads each frame.  For weBlinka (external boards), the same
-# messages are serialized over WebSerial/USB/BLE.
+# fd 0 = stdin, fd 1 = stdout (serial), fd 2 = stderr, fd 3 = root
+# preopen, fd 4 = protocol channel.
 
-import sys
+import json
+import os
 
 # Protocol message types (match ws-protocol.mjs)
 PIN_CONFIG = 'pin_config'
@@ -19,6 +21,7 @@ PIXELS_DELETE = 'pixels_delete'
 I2C_INIT = 'i2c_init'
 I2C_EVENT = 'i2c_event'
 
+_PROTO_FD = 4
 _listeners = []
 
 def on_message(callback):
@@ -26,9 +29,17 @@ def on_message(callback):
     _listeners.append(callback)
 
 def emit(msg_type, **fields):
-    """Broadcast a protocol message to all listeners."""
+    """Broadcast a protocol message on the protocol channel (fd 4)."""
     msg = {'type': msg_type}
     msg.update(fields)
+
+    # Write to fd 4 — bypasses serial/displayio entirely
+    try:
+        line = json.dumps(msg) + '\n'
+        os.write(_PROTO_FD, line)
+    except Exception:
+        pass
+
     for cb in _listeners:
         try:
             cb(msg)
