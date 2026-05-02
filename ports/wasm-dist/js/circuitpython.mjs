@@ -37,7 +37,6 @@ export class CircuitPython {
         this._fbHeight = 0;
         this._framebuffer = null;  // Uint8Array RGB565 (direct path, not on bus)
         this._cursor = null;  // { x, y, sx, sy, tly, htiles, gw, gh, scale }
-        this._toggleState = new Map();  // pin → boolean (toggle buttons)
     }
 
     static async create(options = {}) {
@@ -122,29 +121,9 @@ export class CircuitPython {
         this._worker.postMessage({ type: 'serial_push', byte });
     }
 
-    /** Set a GPIO input value directly (for external bridges). */
+    /** Set a GPIO input value. The iframe owns visual state and
+     *  notifies us — we just forward to the bus + VM Worker. */
     setInput(pin, value) {
-        this._writeGpio(pin, value);
-    }
-
-    /** Toggle a button pin: click once = pressed, click again = released.
-     *  Returns the new state (true = pressed/active-low/0). */
-    toggleInput(pin) {
-        const wasPressed = this._toggleState.get(pin) || false;
-        const nowPressed = !wasPressed;
-        this._toggleState.set(pin, nowPressed);
-        // Active-low: pressed = 0, released = 1
-        this._writeGpio(pin, nowPressed ? 0 : 1);
-        return nowPressed;
-    }
-
-    /** Reset a toggle pin to released. */
-    releaseInput(pin) {
-        this._toggleState.set(pin, false);
-        this._writeGpio(pin, 1);
-    }
-
-    _writeGpio(pin, value) {
         const slot = new Uint8Array(GPIO_SLOT_SIZE);
         const existing = this._busPort.readSlot('gpio', pin);
         slot.set(existing);
