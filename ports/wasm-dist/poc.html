@@ -269,7 +269,7 @@ async function init() {
     try {
         const base = new URL('.', location.href).href;
         cp = await CircuitPython.create({
-            wasmUrl: base + 'build-browser/circuitpython.wasm',
+            wasmUrl: base + 'build-ws-worker/circuitpython.wasm',
             syncUrl: base + 'sync/sync.wasm',
             onStdout: (text) => {
                 $serial.textContent += text;
