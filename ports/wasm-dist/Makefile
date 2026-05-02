@@ -76,7 +76,10 @@ CFLAGS += \
 	-DCIRCUITPY_BUSIO_UART=1 \
 	-DCIRCUITPY_RAINBOWIO=1 \
 	-DCIRCUITPY_TOUCHIO=1 \
-	-DCIRCUITPY_TOUCHIO_USE_NATIVE=0
+	-DCIRCUITPY_TOUCHIO_USE_NATIVE=0 \
+	-DCIRCUITPY_ROTARYIO=1 \
+	-DCIRCUITPY_COUNTIO=1 \
+	-DCIRCUITPY_KEYPAD=0
 
 CIRCUITPY_BUSIO = 1
 
@@ -178,7 +181,12 @@ SRC_C += \
 	shared-module/rainbowio/__init__.c \
 	shared-bindings/touchio/__init__.c \
 	shared-bindings/touchio/TouchIn.c \
-	shared-module/touchio/TouchIn.c
+	shared-module/touchio/TouchIn.c \
+	shared-bindings/rotaryio/__init__.c \
+	shared-bindings/rotaryio/IncrementalEncoder.c \
+	shared-bindings/countio/__init__.c \
+	shared-bindings/countio/Counter.c \
+	shared-bindings/countio/Edge.c \
 
 # ── Common-HAL hardware modules (both variants) ──
 SRC_C += \
@@ -186,6 +194,8 @@ SRC_C += \
 	common-hal/analogio/AnalogIn.c \
 	common-hal/analogio/AnalogOut.c \
 	common-hal/pwmio/PWMOut.c \
+	common-hal/rotaryio/IncrementalEncoder.c \
+	common-hal/countio/Counter.c \
 	common-hal/neopixel_write/__init__.c \
 	common-hal/microcontroller/__init__.c \
 	common-hal/microcontroller/Pin.c \

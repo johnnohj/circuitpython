@@ -62,8 +62,6 @@
 #define CIRCUITPY_ROTARYIO          (1)
 #undef CIRCUITPY_COUNTIO
 #define CIRCUITPY_COUNTIO           (1)
-#undef CIRCUITPY_KEYPAD
-#define CIRCUITPY_KEYPAD            (1)
 #undef CIRCUITPY_TOUCHIO
 #define CIRCUITPY_TOUCHIO           (1)
 #define CIRCUITPY_TOUCHIO_USE_NATIVE (0)

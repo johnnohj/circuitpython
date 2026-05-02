@@ -220,3 +220,8 @@ const mp_obj_type_t mp_fat_vfs_type = {
     .name = MP_QSTR_VfsFat,
 };
 #endif
+
+// ── Supervisor lock (used by keypad scanning) ──
+// Single-threaded WASM — no contention, locks are no-ops.
+bool supervisor_acquire_lock(void) { return true; }
+void supervisor_release_lock(void) { }

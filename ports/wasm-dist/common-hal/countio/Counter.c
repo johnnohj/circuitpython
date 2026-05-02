@@ -15,7 +15,7 @@
 
 static uint8_t read_pin(const mcu_pin_obj_t *pin) {
     uint8_t *slot = gpio_slot(pin->number);
-    return slot[GPIO_OFF_VALUE] ? 1 : 0;
+    return slot[GPIO_VALUE] ? 1 : 0;
 }
 
 void common_hal_countio_counter_construct(countio_counter_obj_t *self,
@@ -28,15 +28,19 @@ void common_hal_countio_counter_construct(countio_counter_obj_t *self,
 
     // Configure pin as input via GPIO slot
     uint8_t *slot = gpio_slot(pin->number);
-    slot[GPIO_OFF_ENABLED] = 1;
-    slot[GPIO_OFF_DIRECTION] = 0;  // input
+    slot[GPIO_ENABLED] = 1;
+    slot[GPIO_DIRECTION] = 0;  // input
     if (pull == PULL_UP) {
-        slot[GPIO_OFF_PULL] = 1;
+        slot[GPIO_PULL] = 1;
     } else if (pull == PULL_DOWN) {
-        slot[GPIO_OFF_PULL] = 2;
+        slot[GPIO_PULL] = 2;
     }
 
     self->last_value = read_pin(pin);
+}
+
+bool common_hal_countio_counter_deinited(countio_counter_obj_t *self) {
+    return self->pin == NULL;
 }
 
 void common_hal_countio_counter_deinit(countio_counter_obj_t *self) {
@@ -45,10 +49,6 @@ void common_hal_countio_counter_deinit(countio_counter_obj_t *self) {
     }
     reset_pin_number(self->pin->number);
     self->pin = NULL;
-}
-
-bool common_hal_countio_counter_deinited(countio_counter_obj_t *self) {
-    return self->pin == NULL;
 }
 
 mp_int_t common_hal_countio_counter_get_count(countio_counter_obj_t *self) {

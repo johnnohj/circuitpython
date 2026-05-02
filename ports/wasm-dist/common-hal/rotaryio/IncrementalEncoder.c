@@ -26,7 +26,7 @@ static const int8_t QUADRATURE_TABLE[4][4] = {
 
 static uint8_t read_pin(const mcu_pin_obj_t *pin) {
     uint8_t *slot = gpio_slot(pin->number);
-    return slot[GPIO_OFF_VALUE] ? 1 : 0;
+    return slot[GPIO_VALUE] ? 1 : 0;
 }
 
 static void update_state(rotaryio_incrementalencoder_obj_t *self) {
@@ -58,17 +58,21 @@ void common_hal_rotaryio_incrementalencoder_construct(
 
     // Configure pins as inputs with pull-up via GPIO slots
     uint8_t *slot_a = gpio_slot(pin_a->number);
-    slot_a[GPIO_OFF_ENABLED] = 1;
-    slot_a[GPIO_OFF_DIRECTION] = 0;  // input
-    slot_a[GPIO_OFF_PULL] = 1;       // pull-up
+    slot_a[GPIO_ENABLED] = 1;
+    slot_a[GPIO_DIRECTION] = 0;  // input
+    slot_a[GPIO_PULL] = 1;       // pull-up
 
     uint8_t *slot_b = gpio_slot(pin_b->number);
-    slot_b[GPIO_OFF_ENABLED] = 1;
-    slot_b[GPIO_OFF_DIRECTION] = 0;
-    slot_b[GPIO_OFF_PULL] = 1;
+    slot_b[GPIO_ENABLED] = 1;
+    slot_b[GPIO_DIRECTION] = 0;
+    slot_b[GPIO_PULL] = 1;
 
     // Read initial state
     self->state = (read_pin(pin_a) << 1) | read_pin(pin_b);
+}
+
+bool common_hal_rotaryio_incrementalencoder_deinited(rotaryio_incrementalencoder_obj_t *self) {
+    return self->pin_a == NULL;
 }
 
 void common_hal_rotaryio_incrementalencoder_deinit(rotaryio_incrementalencoder_obj_t *self) {
@@ -79,10 +83,6 @@ void common_hal_rotaryio_incrementalencoder_deinit(rotaryio_incrementalencoder_o
     reset_pin_number(self->pin_b->number);
     self->pin_a = NULL;
     self->pin_b = NULL;
-}
-
-bool common_hal_rotaryio_incrementalencoder_deinited(rotaryio_incrementalencoder_obj_t *self) {
-    return self->pin_a == NULL;
 }
 
 mp_int_t common_hal_rotaryio_incrementalencoder_get_position(rotaryio_incrementalencoder_obj_t *self) {
