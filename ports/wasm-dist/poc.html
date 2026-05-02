@@ -408,19 +408,18 @@ window.addEventListener('message', (e) => {
             }
             break;
 
-        // WS-aligned: pin_event carries both press and release
+        // Toggle buttons: click = toggle state (press/release)
+        // Ignore mouseup — state persists until next click
         case 'pin_event':
             if (cp && msg.pin_id !== undefined) {
-                cp.setInput(msg.pin_id, msg.pin_value);
+                cp.toggleInput(msg.pin_id);
             }
             break;
-
-        // Legacy compat
         case 'press':
-            if (cp && msg.pin !== undefined) cp.setInput(msg.pin, 0);
+            if (cp && msg.pin !== undefined) cp.toggleInput(msg.pin);
             break;
         case 'release':
-            if (cp && msg.pin !== undefined) cp.setInput(msg.pin, 1);
+            // Ignored in toggle mode — state persists until next click
             break;
     }
 });
@@ -569,6 +568,8 @@ document.getElementById('btn-stop').addEventListener('click', () => {
     for (let i = 0; i < GPIO_SLOTS; i++) {
         port.writeSlot('gpio', i, new Uint8Array(GPIO_SLOT_SIZE));
     }
+    // Reset all toggle states
+    cp._toggleState.clear();
     // Forward cleared state to iframe
     sendToBoard('gpio', new Array(GPIO_SIZE).fill(0));
     sendToBoard('neopixel', new Array(NEOPIXEL_REGION_SIZE).fill(0));

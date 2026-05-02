@@ -37,7 +37,7 @@ export class CircuitPython {
         this._fbHeight = 0;
         this._framebuffer = null;  // Uint8Array RGB565 (direct path, not on bus)
         this._cursor = null;  // { x, y, sx, sy, tly, htiles, gw, gh, scale }
-        this._latchTimers = new Map();  // pin → timeout ID (decaying latch)
+        this._toggleState = new Map();  // pin → boolean (toggle buttons)
     }
 
     static async create(options = {}) {
@@ -122,33 +122,35 @@ export class CircuitPython {
         this._worker.postMessage({ type: 'serial_push', byte });
     }
 
-    setInput(pin, value, latchMs = 150) {
-        const writeValue = (v) => {
-            const slot = new Uint8Array(GPIO_SLOT_SIZE);
-            const existing = this._busPort.readSlot('gpio', pin);
-            slot.set(existing);
-            slot[2] = v ? 1 : 0;
-            this._busPort.writeSlot('gpio', pin, slot);
-            this._worker.postMessage({ type: 'gpio_input', pin, value: v ? 1 : 0 });
-        };
+    /** Set a GPIO input value directly (for external bridges). */
+    setInput(pin, value) {
+        this._writeGpio(pin, value);
+    }
 
-        // Clear any pending latch release for this pin
-        const existing = this._latchTimers.get(pin);
-        if (existing) clearTimeout(existing);
+    /** Toggle a button pin: click once = pressed, click again = released.
+     *  Returns the new state (true = pressed/active-low/0). */
+    toggleInput(pin) {
+        const wasPressed = this._toggleState.get(pin) || false;
+        const nowPressed = !wasPressed;
+        this._toggleState.set(pin, nowPressed);
+        // Active-low: pressed = 0, released = 1
+        this._writeGpio(pin, nowPressed ? 0 : 1);
+        return nowPressed;
+    }
 
-        writeValue(value);
+    /** Reset a toggle pin to released. */
+    releaseInput(pin) {
+        this._toggleState.set(pin, false);
+        this._writeGpio(pin, 1);
+    }
 
-        // If pressing (value=0 for active-low buttons), hold for latchMs
-        // so the VM's polling loop catches it even with time.sleep
-        if (!value && latchMs > 0) {
-            const timer = setTimeout(() => {
-                writeValue(1);  // release
-                this._latchTimers.delete(pin);
-            }, latchMs);
-            this._latchTimers.set(pin, timer);
-        } else {
-            this._latchTimers.delete(pin);
-        }
+    _writeGpio(pin, value) {
+        const slot = new Uint8Array(GPIO_SLOT_SIZE);
+        const existing = this._busPort.readSlot('gpio', pin);
+        slot.set(existing);
+        slot[2] = value ? 1 : 0;
+        this._busPort.writeSlot('gpio', pin, slot);
+        this._worker.postMessage({ type: 'gpio_input', pin, value: value ? 1 : 0 });
     }
 
     writeFile(path, content) {
