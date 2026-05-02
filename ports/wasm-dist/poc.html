@@ -440,12 +440,23 @@ async function init() {
             wasmUrl: base + 'build-ws-worker/circuitpython.wasm',
             syncUrl: base + 'sync/sync.wasm',
             onStdout: (text) => {
-                $serial.textContent += text;
-                $serial.scrollTop = $serial.scrollHeight;
+                // Strip ANSI escapes (colors, cursor, status bar title)
+                const clean = text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+                                  .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+                                  .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+                if (clean) {
+                    $serial.textContent += clean;
+                    $serial.scrollTop = $serial.scrollHeight;
+                }
             },
             onStderr: (text) => {
-                $serial.textContent += text;
-                $serial.scrollTop = $serial.scrollHeight;
+                const clean = text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+                                  .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+                                  .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+                if (clean) {
+                    $serial.textContent += clean;
+                    $serial.scrollTop = $serial.scrollHeight;
+                }
             },
             onProtocol: (msg) => {
                 const $proto = document.getElementById('protocol-log');
