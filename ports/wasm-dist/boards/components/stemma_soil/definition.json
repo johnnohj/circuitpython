@@ -1,0 +1,58 @@
+{
+  "componentName": "stemma_soil",
+  "displayName": "STEMMA Soil Sensor",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4026",
+  "documentationURL": "https://learn.adafruit.com/adafruit-stemma-soil-sensor-i2c-capacitive-moisture-sensor",
+  "i2c": {
+    "addresses": [
+      54,
+      55,
+      56,
+      57
+    ],
+    "defaultAddress": 54,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "raw",
+      "displayName": "Capacitive Sensor",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

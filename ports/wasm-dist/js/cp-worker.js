@@ -43,6 +43,9 @@ self.onmessage = async (e) => {
         case 'gpio_input':
             setGpioInput(msg.pin, msg.value);
             break;
+        case 'analog_input':
+            setAnalogInput(msg.index, msg.value);
+            break;
         case 'write_file':
             wasi.writeFile(msg.path, new Uint8Array(msg.data));
             break;
@@ -222,6 +225,18 @@ function setGpioInput(pin, value) {
     const gpioReg = regions['/hal/gpio'];
     if (gpioReg) {
         new Uint8Array(vm.memory.buffer)[gpioReg.ptr + pin * 12 + 2] = value ? 1 : 0;
+    }
+}
+
+function setAnalogInput(index, u16Value) {
+    const analogReg = regions['/hal/analog'];
+    if (analogReg) {
+        // Analog slot: [value_hi:u8][value_lo:u8][enabled:u8][pad:u8]
+        const buf = new Uint8Array(vm.memory.buffer);
+        const off = analogReg.ptr + index * 4;
+        buf[off]     = (u16Value >> 8) & 0xFF;
+        buf[off + 1] = u16Value & 0xFF;
+        buf[off + 2] = 1;  // enabled
     }
 }
 

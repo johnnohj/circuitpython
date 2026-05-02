@@ -1,0 +1,40 @@
+{
+  "componentName": "tsl2591",
+  "displayName": "TSL2591",
+  "vendor": "ams",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/1980",
+  "documentationURL": "https://learn.adafruit.com/adafruit-tsl2591",
+  "driver": {
+    "package": "adafruit_tsl2591",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_tsl2591",
+    "importName": "adafruit_tsl2591"
+  },
+  "i2c": {
+    "addresses": [
+      41,
+      57,
+      73
+    ],
+    "defaultAddress": 41,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

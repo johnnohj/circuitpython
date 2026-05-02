@@ -1,0 +1,121 @@
+{
+  "componentName": "sen66",
+  "displayName": "SEN66",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6331",
+  "documentationURL": "https://sensirion.com/media/documents/FAFC548D/6731FFFA/Sensirion_Datasheet_SEN6x.pdf",
+  "i2c": {
+    "addresses": [
+      107
+    ],
+    "defaultAddress": 107,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm10-std",
+      "displayName": "PM1.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm25-std",
+      "displayName": "PM2.5 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm100-std",
+      "displayName": "PM10.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "voc-index",
+      "displayName": "Volatile Organic Compounds Index",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "nox-index",
+      "displayName": "Nitrogen Oxides Index",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "co2",
+      "displayName": "CO2",
+      "unit": "ppm",
+      "range": {
+        "min": 400,
+        "max": 8192
+      },
+      "defaultValue": 400,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "componentName": "ina228",
+  "displayName": "INA228",
+  "vendor": "Texas Instruments",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5832",
+  "documentationURL": "https://learn.adafruit.com/adafruit-ina228-i2c-power-monitor",
+  "driver": {
+    "package": "adafruit_ina228",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_ina228",
+    "importName": "adafruit_ina228"
+  },
+  "i2c": {
+    "addresses": [
+      64,
+      65,
+      68,
+      69
+    ],
+    "defaultAddress": 64,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "voltage",
+      "displayName": "Voltage Sensor",
+      "unit": "V",
+      "range": {
+        "min": 0,
+        "max": 36
+      },
+      "defaultValue": 3.3,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "current",
+      "displayName": "Current",
+      "unit": "mA",
+      "range": {
+        "min": -3200,
+        "max": 3200
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "bolt",
+    "color": "#e74c3c",
+    "widget": "gauge"
+  }
+}

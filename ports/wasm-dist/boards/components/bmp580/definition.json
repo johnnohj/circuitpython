@@ -1,0 +1,67 @@
+{
+  "componentName": "bmp580",
+  "displayName": "BMP580",
+  "vendor": "Bosch",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6411",
+  "documentationURL": "https://cdn-shop.adafruit.com/product-files/6411/BMP580.pdf",
+  "i2c": {
+    "addresses": [
+      71,
+      70
+    ],
+    "defaultAddress": 71,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pressure",
+      "displayName": "Pressure Sensor",
+      "unit": "hPa",
+      "range": {
+        "min": 300,
+        "max": 1100
+      },
+      "defaultValue": 1013.25,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "altitude",
+      "displayName": "Altitude (Relative)",
+      "unit": "m",
+      "range": {
+        "min": -500,
+        "max": 9000
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

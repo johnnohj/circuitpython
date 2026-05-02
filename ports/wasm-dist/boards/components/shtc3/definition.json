@@ -1,0 +1,60 @@
+{
+  "componentName": "shtc3",
+  "displayName": "SHTC3",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4636",
+  "documentationURL": "https://learn.adafruit.com/adafruit-sensirion-shtc3-temperature-humidity-sensor",
+  "driver": {
+    "package": "adafruit_shtc3",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_shtc3",
+    "importName": "adafruit_shtc3"
+  },
+  "i2c": {
+    "addresses": [
+      112
+    ],
+    "defaultAddress": 112,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "componentName": "ltr303",
+  "displayName": "LTR-303",
+  "vendor": "LITE-ON",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5610",
+  "documentationURL": "https://learn.adafruit.com/adafruit-ltr-329-ltr-303",
+  "i2c": {
+    "addresses": [
+      41
+    ],
+    "defaultAddress": 41,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Ambient Light",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "raw",
+      "displayName": "Infrared",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

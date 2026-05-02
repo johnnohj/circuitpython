@@ -1,0 +1,41 @@
+{
+  "componentName": "as7331",
+  "displayName": "AS7331",
+  "vendor": "ams-OSRAM",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6476",
+  "documentationURL": "https://learn.adafruit.com/adafruit-as7331-uv-uva-uvb-uvc-sensor",
+  "driver": {
+    "package": "adafruit_as7331",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_as7331",
+    "importName": "adafruit_as7331"
+  },
+  "i2c": {
+    "addresses": [
+      116,
+      117,
+      118,
+      119
+    ],
+    "defaultAddress": 116,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "raw",
+      "displayName": "UVB",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "slider"
+  }
+}

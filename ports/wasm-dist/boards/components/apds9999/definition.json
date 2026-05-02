@@ -1,0 +1,49 @@
+{
+  "componentName": "apds9999",
+  "displayName": "APDS9999",
+  "vendor": "Broadcom",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6461",
+  "documentationURL": "https://learn.adafruit.com/adafruit-apds9999-proximity-lux-light-color-sensor",
+  "driver": {
+    "package": "adafruit_apds9999",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_apds9999",
+    "importName": "adafruit_apds9999"
+  },
+  "i2c": {
+    "addresses": [
+      82
+    ],
+    "defaultAddress": 82,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "proximity",
+      "displayName": "Proximity Sensor",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 255
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

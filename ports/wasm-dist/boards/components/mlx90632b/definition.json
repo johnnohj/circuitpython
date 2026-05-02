@@ -1,0 +1,67 @@
+{
+  "componentName": "mlx90632b",
+  "displayName": "MLX90632-B (Standard)",
+  "vendor": "Melexis",
+  "type": "i2c",
+  "productURL": "https://www.digikey.com/en/products/detail/melexis-technologies-nv/MLX90632SLD-BCB-000-RE/8259656",
+  "documentationURL": "https://cdn-shop.adafruit.com/product-files/6403/MLX90632-Datasheet-Melexis.PDF",
+  "i2c": {
+    "addresses": [
+      58,
+      59
+    ],
+    "defaultAddress": 58,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Ambient Temperature (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Ambient Temperature (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "object-temp",
+      "displayName": "Measured Object Temp (\u00b0C)",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "object-temp-fahrenheit",
+      "displayName": "Measured Object Temp (\u00b0F)",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

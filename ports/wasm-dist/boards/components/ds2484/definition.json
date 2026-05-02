@@ -1,0 +1,44 @@
+{
+  "componentName": "ds2484",
+  "displayName": "DS2484",
+  "vendor": "Maxim Integrated",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5976",
+  "documentationURL": "https://learn.adafruit.com/adafruit-dps310-precision-barometric-pressure-sensor",
+  "i2c": {
+    "addresses": [
+      24
+    ],
+    "defaultAddress": 24,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

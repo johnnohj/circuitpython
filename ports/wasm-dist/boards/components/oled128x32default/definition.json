@@ -1,0 +1,21 @@
+{
+  "componentName": "oled128x32default",
+  "displayName": "128x32 OLED (Default)",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4440",
+  "documentationURL": "https://learn.adafruit.com/monochrome-oled-breakouts",
+  "i2c": {
+    "addresses": [
+      60,
+      61
+    ],
+    "defaultAddress": 60,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

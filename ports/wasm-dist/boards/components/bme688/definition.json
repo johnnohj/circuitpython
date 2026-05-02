@@ -1,0 +1,94 @@
+{
+  "componentName": "bme688",
+  "displayName": "BME688",
+  "vendor": "Bosch",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5046",
+  "documentationURL": "https://learn.adafruit.com/adafruit-bme680-humidity-temperature-barometic-pressure-voc-gas",
+  "driver": {
+    "package": "adafruit_bme680",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_bme680",
+    "importName": "adafruit_bme680"
+  },
+  "i2c": {
+    "addresses": [
+      119,
+      118
+    ],
+    "defaultAddress": 119,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pressure",
+      "displayName": "Pressure Sensor",
+      "unit": "hPa",
+      "range": {
+        "min": 300,
+        "max": 1100
+      },
+      "defaultValue": 1013.25,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "altitude",
+      "displayName": "Altitude (Relative)",
+      "unit": "m",
+      "range": {
+        "min": -500,
+        "max": 9000
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "gas-resistance",
+      "displayName": "Total VOC",
+      "unit": "\u03a9",
+      "range": {
+        "min": 0,
+        "max": 1000000
+      },
+      "defaultValue": 50000,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

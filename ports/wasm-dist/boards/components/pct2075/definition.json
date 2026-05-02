@@ -1,0 +1,75 @@
+{
+  "componentName": "pct2075",
+  "displayName": "PCT2075",
+  "vendor": "NXP",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4369",
+  "documentationURL": "https://learn.adafruit.com/adafruit-pct2075-temperature-sensor",
+  "driver": {
+    "package": "adafruit_pct2075",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_pct2075",
+    "importName": "adafruit_pct2075"
+  },
+  "i2c": {
+    "addresses": [
+      55,
+      54,
+      53,
+      47,
+      46,
+      45,
+      44,
+      43,
+      42,
+      41,
+      40,
+      119,
+      118,
+      117,
+      116,
+      115,
+      114,
+      113,
+      112,
+      79,
+      78,
+      77,
+      76,
+      75,
+      74,
+      73,
+      72
+    ],
+    "defaultAddress": 55,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

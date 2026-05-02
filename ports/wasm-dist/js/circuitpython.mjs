@@ -16,6 +16,9 @@ const GPIO_SLOTS = 32;
 const GPIO_SLOT_SIZE = 12;
 const GPIO_SIZE = GPIO_SLOTS * GPIO_SLOT_SIZE;
 const NEOPIXEL_REGION_SIZE = 4 + 64 * 4;  // header + 64 pixels × 4 bytes
+const ANALOG_SLOTS = 8;
+const ANALOG_SLOT_SIZE = 4;
+const ANALOG_SIZE = ANALOG_SLOTS * ANALOG_SLOT_SIZE;
 const SERIAL_RING_SIZE = 4096;
 const FB_MAX_SIZE = 480 * 360 * 2;  // RGB565
 
@@ -52,6 +55,7 @@ export class CircuitPython {
         this._bus.region('serial_tx', { size: SERIAL_RING_SIZE, type: 'ring' });
         this._bus.region('serial_rx', { size: SERIAL_RING_SIZE, type: 'ring' });
         this._bus.region('gpio',      { size: GPIO_SIZE, type: 'slots', slotSize: GPIO_SLOT_SIZE });
+        this._bus.region('analog',    { size: ANALOG_SIZE, type: 'slots', slotSize: ANALOG_SLOT_SIZE });
         this._bus.region('neopixel',  { size: NEOPIXEL_REGION_SIZE, type: 'slab' });
         this._bus.region('framebuffer', { size: FB_MAX_SIZE, type: 'slab' });
 

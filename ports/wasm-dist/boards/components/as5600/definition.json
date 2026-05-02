@@ -1,0 +1,38 @@
+{
+  "componentName": "as5600",
+  "displayName": "AS5600 Magnetic Angle",
+  "vendor": "ams",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6357",
+  "documentationURL": "https://learn.adafruit.com/adafruit-as5600-magnetic-angle-sensor",
+  "driver": {
+    "package": "adafruit_as5600",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_as5600",
+    "importName": "adafruit_as5600"
+  },
+  "i2c": {
+    "addresses": [
+      54
+    ],
+    "defaultAddress": 54,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "raw",
+      "displayName": "Angle",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.005
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "slider"
+  }
+}

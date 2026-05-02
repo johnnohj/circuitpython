@@ -1,0 +1,39 @@
+{
+  "componentName": "bh1750",
+  "displayName": "BH1750",
+  "vendor": "ROHM Semiconductor",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4681",
+  "documentationURL": "https://learn.adafruit.com/adafruit-bh1750-ambient-light-sensor",
+  "driver": {
+    "package": "adafruit_bh1750",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_bh1750",
+    "importName": "adafruit_bh1750"
+  },
+  "i2c": {
+    "addresses": [
+      35,
+      92
+    ],
+    "defaultAddress": 35,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

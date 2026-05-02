@@ -1,0 +1,21 @@
+{
+  "componentName": "fthrwingoled128x64lg",
+  "displayName": "128x64 OLED'wing (Large)",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4650",
+  "documentationURL": "https://learn.adafruit.com/adafruit-128x64-oled-featherwing",
+  "i2c": {
+    "addresses": [
+      61,
+      60
+    ],
+    "defaultAddress": 61,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

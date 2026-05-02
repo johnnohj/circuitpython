@@ -1,0 +1,47 @@
+{
+  "componentName": "ina237",
+  "displayName": "INA237",
+  "vendor": "Texas Instruments",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6340",
+  "documentationURL": "https://learn.adafruit.com/adafruit-ina237-dc-current-voltage-power-monitor",
+  "i2c": {
+    "addresses": [
+      64,
+      65,
+      68,
+      69
+    ],
+    "defaultAddress": 64,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "voltage",
+      "displayName": "Voltage Sensor",
+      "unit": "V",
+      "range": {
+        "min": 0,
+        "max": 36
+      },
+      "defaultValue": 3.3,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "current",
+      "displayName": "Current",
+      "unit": "mA",
+      "range": {
+        "min": -3200,
+        "max": 3200
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "bolt",
+    "color": "#e74c3c",
+    "widget": "gauge"
+  }
+}

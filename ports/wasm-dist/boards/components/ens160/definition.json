@@ -1,0 +1,61 @@
+{
+  "componentName": "ens160",
+  "displayName": "ENS160",
+  "vendor": "Sciosense",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5606",
+  "documentationURL": "https://learn.adafruit.com/adafruit-ens160-mox-gas-sensor",
+  "driver": {
+    "package": "adafruit_ens160",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_ens160",
+    "importName": "adafruit_ens160"
+  },
+  "i2c": {
+    "addresses": [
+      82,
+      83
+    ],
+    "defaultAddress": 82,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "tvoc",
+      "displayName": "Total Volatile Organic Compounds",
+      "unit": "ppb",
+      "range": {
+        "min": 0,
+        "max": 1187
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "eco2",
+      "displayName": "Estimated CO2",
+      "unit": "ppm",
+      "range": {
+        "min": 400,
+        "max": 8192
+      },
+      "defaultValue": 400,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "raw",
+      "displayName": "AQI",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

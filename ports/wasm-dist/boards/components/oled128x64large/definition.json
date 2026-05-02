@@ -1,0 +1,21 @@
+{
+  "componentName": "oled128x64large",
+  "displayName": "128x64 OLED (Large Font)",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/938",
+  "documentationURL": "https://learn.adafruit.com/monochrome-oled-breakouts",
+  "i2c": {
+    "addresses": [
+      61,
+      60
+    ],
+    "defaultAddress": 61,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

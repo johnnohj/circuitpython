@@ -1,0 +1,27 @@
+{
+  "componentName": "quadalphanum",
+  "displayName": "Quad Alphanum. Display",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/1911",
+  "documentationURL": "https://learn.adafruit.com/adafruit-led-backpack/0-54-alphanumeric",
+  "i2c": {
+    "addresses": [
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119
+    ],
+    "defaultAddress": 112,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

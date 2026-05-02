@@ -1,0 +1,55 @@
+{
+  "componentName": "sen50",
+  "displayName": "SEN50",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.digikey.com/en/products/filter/gas-sensors/530?s=N4IgjCBcoLQCxVAYygMwIYBsDOBTANCAPZQDa4ADFRQgLoC%2BjQA",
+  "documentationURL": "https://sensirion.com/media/documents/6791EFA0/62A1F68F/Sensirion_Datasheet_Environmental_Node_SEN5x.pdf",
+  "i2c": {
+    "addresses": [
+      105
+    ],
+    "defaultAddress": 105,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "pm10-std",
+      "displayName": "PM1.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm25-std",
+      "displayName": "PM2.5 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm100-std",
+      "displayName": "PM10.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

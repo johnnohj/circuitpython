@@ -1,0 +1,38 @@
+{
+  "componentName": "veml7700",
+  "displayName": "VEML7700",
+  "vendor": "Vishay",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4162",
+  "documentationURL": "https://learn.adafruit.com/adafruit-veml7700",
+  "driver": {
+    "package": "adafruit_veml7700",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_veml7700",
+    "importName": "adafruit_veml7700"
+  },
+  "i2c": {
+    "addresses": [
+      16
+    ],
+    "defaultAddress": 16,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

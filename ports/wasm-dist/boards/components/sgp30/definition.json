@@ -1,0 +1,49 @@
+{
+  "componentName": "sgp30",
+  "displayName": "SGP30",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/3709",
+  "documentationURL": "https://learn.adafruit.com/adafruit-sgp30-gas-tvoc-eco2-mox-sensor",
+  "driver": {
+    "package": "adafruit_sgp30",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_sgp30",
+    "importName": "adafruit_sgp30"
+  },
+  "i2c": {
+    "addresses": [
+      88
+    ],
+    "defaultAddress": 88,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "eco2",
+      "displayName": "Estimated CO2",
+      "unit": "ppm",
+      "range": {
+        "min": 400,
+        "max": 8192
+      },
+      "defaultValue": 400,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "tvoc",
+      "displayName": "Total Volatile Organic Compounds",
+      "unit": "ppb",
+      "range": {
+        "min": 0,
+        "max": 1187
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

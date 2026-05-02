@@ -1,0 +1,49 @@
+{
+  "componentName": "ltr390",
+  "displayName": "LTR-390",
+  "vendor": "LITE-ON",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4831",
+  "documentationURL": "https://learn.adafruit.com/adafruit-ltr390-uv-sensor",
+  "driver": {
+    "package": "adafruit_ltr390",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_ltr390",
+    "importName": "adafruit_ltr390"
+  },
+  "i2c": {
+    "addresses": [
+      83
+    ],
+    "defaultAddress": 83,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Ambient Light",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "raw",
+      "displayName": "UV Count",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

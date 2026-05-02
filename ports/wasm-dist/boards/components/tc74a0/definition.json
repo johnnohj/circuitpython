@@ -1,0 +1,44 @@
+{
+  "componentName": "tc74a0",
+  "displayName": "TC74A0",
+  "vendor": "Microchip",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4375",
+  "documentationURL": "https://learn.adafruit.com/adafruit-pct2075-temperature-sensor",
+  "i2c": {
+    "addresses": [
+      72
+    ],
+    "defaultAddress": 72,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "componentName": "mprls",
+  "displayName": "MPRLS",
+  "vendor": "Honeywell",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/3965",
+  "documentationURL": "https://learn.adafruit.com/adafruit-mprls-ported-pressure-sensor-breakout",
+  "driver": {
+    "package": "adafruit_mprls",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_mprls",
+    "importName": "adafruit_mprls"
+  },
+  "i2c": {
+    "addresses": [
+      24
+    ],
+    "defaultAddress": 24,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "pressure",
+      "displayName": "Pressure Sensor",
+      "unit": "hPa",
+      "range": {
+        "min": 300,
+        "max": 1100
+      },
+      "defaultValue": 1013.25,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "barometer",
+    "color": "#9b59b6",
+    "widget": "gauge"
+  }
+}

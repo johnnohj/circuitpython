@@ -1,0 +1,99 @@
+{
+  "componentName": "sen54",
+  "displayName": "SEN54",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.digikey.com/en/products/filter/gas-sensors/530?s=N4IgjCBcoLQCxVAYygMwIYBsDOBTANCAPZQDa4ADFRQgLoC%2BjQA",
+  "documentationURL": "https://sensirion.com/media/documents/6791EFA0/62A1F68F/Sensirion_Datasheet_Environmental_Node_SEN5x.pdf",
+  "i2c": {
+    "addresses": [
+      105
+    ],
+    "defaultAddress": 105,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm10-std",
+      "displayName": "PM1.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm25-std",
+      "displayName": "PM2.5 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "pm100-std",
+      "displayName": "PM10.0 Standard",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "voc-index",
+      "displayName": "Volatile Organic Compounds Index",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

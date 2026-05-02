@@ -1,0 +1,60 @@
+{
+  "componentName": "am2301b",
+  "displayName": "AM2301B",
+  "vendor": "ASAIR",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5181",
+  "documentationURL": "https://cdn-shop.adafruit.com/product-files/5181/5181_AM2301B.pdf",
+  "driver": {
+    "package": "adafruit_ahtx0",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_ahtx0",
+    "importName": "adafruit_ahtx0"
+  },
+  "i2c": {
+    "addresses": [
+      56
+    ],
+    "defaultAddress": 56,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}

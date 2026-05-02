@@ -1,0 +1,38 @@
+{
+  "componentName": "vl53l0x",
+  "displayName": "VL53L0X",
+  "vendor": "STMicroelectronics",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/3317",
+  "documentationURL": "https://learn.adafruit.com/adafruit-vl53l0x-micro-lidar-distance-sensor-breakout",
+  "driver": {
+    "package": "adafruit_vl53l0x",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_vl53l0x",
+    "importName": "adafruit_vl53l0x"
+  },
+  "i2c": {
+    "addresses": [
+      41
+    ],
+    "defaultAddress": 41,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "proximity",
+      "displayName": "ToF Sensor",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 255
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.03
+    }
+  ],
+  "visual": {
+    "icon": "radar",
+    "color": "#2ecc71",
+    "widget": "slider"
+  }
+}

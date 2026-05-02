@@ -1,0 +1,20 @@
+{
+  "componentName": "fthrwingoled128x32",
+  "displayName": "128x32 OLED'wing (Small)",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/2900",
+  "documentationURL": "https://learn.adafruit.com/adafruit-oled-featherwing",
+  "i2c": {
+    "addresses": [
+      60
+    ],
+    "defaultAddress": 60,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "componentName": "sgp41",
+  "displayName": "SGP41",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/6455",
+  "documentationURL": "https://learn.adafruit.com/adafruit-sgp41-multi-pixel-gas-sensor-breakout",
+  "driver": {
+    "package": "adafruit_sgp40",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_sgp40",
+    "importName": "adafruit_sgp40"
+  },
+  "i2c": {
+    "addresses": [
+      89
+    ],
+    "defaultAddress": 89,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "voc-index",
+      "displayName": "Volatile Organic Compounds Index",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "nox-index",
+      "displayName": "Nitrogen Oxides Index",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "raw",
+      "displayName": "Raw VOC Ticks (Reference)",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "componentName": "vl6180x",
+  "displayName": "VL6180X",
+  "vendor": "STMicroelectronics",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/3316",
+  "documentationURL": "https://learn.adafruit.com/adafruit-vl6180x-time-of-flight-micro-lidar-distance-sensor-breakout",
+  "driver": {
+    "package": "adafruit_vl6180x",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_vl6180x",
+    "importName": "adafruit_vl6180x"
+  },
+  "i2c": {
+    "addresses": [
+      41
+    ],
+    "defaultAddress": 41,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "proximity",
+      "displayName": "ToF Sensor",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 255
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.03
+    },
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "radar",
+    "color": "#2ecc71",
+    "widget": "slider"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "componentName": "chardisplay20x4",
+  "displayName": "20x4 Character Display",
+  "vendor": "Adafruit",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/198",
+  "documentationURL": "https://learn.adafruit.com/i2c-spi-lcd-backpack",
+  "i2c": {
+    "addresses": [
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39
+    ],
+    "defaultAddress": 32,
+    "registers": []
+  },
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "gauge"
+  }
+}

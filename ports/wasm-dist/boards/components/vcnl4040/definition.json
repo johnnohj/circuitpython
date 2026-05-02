@@ -1,0 +1,49 @@
+{
+  "componentName": "vcnl4040",
+  "displayName": "VCNL4040",
+  "vendor": "Vishay",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/4161",
+  "documentationURL": "https://learn.adafruit.com/adafruit-vcnl4040-proximity-sensor",
+  "driver": {
+    "package": "adafruit_vcnl4040",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_vcnl4040",
+    "importName": "adafruit_vcnl4040"
+  },
+  "i2c": {
+    "addresses": [
+      96
+    ],
+    "defaultAddress": 96,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "light",
+      "displayName": "Light Sensor",
+      "unit": "lux",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 300,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "proximity",
+      "displayName": "Proximity Sensor",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 255
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "sun",
+    "color": "#f1c40f",
+    "widget": "slider"
+  }
+}

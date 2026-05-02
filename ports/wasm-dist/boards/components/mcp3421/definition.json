@@ -1,0 +1,38 @@
+{
+  "componentName": "mcp3421",
+  "displayName": "MCP3421",
+  "vendor": "Microchip",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5870",
+  "documentationURL": "https://learn.adafruit.com/adafruit-mcp3421-18-bit-adc",
+  "driver": {
+    "package": "adafruit_mcp3421",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_mcp3421",
+    "importName": "adafruit_mcp3421"
+  },
+  "i2c": {
+    "addresses": [
+      104
+    ],
+    "defaultAddress": 104,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "raw",
+      "displayName": "ADC Reading",
+      "unit": "",
+      "range": {
+        "min": 0,
+        "max": 65535
+      },
+      "defaultValue": 0,
+      "defaultPeriod": 0.03
+    }
+  ],
+  "visual": {
+    "icon": "chip",
+    "color": "#95a5a6",
+    "widget": "slider"
+  }
+}

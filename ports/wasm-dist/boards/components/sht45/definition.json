@@ -1,0 +1,60 @@
+{
+  "componentName": "sht45",
+  "displayName": "SHT45",
+  "vendor": "Sensirion",
+  "type": "i2c",
+  "productURL": "https://www.adafruit.com/product/5665",
+  "documentationURL": "https://learn.adafruit.com/adafruit-sht40-temperature-humidity-sensor",
+  "driver": {
+    "package": "adafruit_sht4x",
+    "repo": "https://github.com/adafruit/adafruit_circuitpython_sht4x",
+    "importName": "adafruit_sht4x"
+  },
+  "i2c": {
+    "addresses": [
+      68
+    ],
+    "defaultAddress": 68,
+    "registers": []
+  },
+  "sensors": [
+    {
+      "type": "ambient-temp",
+      "displayName": "Temperature Sensor (\u00b0C)",
+      "unit": "\u00b0C",
+      "range": {
+        "min": -40,
+        "max": 85
+      },
+      "defaultValue": 22,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "ambient-temp-fahrenheit",
+      "displayName": "Temperature Sensor (\u00b0F)",
+      "unit": "\u00b0F",
+      "range": {
+        "min": -40,
+        "max": 185
+      },
+      "defaultValue": 72,
+      "defaultPeriod": 0.9
+    },
+    {
+      "type": "humidity",
+      "displayName": "Humidity Sensor",
+      "unit": "%RH",
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "defaultValue": 45,
+      "defaultPeriod": 0.9
+    }
+  ],
+  "visual": {
+    "icon": "thermometer",
+    "color": "#e74c3c",
+    "widget": "slider"
+  }
+}
