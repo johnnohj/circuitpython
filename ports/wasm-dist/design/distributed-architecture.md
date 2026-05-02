@@ -242,3 +242,106 @@ This means the same Python driver code works for:
 
 The sync bus is the universal transport.  The endpoints determine
 the semantics.
+
+## Data routing (current implementation)
+
+Two distinct paths serve different consumers:
+
+### Rendering path (binary, 60fps, direct)
+
+```
+VM port_mem → Worker reads ring/slots → postMessage(packet) →
+  main thread → postMessage → iframe → SDL2 render
+```
+
+Carries: serial_tx bytes, GPIO slot snapshots, NeoPixel slab,
+RGB565 framebuffer, cursor info.  Binary data, copied per frame.
+The iframe renders without interpreting semantics — it just paints
+GPIO dots, LED colors, and pixel data.
+
+### Protocol path (JSON, event-driven, fd 4)
+
+```
+Python wrapper → fd 4 (os.write) → WASI onProtocol callback →
+  Worker buffers → postMessage(packet.protocol) →
+  main thread → sync bus → external consumers
+```
+
+Carries: pin_config, pin_event, pixels_write, i2c_event, etc.
+Structured JSON messages using Wippersnapper Protobuf field names.
+Event-driven — only emitted when state changes, not every frame.
+
+fd 4 bypasses the serial path entirely:
+- fd 1 (serial) → serial_write_substring → displayio terminal +
+  serial_tx ring → user sees print output
+- fd 4 (protocol) → WASI fd_write → JS callback → protocol
+  channel → invisible to user, visible to external consumers
+
+### Why two paths
+
+The rendering path is **fast and dumb** — binary copies at 60fps.
+The protocol path is **slow and smart** — semantic JSON on change.
+They serve different consumers:
+
+- iframe renderer: needs raw bytes fast (rendering path)
+- sensor panels: need to know "which pin was configured?" (protocol)
+- WebSerial bridge: needs to forward I2C transactions (protocol)
+- cloud feeds: need structured data for MQTT topics (protocol)
+- debug inspector: needs to see all protocol traffic (protocol)
+
+### The sync bus role
+
+The sync bus is NOT on the rendering hot path.  The Worker posts
+packets directly to the main thread, which forwards rendering data
+to the iframe.  The sync bus is the **coordination layer** for
+external consumers:
+
+```
+sync bus
+├── sensor panels write simulated readings
+├── WebSerial bridge reads/writes real hardware
+├── cloud feeds provide remote sensor data
+├── component library responds to I2C register reads
+└── protocol inspector displays traffic
+```
+
+The main thread reads protocol messages from the Worker and
+routes them through the sync bus.  External consumers attach
+to the sync bus and respond.  The VM doesn't know the difference
+between a simulated BME280 slider and a real BME280 over WebSerial.
+
+### weBlinka as coordination layer
+
+`weBlinka` is the name for the compatibility/coordination layer
+that the sync bus enables.  It is the JS-side logic that:
+
+1. Manages the sync bus instance
+2. Attaches sensor panels, external bridges, cloud feeds
+3. Routes protocol messages to the appropriate responder
+4. Provides a uniform API regardless of hardware source
+
+Like JACDAC (added as a fourth bus alongside I2C/SPI/UART),
+weBlinka operates "under the hood" of the standard bus interfaces.
+The VM thinks it's doing I2C — weBlinka translates to protocol
+messages.  The VM thinks it's reading a real sensor — weBlinka
+provides data from a slider, a WebSerial device, or an MQTT feed.
+
+### Bus fidelity
+
+We do NOT simulate:
+- I2C clock timing, stretching, arbitration
+- SPI clock phase, polarity, bit ordering
+- UART baud rate timing, parity, flow control
+- Electrical characteristics, voltage levels
+
+We DO simulate:
+- Transaction semantics (address, register, read/write, data)
+- Device presence (which addresses respond on which bus)
+- Register maps (which registers exist, their default values)
+- Data encoding (how temperature becomes raw register bytes)
+
+This level of fidelity matches what Python drivers actually use.
+`adafruit_bme280` reads register 0xFA and decodes 3 bytes as
+temperature.  It doesn't care about clock speed or pull-up
+resistance.  We provide the register bytes; the driver does the
+math.
