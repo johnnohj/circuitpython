@@ -245,70 +245,56 @@ the semantics.
 
 ## Data routing (current implementation)
 
-Two distinct paths serve different consumers:
+Two distinct paths:
 
-### Rendering path (binary, 60fps, direct)
-
-```
-VM port_mem → Worker reads ring/slots → postMessage(packet) →
-  main thread → postMessage → iframe → SDL2 render
-```
-
-Carries: serial_tx bytes, GPIO slot snapshots, NeoPixel slab,
-RGB565 framebuffer, cursor info.  Binary data, copied per frame.
-The iframe renders without interpreting semantics — it just paints
-GPIO dots, LED colors, and pixel data.
-
-### Protocol path (JSON, event-driven, fd 4)
+### Direct path: framebuffer only
 
 ```
-Python wrapper → fd 4 (os.write) → WASI onProtocol callback →
-  Worker buffers → postMessage(packet.protocol) →
-  main thread → sync bus → external consumers
+VM displayio → framebuffer in port_mem → Worker copies if dirty →
+  postMessage (Transferable) → main thread → RGB565→RGBA → canvas
 ```
 
-Carries: pin_config, pin_event, pixels_write, i2c_event, etc.
-Structured JSON messages using Wippersnapper Protobuf field names.
-Event-driven — only emitted when state changes, not every frame.
+The framebuffer is the only direct-connect path.  It's pure pixels
+(345KB per frame at 480×360), has exactly one consumer (the canvas),
+and no external bridge or sensor panel cares about raw RGB565 data.
+Routing it through the sync bus would add a copy for no benefit.
 
-fd 4 bypasses the serial path entirely:
+### Broker path: everything else
+
+All other data flows through the sync bus broker:
+
+```
+VM port_mem → Worker reads → postMessage → main thread →
+  sync bus regions → consumers (iframe, serial panel, sensor
+  panels, WebSerial bridge, cloud feeds, protocol inspector)
+```
+
+- **Serial TX/RX** → bus rings → serial panel reads, WebSerial
+  bridge may also forward
+- **GPIO** → bus slots → iframe reads for rendering, sensor panels
+  see pin state, WebSerial bridge forwards to real hardware
+- **NeoPixel** → bus slab → iframe reads for LED rendering,
+  WebSerial bridge may forward to real LEDs
+- **Analog** → bus slots → sensor panels write, VM reads
+- **Protocol messages** → fd 4 → Worker → bus → protocol inspector,
+  external bridges, cloud feeds
+
+The broker provides:
+- **Dirty tracking** — consumers skip work when nothing changed
+- **Multiple consumers** — GPIO data serves the iframe AND the
+  protocol inspector AND a WebSerial bridge simultaneously
+- **Attachment point** — new consumers (cloud feed, BLE bridge)
+  attach to the bus without modifying the Worker or iframe
+- **Coordination** — sensor panels write, the VM reads, the iframe
+  renders, all through the same bus regions
+
+### fd 4 protocol channel
+
+Protocol messages bypass serial entirely:
 - fd 1 (serial) → serial_write_substring → displayio terminal +
   serial_tx ring → user sees print output
 - fd 4 (protocol) → WASI fd_write → JS callback → protocol
   channel → invisible to user, visible to external consumers
-
-### Why two paths
-
-The rendering path is **fast and dumb** — binary copies at 60fps.
-The protocol path is **slow and smart** — semantic JSON on change.
-They serve different consumers:
-
-- iframe renderer: needs raw bytes fast (rendering path)
-- sensor panels: need to know "which pin was configured?" (protocol)
-- WebSerial bridge: needs to forward I2C transactions (protocol)
-- cloud feeds: need structured data for MQTT topics (protocol)
-- debug inspector: needs to see all protocol traffic (protocol)
-
-### The sync bus role
-
-The sync bus is NOT on the rendering hot path.  The Worker posts
-packets directly to the main thread, which forwards rendering data
-to the iframe.  The sync bus is the **coordination layer** for
-external consumers:
-
-```
-sync bus
-├── sensor panels write simulated readings
-├── WebSerial bridge reads/writes real hardware
-├── cloud feeds provide remote sensor data
-├── component library responds to I2C register reads
-└── protocol inspector displays traffic
-```
-
-The main thread reads protocol messages from the Worker and
-routes them through the sync bus.  External consumers attach
-to the sync bus and respond.  The VM doesn't know the difference
-between a simulated BME280 slider and a real BME280 over WebSerial.
 
 ### weBlinka as coordination layer
 
