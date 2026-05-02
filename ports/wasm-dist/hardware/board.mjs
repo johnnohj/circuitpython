@@ -5,9 +5,10 @@
  *   - Definition.json parsing → C layout calls
  *   - State updates from parent (GPIO, NeoPixel, framebuffer)
  *   - Mouse interaction → hit test → parent notifications
- *   - Message protocol (extensible toward Wippersnapper Protobuf)
+ *   - Message protocol aligned with Wippersnapper Protobuf
  *
  * Runs inside an <iframe>. Parent sends state, receives interactions.
+ * Interaction events use WS-aligned signal types (pin_event).
  */
 
 let Module = null;
@@ -152,10 +153,13 @@ function setupMouse(el) {
             Module._board_set_pressed(pin, 1);
             const timer = debounceTimers.get(pin);
             if (timer) clearTimeout(timer);
+            // WS-aligned: pin_event with value=0 (pressed, pull-up convention)
             postToParent({
-                type: 'press', pin,
-                name: Module.UTF8ToString(Module._board_get_pin_name(pin)),
-                value: 0, x, y,
+                signal: 'pin_event',
+                pin_name: Module.UTF8ToString(Module._board_get_pin_name(pin)),
+                pin_id: pin,
+                pin_value: 0,
+                x, y,
             });
         }
     });
@@ -167,10 +171,13 @@ function setupMouse(el) {
         for (let i = 0; i < 64; i++) Module._board_set_pressed(i, 0);
         if (pin >= 0) {
             debounceTimers.set(pin, setTimeout(() => {
+                // WS-aligned: pin_event with value=1 (released)
                 postToParent({
-                    type: 'release', pin,
-                    name: Module.UTF8ToString(Module._board_get_pin_name(pin)),
-                    value: 1, x, y,
+                    signal: 'pin_event',
+                    pin_name: Module.UTF8ToString(Module._board_get_pin_name(pin)),
+                    pin_id: pin,
+                    pin_value: 1,
+                    x, y,
                 });
                 debounceTimers.delete(pin);
             }, DEBOUNCE_MS));
@@ -205,17 +212,23 @@ window.addEventListener('message', (e) => {
     const msg = e.data;
     if (!msg || msg.source === 'hardware') return;
 
-    switch (msg.type) {
+    // Accept both WS signal-based and legacy type-based messages
+    const key = msg.signal || msg.type;
+    switch (key) {
         case 'gpio':
+        case 'pin_config':  // bulk GPIO state update
             if (msg.data) updateGpio(new Uint8Array(msg.data));
             break;
         case 'neopixel':
+        case 'pixels_write':
             if (msg.data) updateNeopixel(new Uint8Array(msg.data));
             break;
         case 'framebuffer':
+        case 'display_write':
             if (msg.data) updateFramebuffer(new Uint8Array(msg.data));
             break;
         case 'reset':
+        case 'board_reset':
             resetState();
             break;
     }

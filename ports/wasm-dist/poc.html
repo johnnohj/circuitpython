@@ -199,14 +199,16 @@ window.addEventListener('message', (e) => {
     const msg = e.data;
     if (!msg || msg.source !== 'hardware') return;
 
-    switch (msg.type) {
+    // Handle both WS-aligned signals and legacy types
+    const key = msg.signal || msg.type;
+    switch (key) {
         case 'ready':
             boardFrameReady = true;
             break;
 
         case 'hover':
-            if (msg.pin !== null && msg.name) {
-                $tooltip.textContent = msg.name;
+            if (msg.pin !== null && (msg.name || msg.pin_name)) {
+                $tooltip.textContent = msg.pin_name || msg.name;
                 $tooltip.style.display = 'block';
                 const rect = $frame.getBoundingClientRect();
                 $tooltip.style.left = (rect.left + msg.x + 15) + 'px';
@@ -216,16 +218,19 @@ window.addEventListener('message', (e) => {
             }
             break;
 
-        case 'press':
-            if (cp && msg.pin !== undefined) {
-                cp.setInput(msg.pin, 0);
+        // WS-aligned: pin_event carries both press and release
+        case 'pin_event':
+            if (cp && msg.pin_id !== undefined) {
+                cp.setInput(msg.pin_id, msg.pin_value);
             }
             break;
 
+        // Legacy compat
+        case 'press':
+            if (cp && msg.pin !== undefined) cp.setInput(msg.pin, 0);
+            break;
         case 'release':
-            if (cp && msg.pin !== undefined) {
-                cp.setInput(msg.pin, 1);
-            }
+            if (cp && msg.pin !== undefined) cp.setInput(msg.pin, 1);
             break;
     }
 });
