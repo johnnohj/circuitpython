@@ -109,7 +109,9 @@ export class SensorPanel {
             defaultValue: opts.defaultValue ?? 0,
             defaultPeriod: 2,
         };
-        const ctrl = new SensorControl(sensorDef, this._nextSlot++);
+        // Use pin ID as slot index — matches common-hal analog_slot(pin->number)
+        const slotIndex = opts.pinId != null ? opts.pinId : this._nextSlot++;
+        const ctrl = new SensorControl(sensorDef, slotIndex);
         ctrl.el = this._buildControl(ctrl);
         this._container.appendChild(ctrl.el);
         this._sensors.push(ctrl);

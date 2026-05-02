@@ -505,6 +505,7 @@ async function init() {
             if (pin.capabilities?.analog_in) {
                 sensorPanel.addAnalogPin(pin.name, {
                     min: 0, max: 3.3, unit: 'V', defaultValue: 0,
+                    pinId: pin.id,  // use pin number as analog slot index
                 });
             }
         }
