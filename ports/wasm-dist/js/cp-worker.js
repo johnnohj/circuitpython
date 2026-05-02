@@ -240,8 +240,22 @@ function execFile(path) {
 
 function setGpioInput(pin, value) {
     const gpioReg = regions['/hal/gpio'];
-    if (gpioReg) {
-        new Uint8Array(vm.memory.buffer)[gpioReg.ptr + pin * 12 + 2] = value ? 1 : 0;
+    if (!gpioReg) return;
+    const buf = new Uint8Array(vm.memory.buffer);
+    const base = gpioReg.ptr + pin * 12;
+
+    // Write current value (offset 2 = GPIO_VALUE)
+    buf[base + 2] = value ? 1 : 0;
+
+    // Set JS_WROTE flag (offset 5 = GPIO_FLAGS)
+    buf[base + 5] |= 0x01;  // GF_JS_WROTE
+
+    // On press (value=0 for active-low), latch so the VM sees the
+    // press even if release arrives before the VM polls.
+    // The C common-hal checks GF_LATCHED first and clears it after reading.
+    if (!value) {
+        buf[base + 7] = 0;      // GPIO_LATCHED = pressed value (0)
+        buf[base + 5] |= 0x08;  // GF_LATCHED flag
     }
 }
 
