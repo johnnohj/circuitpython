@@ -99,26 +99,8 @@ button:hover { background: #555; }
       <div id="component-results" style="max-height:120px; overflow-y:auto;"></div>
     </div>
 
-    <textarea id="editor"># Button + NeoPixel demo
-import board, digitalio, neopixel, time
-
-pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, auto_write=True)
-btn = digitalio.DigitalInOut(board.BUTTON_A)
-btn.direction = digitalio.Direction.INPUT
-btn.pull = digitalio.Pull.UP
-
-color_idx = 0
-COLORS = [(255,0,0),(255,127,0),(255,255,0),
-           (0,255,0),(0,0,255),(75,0,130),(148,0,211)]
-
-while True:
-    if not btn.value:
-        pixels[0] = COLORS[color_idx]
-        color_idx = (color_idx + 1) % len(COLORS)
-        while not btn.value:
-            time.sleep(0.05)
-    time.sleep(0.1)
-</textarea>
+    <div id="sample-tabs" style="display:flex; gap:2px; margin-bottom:4px;"></div>
+    <textarea id="editor"></textarea>
   </div>
 </div>
 
@@ -146,6 +128,188 @@ let boardFrameReady = false;
 let replActive = false;
 let sensorPanel = null;
 let wsCatalog = null;
+let currentTab = null;
+
+// ── Code samples ──
+
+const SAMPLES = [
+    {
+        id: 'my-code',
+        label: 'My Code',
+        code: `\
+# Write your code here!
+import board, time
+
+print("Hello from CircuitPython!")
+`,
+    },
+    {
+        id: 'blink',
+        label: 'Blink',
+        code: `\
+# Blink a NeoPixel!
+#   BUTTON_A → cycle color
+#   BUTTON_B → move to next pixel
+import board, digitalio, neopixel, time
+
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, auto_write=True)
+
+btn_a = digitalio.DigitalInOut(board.BUTTON_A)
+btn_a.direction = digitalio.Direction.INPUT
+btn_a.pull = digitalio.Pull.UP
+
+btn_b = digitalio.DigitalInOut(board.BUTTON_B)
+btn_b.direction = digitalio.Direction.INPUT
+btn_b.pull = digitalio.Pull.UP
+
+COLORS = [
+    ("Red",    (255, 0,   0)),
+    ("Orange", (255, 127, 0)),
+    ("Yellow", (255, 255, 0)),
+    ("Green",  (0,   255, 0)),
+    ("Blue",   (0,   0,   255)),
+    ("Indigo", (75,  0,   130)),
+    ("Violet", (148, 0,   211)),
+]
+
+pos = 0
+color_idx = 0
+prev_a = True
+prev_b = True
+
+while True:
+    a_pressed = not btn_a.value
+    if a_pressed and prev_a:
+        color_idx = (color_idx + 1) % len(COLORS)
+        print("Color:", COLORS[color_idx][0])
+    prev_a = not a_pressed
+
+    b_pressed = not btn_b.value
+    if b_pressed and prev_b:
+        pos = (pos + 1) % len(pixels)
+        print("Pixel:", pos)
+    prev_b = not b_pressed
+
+    pixels.fill((0, 0, 0))
+    pixels[pos] = COLORS[color_idx][1]
+    time.sleep(0.3)
+    pixels[pos] = (0, 0, 0)
+    time.sleep(0.3)
+`,
+    },
+    {
+        id: 'sensors',
+        label: 'Sensors',
+        code: `\
+# Sensor Demo — use the A0 slider or waveform!
+import time, board, analogio, digitalio
+import neopixel_write
+from rainbowio import colorwheel
+
+sensor = analogio.AnalogIn(board.A0)
+np_pin = digitalio.DigitalInOut(board.NEOPIXEL)
+np_pin.direction = digitalio.Direction.OUTPUT
+
+NUM_PIXELS = 10
+buf = bytearray(NUM_PIXELS * 3)
+hue = 0
+
+while True:
+    brightness = sensor.value / 65535
+    for i in range(NUM_PIXELS):
+        c = colorwheel((hue + i * 25) & 255)
+        buf[i*3]   = int(((c >> 8) & 0xFF) * brightness)
+        buf[i*3+1] = int(((c >> 16) & 0xFF) * brightness)
+        buf[i*3+2] = int((c & 0xFF) * brightness)
+    neopixel_write.neopixel_write(np_pin, buf)
+    hue = (hue + 1) & 255
+    time.sleep(0.02)
+`,
+    },
+    {
+        id: 'display',
+        label: 'Display',
+        code: `\
+# Display Demo — text + shapes on the framebuffer
+import board, displayio, time
+
+display = board.DISPLAY
+group = displayio.Group()
+
+pal = displayio.Palette(4)
+pal[0] = 0x000000
+pal[1] = 0x89b4fa  # blue
+pal[2] = 0xa6e3a1  # green
+pal[3] = 0xf38ba8  # pink
+
+for i, color_idx in enumerate([1, 2, 3]):
+    bmp = displayio.Bitmap(60, 40, 4)
+    for x in range(60):
+        for y in range(40):
+            bmp[x, y] = color_idx
+    sprite = displayio.TileGrid(bmp, pixel_shader=pal, x=30 + i*70, y=20 + i*50)
+    group.append(sprite)
+
+display.root_group = group
+
+dx = [2, -1, 1]
+while True:
+    for i, sprite in enumerate(group):
+        sprite.x += dx[i]
+        if sprite.x <= 0 or sprite.x >= display.width - 60:
+            dx[i] = -dx[i]
+    time.sleep(0.03)
+`,
+    },
+    {
+        id: 'io',
+        label: 'Digital I/O',
+        code: `\
+# Digital I/O — read buttons, print state
+import board, digitalio, time
+
+btn_a = digitalio.DigitalInOut(board.BUTTON_A)
+btn_a.direction = digitalio.Direction.INPUT
+btn_a.pull = digitalio.Pull.UP
+
+btn_b = digitalio.DigitalInOut(board.BUTTON_B)
+btn_b.direction = digitalio.Direction.INPUT
+btn_b.pull = digitalio.Pull.UP
+
+while True:
+    if not btn_a.value:
+        print("Button A pressed!")
+    if not btn_b.value:
+        print("Button B pressed!")
+    time.sleep(0.1)
+`,
+    },
+];
+
+// ── Sample tab UI ──
+
+function initSampleTabs() {
+    const $tabs = document.getElementById('sample-tabs');
+    for (const sample of SAMPLES) {
+        const btn = document.createElement('button');
+        btn.textContent = sample.label;
+        btn.style.cssText = 'padding:3px 8px; font-size:11px; cursor:pointer; border:1px solid #555; background:#333; color:#ccc; border-radius:3px 3px 0 0;';
+        btn.onclick = () => switchTab(sample.id);
+        btn.dataset.id = sample.id;
+        $tabs.appendChild(btn);
+    }
+    switchTab('my-code');
+}
+
+function switchTab(id) {
+    currentTab = id;
+    const sample = SAMPLES.find(s => s.id === id);
+    if (sample) $editor.value = sample.code;
+    for (const btn of document.querySelectorAll('#sample-tabs button')) {
+        btn.style.background = btn.dataset.id === id ? '#555' : '#333';
+        btn.style.color = btn.dataset.id === id ? '#fff' : '#ccc';
+    }
+}
 
 // ── Display canvas (RGB565 → RGBA) ──
 const $display = document.getElementById('display');
@@ -363,6 +527,7 @@ async function init() {
             console.log('WS catalog not available:', e.message);
         }
 
+        initSampleTabs();
         $status.textContent = 'Ready — VM in Worker | sync bus broker | board in iframe';
     } catch (err) {
         $status.textContent = 'Error: ' + err.message;
