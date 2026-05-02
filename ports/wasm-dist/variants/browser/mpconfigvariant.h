@@ -57,9 +57,16 @@
 #define CIRCUITPY_STATUS_BAR        (1)
 
 // ── Display utilities (pure shared-module, no common-hal) ──
-// ── Rotary encoder ──
+// ── Input modules ──
 #undef CIRCUITPY_ROTARYIO
 #define CIRCUITPY_ROTARYIO          (1)
+#undef CIRCUITPY_COUNTIO
+#define CIRCUITPY_COUNTIO           (1)
+#undef CIRCUITPY_KEYPAD
+#define CIRCUITPY_KEYPAD            (1)
+#undef CIRCUITPY_TOUCHIO
+#define CIRCUITPY_TOUCHIO           (1)
+#define CIRCUITPY_TOUCHIO_USE_NATIVE (0)
 
 // ── Display utilities (pure shared-module, no common-hal) ──
 #undef CIRCUITPY_VECTORIO

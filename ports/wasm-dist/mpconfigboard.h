@@ -64,7 +64,9 @@
 #define CIRCUITPY_AUDIOPWMIO        (0)
 #define CIRCUITPY_BITBANGIO         (0)
 #define CIRCUITPY_BLEIO_HCI         (0)
+#ifndef CIRCUITPY_COUNTIO
 #define CIRCUITPY_COUNTIO           (0)
+#endif
 #define CIRCUITPY_FREQUENCYIO       (0)
 #define CIRCUITPY_I2CTARGET         (0)
 #ifndef CIRCUITPY_KEYPAD
