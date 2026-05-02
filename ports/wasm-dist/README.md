@@ -1,4 +1,4 @@
-# CircuitPython-compatible WASM Port, mkIII
+# CircuitPython-compatible WASM Port, mkIV
 
 **The following discusses an independent project that is not an official
 CircuitPython port. Though it aspires to provide true port quality, it is
@@ -15,6 +15,9 @@ make VARIANT=standard
 
 # Build browser variant (display + board UI)
 make VARIANT=browser
+
+#Build ws-worker variant (web worker + Wippersnapper)
+make VARIANT=ws-worker
 
 # Run tests
 make test

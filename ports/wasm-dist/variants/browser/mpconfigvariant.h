@@ -57,6 +57,11 @@
 #define CIRCUITPY_STATUS_BAR        (1)
 
 // ── Display utilities (pure shared-module, no common-hal) ──
+// ── Rotary encoder ──
+#undef CIRCUITPY_ROTARYIO
+#define CIRCUITPY_ROTARYIO          (1)
+
+// ── Display utilities (pure shared-module, no common-hal) ──
 #undef CIRCUITPY_VECTORIO
 #define CIRCUITPY_VECTORIO          (1)
 #undef CIRCUITPY_BITMAPTOOLS
