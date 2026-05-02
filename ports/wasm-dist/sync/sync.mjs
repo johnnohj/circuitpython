@@ -48,7 +48,7 @@ export class SyncBus {
         this._shared = options.shared ?? canShare;
 
         const memoryDescriptor = {
-            initial: 2,     // 128KB — bus struct + 60KB arena + headroom
+            initial: 10,    // 640KB — bus struct + 512KB arena
             maximum: 16,    // grow up to 1MB if needed
         };
         if (this._shared) memoryDescriptor.shared = true;

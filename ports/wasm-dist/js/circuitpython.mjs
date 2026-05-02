@@ -1,34 +1,37 @@
 /**
  * circuitpython.mjs — main thread API for the three-piece architecture
  *
- * The VM (circuitpython.wasm) runs in a Web Worker.
- * hardware.wasm runs on the main thread (UI reads it directly).
- * The Worker posts outbound packets (serial, gpio, neopixel) each frame.
- * The main thread applies them to hardware.wasm and renders.
+ * The sync bus is the central broker.  All state flows through named regions:
+ *   - VM Worker writes: serial_tx, gpio (outputs), neopixel, framebuffer
+ *   - Parent writes: serial_rx (keystrokes), gpio (button presses)
+ *   - Hardware iframe reads: gpio, neopixel, framebuffer
+ *
+ * No ad-hoc state — everything is a bus region with dirty tracking.
  */
 
-import { Display } from './display.mjs';
+import { SyncBus } from '../sync/sync.mjs';
 
-const GPIO_SLOT = 12;
+// Region sizes (must match VM's port_memory.h)
+const GPIO_SLOTS = 32;
+const GPIO_SLOT_SIZE = 12;
+const GPIO_SIZE = GPIO_SLOTS * GPIO_SLOT_SIZE;
+const NEOPIXEL_REGION_SIZE = 4 + 64 * 4;  // header + 64 pixels × 4 bytes
+const SERIAL_RING_SIZE = 4096;
+const FB_MAX_SIZE = 480 * 360 * 2;  // RGB565
 
 export class CircuitPython {
     constructor() {
-        this._hw = null;        // hardware.wasm instance (main thread)
+        this._bus = null;       // sync bus (the broker)
+        this._busPort = null;   // our port into the bus
         this._worker = null;    // Web Worker running vm.wasm
-        this._display = null;
-        this._canvas = null;
         this._onStdout = null;
         this._onStderr = null;
         this._onFrame = null;
         this._onReady = null;
         this._raf = null;
-
-        // hardware.wasm addresses
-        this._hwGpioAddr = 0;
-        this._hwNeopixelAddr = 0;
-
-        // VM display info (received from Worker)
-        this._vmDisplay = null;
+        this._fbWidth = 0;
+        this._fbHeight = 0;
+        this._cursor = null;  // { x, y, sx, sy, tly, htiles, gw, gh, scale }
     }
 
     static async create(options = {}) {
@@ -38,22 +41,26 @@ export class CircuitPython {
     }
 
     async _init(options) {
-        // ── 1. Load hardware.wasm (main thread) ──
-        const hwBytes = await fetch(options.hardwareUrl || 'hardware/hardware.wasm')
-            .then(r => r.arrayBuffer());
-        const hwModule = await WebAssembly.compile(hwBytes);
-        const hwInstance = await WebAssembly.instantiate(hwModule, {});
-        this._hw = hwInstance.exports;
-        this._hwGpioAddr = this._hw.hw_gpio_addr();
-        this._hwNeopixelAddr = this._hw.hw_neopixel_addr();
+        // ── 1. Create sync bus (the broker — no hardware.wasm needed) ──
+        this._bus = await SyncBus.create({
+            wasmUrl: options.syncUrl
+                || new URL('../sync/sync.wasm', import.meta.url).href,
+            shared: false,  // postMessage transport for now
+        });
 
-        // ── 2. Callbacks + display ──
+        // Register all regions
+        this._bus.region('serial_tx', { size: SERIAL_RING_SIZE, type: 'ring' });
+        this._bus.region('serial_rx', { size: SERIAL_RING_SIZE, type: 'ring' });
+        this._bus.region('gpio',      { size: GPIO_SIZE, type: 'slots', slotSize: GPIO_SLOT_SIZE });
+        this._bus.region('neopixel',  { size: NEOPIXEL_REGION_SIZE, type: 'slab' });
+        this._bus.region('framebuffer', { size: FB_MAX_SIZE, type: 'slab' });
+
+        this._busPort = this._bus.port();
+
+        // ── 2. Callbacks ──
         this._onStdout = options.onStdout || null;
         this._onStderr = options.onStderr || null;
         this._onFrame = options.onFrame || null;
-        this._canvas = options.canvas || null;
-        this._ctx2d = this._canvas ? this._canvas.getContext('2d') : null;
-        this._imageData = null;
 
         // ── 3. Start Worker with VM ──
         const workerUrl = options.workerUrl
@@ -62,7 +69,6 @@ export class CircuitPython {
         this._worker.onmessage = (e) => this._handleWorkerMessage(e.data);
         this._worker.onerror = (e) => console.error('Worker error:', e);
 
-        // Send init message
         const readyPromise = new Promise(resolve => { this._onReady = resolve; });
         this._worker.postMessage({
             type: 'init',
@@ -70,7 +76,6 @@ export class CircuitPython {
             files: options.files || {},
         });
 
-        // Wait for Worker to finish init
         await readyPromise;
 
         // ── 4. Start render loop ──
@@ -78,6 +83,12 @@ export class CircuitPython {
     }
 
     // ── Public API ──
+
+    get bus() { return this._bus; }
+    get port() { return this._busPort; }
+    get fbWidth() { return this._fbWidth; }
+    get fbHeight() { return this._fbHeight; }
+    get cursor() { return this._cursor; }
 
     execFile(path) {
         this._worker.postMessage({ type: 'exec_file', path });
@@ -87,39 +98,36 @@ export class CircuitPython {
         this._worker.postMessage({ type: 'start_repl' });
     }
 
-    ctrlC() {
-        this._worker.postMessage({ type: 'ctrl_c' });
-    }
-
-    ctrlD() {
-        this._worker.postMessage({ type: 'ctrl_d' });
-    }
+    ctrlC() { this._worker.postMessage({ type: 'ctrl_c' }); }
+    ctrlD() { this._worker.postMessage({ type: 'ctrl_d' }); }
 
     pushSerial(byte) {
         this._worker.postMessage({ type: 'serial_push', byte });
     }
 
     setInput(pin, value) {
-        // Write to hardware.wasm (for UI rendering)
-        this._hw.hw_gpio_set_value(pin, value ? 1 : 0);
-        // Tell Worker to update vm.wasm's port_mem
+        // Write to GPIO slot on the bus
+        const slot = new Uint8Array(GPIO_SLOT_SIZE);
+        const existing = this._busPort.readSlot('gpio', pin);
+        slot.set(existing);
+        slot[2] = value ? 1 : 0;  // offset 2 = value
+        this._busPort.writeSlot('gpio', pin, slot);
+        // Also tell the Worker directly (low latency path)
         this._worker.postMessage({ type: 'gpio_input', pin, value: value ? 1 : 0 });
     }
 
     writeFile(path, content) {
         const data = typeof content === 'string'
             ? new TextEncoder().encode(content) : new Uint8Array(content);
-        this._worker.postMessage({ type: 'write_file', path, data: data.buffer }, [data.buffer]);
+        this._worker.postMessage(
+            { type: 'write_file', path, data: data.buffer },
+            [data.buffer]
+        );
     }
 
     stop() {
         this._worker.postMessage({ type: 'stop' });
     }
-
-    /** Read hardware state for external consumers */
-    get hwMemory() { return this._hw.memory; }
-    get hwGpioAddr() { return this._hwGpioAddr; }
-    get hwNeopixelAddr() { return this._hwNeopixelAddr; }
 
     // ── Worker message handler ──
 
@@ -128,62 +136,67 @@ export class CircuitPython {
             case 'ready':
                 if (this._onReady) this._onReady();
                 break;
-
             case 'frame':
-                this._applyPacket(msg.packet);
+                this._applyPacketToBus(msg.packet);
                 break;
-
             case 'stderr':
                 if (this._onStderr) this._onStderr(msg.text);
                 break;
         }
     }
 
-    // ── Apply outbound packet from Worker ──
+    // ── Apply Worker outbound packet to sync bus ──
 
-    _applyPacket(packet) {
-        // Serial TX → display
-        if (packet.serial && packet.serial.length > 0 && this._onStdout) {
-            this._onStdout(String.fromCharCode(...packet.serial));
+    _applyPacketToBus(packet) {
+        // Serial TX → bus ring
+        if (packet.serial && packet.serial.length > 0) {
+            this._busPort.push('serial_tx', new Uint8Array(packet.serial));
         }
 
-        // GPIO → hardware.wasm
+        // GPIO → bus slots
         if (packet.gpio) {
-            new Uint8Array(this._hw.memory.buffer).set(packet.gpio, this._hwGpioAddr);
+            const data = new Uint8Array(packet.gpio);
+            for (let i = 0; i < GPIO_SLOTS; i++) {
+                this._busPort.writeSlot('gpio', i,
+                    data.subarray(i * GPIO_SLOT_SIZE, (i + 1) * GPIO_SLOT_SIZE));
+            }
         }
 
-        // NeoPixel → hardware.wasm
+        // NeoPixel → bus slab
         if (packet.neopixel) {
-            new Uint8Array(this._hw.memory.buffer).set(packet.neopixel, this._hwNeopixelAddr);
+            this._busPort.writeSlab('neopixel', new Uint8Array(packet.neopixel));
         }
 
-        // Framebuffer → canvas (RGB565 → RGBA)
-        if (packet.framebuffer && this._ctx2d) {
-            const w = packet.fbWidth;
-            const h = packet.fbHeight;
-            if (!this._imageData || this._imageData.width !== w) {
-                this._imageData = this._ctx2d.createImageData(w, h);
-                this._canvas.width = w;
-                this._canvas.height = h;
-            }
-            const fb = new Uint16Array(packet.framebuffer.buffer);
-            const rgba = this._imageData.data;
-            for (let i = 0; i < fb.length; i++) {
-                const px = fb[i];
-                const j = i * 4;
-                rgba[j]     = ((px >> 11) & 0x1F) << 3;
-                rgba[j + 1] = ((px >> 5) & 0x3F) << 2;
-                rgba[j + 2] = (px & 0x1F) << 3;
-                rgba[j + 3] = 255;
-            }
-            this._ctx2d.putImageData(this._imageData, 0, 0);
+        // Framebuffer → bus slab (store dimensions too)
+        if (packet.framebuffer) {
+            this._fbWidth = packet.fbWidth || this._fbWidth;
+            this._fbHeight = packet.fbHeight || this._fbHeight;
+            this._busPort.writeSlab('framebuffer', new Uint8Array(packet.framebuffer));
+        }
+
+        // Cursor info
+        if (packet.cursor) {
+            const c = new DataView(new Uint8Array(packet.cursor).buffer);
+            this._cursor = {
+                x: c.getUint16(0, true), y: c.getUint16(2, true),
+                sx: c.getUint16(4, true), sy: c.getUint16(6, true),
+                tly: c.getUint16(8, true), htiles: c.getUint16(10, true),
+                gw: c.getUint16(12, true), gh: c.getUint16(14, true),
+                scale: c.getUint16(16, true) || 1,
+            };
         }
     }
 
-    // ── Render loop (main thread, independent of Worker) ──
+    // ── Render loop ──
 
     _loop() {
-        // Notify frame listeners (GPIO grid, NeoPixel strip, etc.)
+        // Drain serial from bus → display
+        const serialBytes = this._busPort.drain('serial_tx');
+        if (serialBytes.length > 0 && this._onStdout) {
+            this._onStdout(String.fromCharCode(...serialBytes));
+        }
+
+        // Notify frame listeners (they read from bus.port)
         if (this._onFrame) this._onFrame();
 
         this._raf = requestAnimationFrame(() => this._loop());

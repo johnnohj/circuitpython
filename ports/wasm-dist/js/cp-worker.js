@@ -121,6 +121,7 @@ async function init(msg) {
         fbWidth: vm.wasm_display_fb_width(),
         fbHeight: vm.wasm_display_fb_height(),
         frameCountAddr: vm.wasm_display_frame_count_addr(),
+        cursorAddr: vm.wasm_cursor_info_addr(),
     };
 
     // Start frame loop
@@ -197,6 +198,11 @@ function buildOutboundPacket() {
             packet.fbHeight = displayInfo.fbHeight;
             packet.transfers.push(fb.buffer);
         }
+    }
+
+    // Cursor info — always send (20 bytes, cheap)
+    if (displayInfo?.cursorAddr) {
+        packet.cursor = Array.from(new Uint8Array(mem, displayInfo.cursorAddr, 20));
     }
 
     return packet;

@@ -1,9 +1,0 @@
-EMCC ?= /home/jef/.local/bin/emsdk/upstream/emscripten/emcc
-
-renderer.js renderer.wasm: renderer.c
-	$(EMCC) renderer.c -o renderer.js -s USE_SDL=2 -s MODULARIZE=1 -s EXPORT_ES6=1 -s 'EXPORTED_FUNCTIONS=["_hw_renderer_init","_hw_add_pin","_hw_add_neopixel","_hw_init_display","_hw_set_pin_state","_hw_set_neopixel_rgb","_hw_update_framebuffer","_hw_render","_hw_hit_test","_hw_set_hover","_hw_set_pressed","_hw_get_pin_name","_hw_get_pin_category","_malloc","_free"]' -s 'EXPORTED_RUNTIME_METHODS=["UTF8ToString","HEAPU8"]' -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=4194304 -s NO_EXIT_RUNTIME=1 -O2
-
-clean:
-	rm -f renderer.js renderer.wasm
-
-.PHONY: clean

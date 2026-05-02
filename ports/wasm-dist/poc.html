@@ -32,10 +32,7 @@ button {
 }
 button:hover { background: #555; }
 
-#board-frame {
-    border: 1px solid #444;
-    background: #000;
-}
+#board-frame { border: 1px solid #444; background: #000; }
 
 #pin-tooltip {
     position: fixed;
@@ -44,16 +41,23 @@ button:hover { background: #555; }
     pointer-events: none; display: none; z-index: 100;
 }
 
+.bus-status {
+    font-size: 10px; color: #555; padding: 4px 0;
+}
+
 #status { font-size: 11px; color: #666; }
 </style>
 </head>
 <body>
 <h1>CircuitPython — Three-Piece Architecture PoC</h1>
 <div id="status">Loading...</div>
+<div class="bus-status" id="bus-status"></div>
 
-<div class="row" style="margin-top: 12px;">
-  <!-- Left: Board renderer (Emscripten iframe) + Serial -->
+<div class="row" style="margin-top: 8px;">
+  <!-- Left: Display + Board + Serial -->
   <div class="col">
+    <canvas id="display" width="320" height="240"
+            style="border: 1px solid #444; background: #000; image-rendering: pixelated;"></canvas>
     <iframe id="board-frame"
             src="hardware/board.html?def=../boards/wasm_browser/definition.json"
             width="420" height="240"
@@ -98,33 +102,95 @@ while True:
 <script type="module">
 import { CircuitPython } from './js/circuitpython.mjs';
 
-const $status   = document.getElementById('status');
-const $serial   = document.getElementById('serial');
-const $editor   = document.getElementById('editor');
-const $frame    = document.getElementById('board-frame');
-const $tooltip  = document.getElementById('pin-tooltip');
+const $status    = document.getElementById('status');
+const $busStatus = document.getElementById('bus-status');
+const $serial    = document.getElementById('serial');
+const $editor    = document.getElementById('editor');
+const $frame     = document.getElementById('board-frame');
+const $tooltip   = document.getElementById('pin-tooltip');
+
+const GPIO_SLOTS = 32;
+const GPIO_SLOT_SIZE = 12;
+const GPIO_SIZE = GPIO_SLOTS * GPIO_SLOT_SIZE;
+const NEOPIXEL_REGION_SIZE = 4 + 64 * 4;
 
 let cp = null;
 let boardFrameReady = false;
+let replActive = false;
 
-// ── Send state to iframe hardware renderer ──
+// ── Display canvas (RGB565 → RGBA) ──
+const $display = document.getElementById('display');
+const ctx2d = $display.getContext('2d');
+let imageData = null;
 
-function sendToBoard(type, data) {
+// ── Forward bus state to iframe ──
+
+function sendToBoard(type, data, width, height) {
     if (!boardFrameReady) return;
-    $frame.contentWindow.postMessage({ type, data }, '*');
+    $frame.contentWindow.postMessage({ type, data, width, height }, '*');
 }
 
-// Forward VM state to the iframe renderer each frame
 function onFrame() {
     if (!cp) return;
+    const port = cp.port;
 
-    // GPIO → iframe
-    const gpio = new Uint8Array(cp.hwMemory.buffer, cp.hwGpioAddr, 32 * 12);
-    sendToBoard('gpio', Array.from(gpio));
+    // GPIO — only send when changed
+    if (port.changed('gpio')) {
+        const gpio = port.read('gpio');
+        sendToBoard('gpio', Array.from(gpio));
+        port.acknowledge('gpio');
+    }
 
-    // NeoPixel → iframe
-    const neo = new Uint8Array(cp.hwMemory.buffer, cp.hwNeopixelAddr, 4 + 64 * 4);
-    sendToBoard('neopixel', Array.from(neo));
+    // NeoPixel — only send when changed
+    if (port.changed('neopixel')) {
+        const neo = port.read('neopixel');
+        sendToBoard('neopixel', Array.from(neo));
+        port.acknowledge('neopixel');
+    }
+
+    // Framebuffer — render to parent canvas (not iframe)
+    if (port.changed('framebuffer') && cp.fbWidth > 0) {
+        const w = cp.fbWidth, h = cp.fbHeight;
+        if (!imageData || imageData.width !== w) {
+            $display.width = w;
+            $display.height = h;
+            imageData = ctx2d.createImageData(w, h);
+        }
+        const raw = port.read('framebuffer');
+        const fb = new Uint16Array(raw.buffer, raw.byteOffset, w * h);
+        const rgba = imageData.data;
+        for (let i = 0; i < fb.length; i++) {
+            const px = fb[i];
+            const j = i * 4;
+            rgba[j]     = ((px >> 11) & 0x1F) << 3;
+            rgba[j + 1] = ((px >> 5) & 0x3F) << 2;
+            rgba[j + 2] = (px & 0x1F) << 3;
+            rgba[j + 3] = 255;
+        }
+        ctx2d.putImageData(imageData, 0, 0);
+        port.acknowledge('framebuffer');
+    }
+
+    // Cursor — solid white rectangle, REPL only
+    const cur = cp.cursor;
+    if (replActive && cur && cur.gw > 0 && cur.gh > 0 && cur.htiles > 0) {
+        const row = ((cur.y - cur.tly) % cur.htiles + cur.htiles) % cur.htiles;
+        const px = (cur.sx + cur.x * cur.gw) * cur.scale;
+        const py = (cur.sy + row * cur.gh) * cur.scale;
+        const cw = cur.gw * cur.scale;
+        const ch = cur.gh * cur.scale;
+        ctx2d.save();
+        ctx2d.globalCompositeOperation = 'difference';
+        ctx2d.fillStyle = '#ffffff';
+        ctx2d.fillRect(px, py, cw, ch);
+        ctx2d.restore();
+    }
+
+    // Bus status display
+    $busStatus.textContent =
+        `bus: gpio seq=${port._readSeq(cp.bus._regionInfo('gpio'))} ` +
+        `neo seq=${port._readSeq(cp.bus._regionInfo('neopixel'))} ` +
+        `fb seq=${port._readSeq(cp.bus._regionInfo('framebuffer'))}`;
 }
 
 // ── Receive messages from iframe ──
@@ -136,14 +202,12 @@ window.addEventListener('message', (e) => {
     switch (msg.type) {
         case 'ready':
             boardFrameReady = true;
-            $status.textContent = $status.textContent.replace('Loading', 'Board ready');
             break;
 
         case 'hover':
             if (msg.pin !== null && msg.name) {
                 $tooltip.textContent = msg.name;
                 $tooltip.style.display = 'block';
-                // Position near the iframe
                 const rect = $frame.getBoundingClientRect();
                 $tooltip.style.left = (rect.left + msg.x + 15) + 'px';
                 $tooltip.style.top = (rect.top + msg.y - 5) + 'px';
@@ -153,16 +217,14 @@ window.addEventListener('message', (e) => {
             break;
 
         case 'press':
-            // Board button pressed — forward to VM
             if (cp && msg.pin !== undefined) {
-                cp.setInput(msg.pin, 0);  // pressed = LOW
+                cp.setInput(msg.pin, 0);
             }
             break;
 
         case 'release':
-            // Board button released — forward to VM
             if (cp && msg.pin !== undefined) {
-                cp.setInput(msg.pin, 1);  // released = HIGH
+                cp.setInput(msg.pin, 1);
             }
             break;
     }
@@ -175,7 +237,7 @@ async function init() {
         const base = new URL('.', location.href).href;
         cp = await CircuitPython.create({
             wasmUrl: base + 'build-browser/circuitpython.wasm',
-            hardwareUrl: base + 'hardware/hardware.wasm',
+            syncUrl: base + 'sync/sync.wasm',
             onStdout: (text) => {
                 $serial.textContent += text;
                 $serial.scrollTop = $serial.scrollHeight;
@@ -187,7 +249,7 @@ async function init() {
             onFrame,
         });
 
-        $status.textContent = 'Ready — VM in Worker | board in iframe (Emscripten SDL2)';
+        $status.textContent = 'Ready — VM in Worker | sync bus broker | board in iframe';
     } catch (err) {
         $status.textContent = 'Error: ' + err.message;
         console.error(err);
@@ -198,6 +260,7 @@ async function init() {
 
 document.getElementById('btn-run').addEventListener('click', () => {
     if (!cp) return;
+    replActive = false;
     $serial.textContent = '';
     cp.writeFile('/CIRCUITPY/code.py', $editor.value);
     cp.execFile('/CIRCUITPY/code.py');
@@ -208,11 +271,22 @@ document.getElementById('btn-repl').addEventListener('click', () => {
     cp.stop();
     $serial.textContent = '';
     cp.startRepl();
+    replActive = true;
 });
 
 document.getElementById('btn-stop').addEventListener('click', () => {
     if (!cp) return;
     cp.stop();
+    replActive = false;
+    // Clear hardware state on the bus
+    const port = cp.port;
+    port.writeSlab('neopixel', new Uint8Array(NEOPIXEL_REGION_SIZE));
+    for (let i = 0; i < GPIO_SLOTS; i++) {
+        port.writeSlot('gpio', i, new Uint8Array(GPIO_SLOT_SIZE));
+    }
+    // Forward cleared state to iframe
+    sendToBoard('gpio', new Array(GPIO_SIZE).fill(0));
+    sendToBoard('neopixel', new Array(NEOPIXEL_REGION_SIZE).fill(0));
 });
 
 // ── Keyboard → serial ──

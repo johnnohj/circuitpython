@@ -44,7 +44,7 @@ static struct {
 
 // Data regions are allocated starting after the bus struct.
 // We reserve a large arena for dynamic allocation.
-#define ARENA_SIZE (60 * 1024)
+#define ARENA_SIZE (512 * 1024)
 static uint8_t arena[ARENA_SIZE];
 
 // ── Helpers ──
