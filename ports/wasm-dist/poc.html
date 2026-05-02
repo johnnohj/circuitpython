@@ -202,26 +202,22 @@ while True:
         label: 'Sensors',
         code: `\
 # Sensor Demo — use the A0 slider or waveform!
-import time, board, analogio, digitalio
-import neopixel_write
+import time, board, analogio, neopixel
 from rainbowio import colorwheel
 
 sensor = analogio.AnalogIn(board.A0)
-np_pin = digitalio.DigitalInOut(board.NEOPIXEL)
-np_pin.direction = digitalio.Direction.OUTPUT
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 10, auto_write=True)
 
-NUM_PIXELS = 10
-buf = bytearray(NUM_PIXELS * 3)
 hue = 0
 
 while True:
     brightness = sensor.value / 65535
-    for i in range(NUM_PIXELS):
+    for i in range(len(pixels)):
         c = colorwheel((hue + i * 25) & 255)
-        buf[i*3]   = int(((c >> 8) & 0xFF) * brightness)
-        buf[i*3+1] = int(((c >> 16) & 0xFF) * brightness)
-        buf[i*3+2] = int((c & 0xFF) * brightness)
-    neopixel_write.neopixel_write(np_pin, buf)
+        r = int(((c >> 16) & 0xFF) * brightness)
+        g = int(((c >> 8) & 0xFF) * brightness)
+        b = int((c & 0xFF) * brightness)
+        pixels[i] = (r, g, b)
     hue = (hue + 1) & 255
     time.sleep(0.02)
 `,
