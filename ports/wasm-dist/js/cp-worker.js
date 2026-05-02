@@ -248,12 +248,17 @@ function setGpioInput(pin, value) {
 function setAnalogInput(index, u16Value) {
     const analogReg = regions['/hal/analog'];
     if (analogReg) {
-        // Analog slot: [value_hi:u8][value_lo:u8][enabled:u8][pad:u8]
+        // Analog slot layout (matches common-hal/analogio/AnalogIn.c):
+        //   [0] enabled   (uint8)
+        //   [1] is_output (uint8)
+        //   [2] value_lo  (uint16 LE low byte)
+        //   [3] value_hi  (uint16 LE high byte)
         const buf = new Uint8Array(vm.memory.buffer);
         const off = analogReg.ptr + index * 4;
-        buf[off]     = (u16Value >> 8) & 0xFF;
-        buf[off + 1] = u16Value & 0xFF;
-        buf[off + 2] = 1;  // enabled
+        buf[off]     = 1;                    // enabled
+        buf[off + 1] = 0;                    // input
+        buf[off + 2] = u16Value & 0xFF;      // value low
+        buf[off + 3] = (u16Value >> 8) & 0xFF; // value high
     }
 }
 
