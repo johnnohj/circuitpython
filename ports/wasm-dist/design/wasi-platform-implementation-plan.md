@@ -183,6 +183,13 @@ execution is a valid suspend/resume point.
 **What this fixes**: Resume correctness for abort-resume (current
 model) or yield-resume (future model).
 
+**Note**: `MICROPY_PY_SYS_SETTRACE (1)` *is* the VM thread exit/resume
+mechanism: it updates `code_state` so ip/sp is constantly refreshed
+and provides visibility to the host sys - us. What we really need is a
+function that wraps `MICROPY_WRAP_MP_EXECUTE_BYTECODE` so that when it
+returns `*_NORMAL`, `*_EXCEPTION`, or `*_YIELD` we can choose what to do at
+a platform/system level.
+
 ### Phase 3: Generator wrapping for reactor execution
 
 **Goal**: User code runs as a generator.  Each `vm_step()` call
@@ -209,6 +216,9 @@ def _user_code():
         time.sleep(0.1)
         yield  # <-- inserted at loop boundary
 ```
+**Note**: Suggest either we strip off the `while True:` entirely, or
+add it as an arg to `def _user_code(while_true=bool):` so we know we
+are meant to execute said code indefinitely.
 
 **Mechanism**: Add a compile flag that inserts `YIELD_VALUE`
 opcodes at specific points:
