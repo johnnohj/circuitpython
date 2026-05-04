@@ -672,31 +672,13 @@ export class CircuitPython {
                 if (!el) return;
 
                 const gpio = this._hw;
-                const MIN_HOLD_MS = 200;  // minimum press duration for VM to see it
-                let holdTimer = null;
-
                 const down = () => {
                     gpio.setGpioInput(pin, false);  // pressed = low
                     this._kick();
-                    // Prevent release for MIN_HOLD_MS so the VM's polling
-                    // loop has time to read the pressed state.
-                    if (holdTimer) clearTimeout(holdTimer);
-                    holdTimer = setTimeout(() => { holdTimer = null; }, MIN_HOLD_MS);
                 };
                 const up = () => {
-                    if (holdTimer) {
-                        // Release came too fast — defer it until hold expires
-                        const remaining = MIN_HOLD_MS;
-                        clearTimeout(holdTimer);
-                        holdTimer = setTimeout(() => {
-                            holdTimer = null;
-                            gpio.setGpioInput(pin, true);
-                            this._kick();
-                        }, remaining);
-                    } else {
-                        gpio.setGpioInput(pin, true);   // released = high
-                        this._kick();
-                    }
+                    gpio.setGpioInput(pin, true);   // released = high
+                    this._kick();
                 };
 
                 el.addEventListener('mousedown', down);
