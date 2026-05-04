@@ -20,6 +20,7 @@
  */
 
 import { WasiMemfs, IdbBackend, seedDrive } from './wasi.js';
+import { Wasi2Memfs } from './wasi2.js';
 import { getJsffiImports, jsffi_init } from './ffi.js';
 import { env } from './env.mjs';
 import { Fwip } from './fwip.js';
@@ -556,8 +557,15 @@ export class CircuitPython {
         const idb = options.persist ? new IdbBackend() : null;
         this._idb = idb;
 
-        // WASI runtime — route /hal/ callbacks through hardware state
-        this._wasi = new WasiMemfs({
+        // Compile WASM first to detect Preview 1 vs Preview 2
+        if (this._statusEl) this._statusEl.textContent = 'Compiling...';
+        const bytes = await env.loadFile(options.wasmUrl);
+        const module = await WebAssembly.compile(bytes);
+        const moduleImports = WebAssembly.Module.imports(module);
+        const isP2 = moduleImports.some(i => i.module.startsWith('wasi:'));
+
+        // WASI runtime — auto-detect Preview 1 or Preview 2
+        const wasiOpts = {
             args: ['circuitpython'],
             idb,
             onStdout: (text) => this._handleStdout(text),
@@ -565,20 +573,25 @@ export class CircuitPython {
                 if (this._onStderr) this._onStderr(text);
                 else console.log('[stderr]', text);
             },
-            onHardwareWrite: (path, data) => {
-                this._hw.onWrite(path, data);
-            },
-            onHardwareRead: (path, offset) => {
-                return this._hw.onRead(path, offset);
-            },
             onFileChanged: (path) => {
-                // Auto-reload when .py files under /CIRCUITPY/ change
                 if (this._autoReloadEnabled &&
                     path.startsWith('/CIRCUITPY/') && path.endsWith('.py')) {
                     this._scheduleAutoReload();
                 }
             },
-        });
+        };
+
+        if (isP2) {
+            this._wasi = new Wasi2Memfs(wasiOpts);
+        } else {
+            wasiOpts.onHardwareWrite = (path, data) => {
+                this._hw.onWrite(path, data);
+            };
+            wasiOpts.onHardwareRead = (path, offset) => {
+                return this._hw.onRead(path, offset);
+            };
+            this._wasi = new WasiMemfs(wasiOpts);
+        }
         this._hw.setMemfs(this._wasi);
 
         // Restore persisted files
@@ -589,7 +602,6 @@ export class CircuitPython {
         }
 
         // Seed CIRCUITPY drive
-        // Pass codePy as-is — seedDrive uses DEFAULT_CODE_PY when undefined/null
         seedDrive(this._wasi, {
             codePy: options.codePy,
         });
@@ -604,12 +616,6 @@ export class CircuitPython {
                 }
             }
         }
-
-        // Compile + instantiate WASM
-        if (this._statusEl) this._statusEl.textContent = 'Compiling...';
-
-        const bytes = await env.loadFile(options.wasmUrl);
-        const module = await WebAssembly.compile(bytes);
 
         // Merge WASI + jsffi + port imports
         const imports = this._wasi.getImports();
