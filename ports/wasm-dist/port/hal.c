@@ -248,11 +248,18 @@ void hal_step(void) {
 
             uint8_t *slot = gpio_slot(pin);
 
-            // Clear JS_WROTE, set C_READ
-            slot[GPIO_FLAGS] = (slot[GPIO_FLAGS] & ~GF_JS_WROTE) | GF_C_READ;
+            // Clear JS_WROTE, set C_READ — preserve GF_LATCHED
+            uint8_t f = slot[GPIO_FLAGS];
+            slot[GPIO_FLAGS] = (f & ~GF_JS_WROTE) | GF_C_READ;
 
-            // Latch input value
-            slot[GPIO_LATCHED] = slot[GPIO_VALUE];
+            // Latch input value — but don't overwrite if JS already
+            // latched a value (GF_LATCHED set).  The VM hasn't read
+            // the latched press yet; clobbering it with the current
+            // VALUE (which may be "released" from a fast mouseup)
+            // would lose the press.
+            if (!(f & GF_LATCHED)) {
+                slot[GPIO_LATCHED] = slot[GPIO_VALUE];
+            }
         }
     }
 
