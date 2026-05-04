@@ -184,7 +184,14 @@ export class HardwareState {
         if (!data) return;
         const off = pin * GPIO_SLOT;
         if (off + GPIO_SLOT > data.length) return;
+        const pressed = !value;  // pull-up: pressed = low = false
         data[off + GPIO_OFF_VALUE] = value ? 1 : 0;
+        if (pressed) {
+            // Latch the press so the VM sees it even if mouseup arrives
+            // before the next poll.  C common-hal clears the latch after reading.
+            data[off + GPIO_OFF_LATCHED] = 0;  // latched value = pressed (0)
+            data[off + GPIO_OFF_FLAGS] |= 0x08 | 0x01; // GF_LATCHED | GF_JS_WROTE
+        }
         this._exports?.hal_mark_gpio_dirty?.(pin);
     }
 
