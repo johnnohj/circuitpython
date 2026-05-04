@@ -83,10 +83,16 @@ void wasm_wfe(int timeout_ms) {
     #endif
 }
 
-// Override mp_hal_delay_ms — cooperative yield instead of busy-wait.
-// wasm_wfe stores the wakeup deadline in port_mem and sets vm_abort.
-// mp_hal_delay_ms returns, the VM dispatch loop checks mp_handle_pending,
-// nlr_jump_abort fires, and step_code gates VM re-entry on the deadline.
+// Override mp_hal_delay_ms — cooperative yield via abort.
+//
+// With the chassis_frame model (Worker calls chassis_frame on a timer),
+// we can't truly sleep — the Worker is in a synchronous C call.
+// Instead, abort back to JS so the Worker can process events and
+// schedule the next frame.
+//
+// When the VM runs as a blocking program (main() in Worker with SAB),
+// this should switch to poll_oneoff for real sleeping.  See
+// design/wasi-platform-implementation-plan.md Phase 1.
 void mp_hal_delay_ms(mp_uint_t ms) {
     wasm_wfe((int)ms);
 }

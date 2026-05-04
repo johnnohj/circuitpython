@@ -61,39 +61,60 @@ self.onmessage = async (e) => {
 // ── Init ──
 
 async function init(msg) {
-    // Dynamically import WasiMemfs (Worker supports dynamic import)
-    const { WasiMemfs } = await import('./wasi.js');
-
-    wasi = new WasiMemfs({
-        args: ['circuitpython'],
-        onStdout: () => {},
-        onStderr: (text) => self.postMessage({ type: 'stderr', text }),
-        onProtocol: (text) => { protocolBuf += text; },
-    });
-
     const pendingRegistrations = [];
 
-    const imports = {
-        ...wasi.getImports(),
-        ffi: {
-            request_frame: () => {},
-        },
-        memfs: {
-            register: (pathPtr, pathLen, dataPtr, dataSize) => {
-                pendingRegistrations.push({ pathPtr, pathLen, dataPtr, dataSize });
-            },
-        },
-        jsffi: makeJsffiStubs(),
-        port: {
-            registerPinListener: () => {},
-            unregisterPinListener: () => {},
-            getCpuTemperature: () => 25,
-            getCpuVoltage: () => 3300,
-        },
-    };
-
+    // Detect binary format: compile first, check import module names
     const wasmBytes = await fetch(msg.wasmUrl).then(r => r.arrayBuffer());
     const module = await WebAssembly.compile(wasmBytes);
+    const moduleImports = WebAssembly.Module.imports(module);
+    const isP2 = moduleImports.some(i => i.module.startsWith('wasi:'));
+
+    let imports;
+
+    if (isP2) {
+        // Preview 2 binary — use wasi2.js
+        const { Wasi2Memfs } = await import('./wasi2.js');
+        wasi = new Wasi2Memfs({
+            args: ['circuitpython'],
+            onStdout: () => {},
+            onStderr: (text) => self.postMessage({ type: 'stderr', text }),
+            onProtocol: (text) => { protocolBuf += text; },
+        });
+        imports = wasi.getImports();
+        // Override memfs.register to capture registrations
+        imports.memfs.register = (pathPtr, pathLen, dataPtr, dataSize) => {
+            pendingRegistrations.push({ pathPtr, pathLen, dataPtr, dataSize });
+        };
+        // Add jsffi stubs (Preview 2 binary still imports these)
+        imports.jsffi = makeJsffiStubs();
+    } else {
+        // Preview 1 binary — use wasi.js
+        const { WasiMemfs } = await import('./wasi.js');
+        wasi = new WasiMemfs({
+            args: ['circuitpython'],
+            onStdout: () => {},
+            onStderr: (text) => self.postMessage({ type: 'stderr', text }),
+            onProtocol: (text) => { protocolBuf += text; },
+        });
+        imports = {
+            ...wasi.getImports(),
+            ffi: { request_frame: () => {} },
+            memfs: {
+                register: (pathPtr, pathLen, dataPtr, dataSize) => {
+                    pendingRegistrations.push({ pathPtr, pathLen, dataPtr, dataSize });
+                },
+            },
+            jsffi: makeJsffiStubs(),
+            port: {
+                registerPinListener: () => {},
+                unregisterPinListener: () => {},
+                getCpuTemperature: () => 25,
+                getCpuVoltage: () => 3300,
+            },
+        };
+    }
+
+    // module already compiled above during format detection
     const instance = await WebAssembly.instantiate(module, imports);
     wasi.setInstance(instance);
     vm = instance.exports;
@@ -131,7 +152,7 @@ async function init(msg) {
 
     // Start frame loop
     running = true;
-    frameTimer = setInterval(frame, 16);
+    frameTimer = setInterval(frame, 8);
 
     self.postMessage({ type: 'ready', regions, displayInfo });
 }

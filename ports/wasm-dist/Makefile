@@ -50,7 +50,7 @@ CWARN = -Wall
 CWARN += -Wextra -Wno-unused-parameter -Wpointer-arith -Wdouble-promotion -Wfloat-conversion -Wno-missing-field-initializers
 CWARN += -Wno-incompatible-function-pointer-types
 CFLAGS += $(INC) $(CWARN) -std=gnu99 -I$(VARIANT_DIR) $(CFLAGS_EXTRA)
-CFLAGS += --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT)
+CFLAGS += --target=wasm32-wasip2 --sysroot=$(WASI_SYSROOT)
 CFLAGS += -D_WASI_EMULATED_PROCESS_CLOCKS
 
 # CircuitPython module flags
@@ -105,8 +105,9 @@ SIZE = true
 # Linker
 # Reactor model: no _start, JS calls chassis_init + chassis_frame.
 # _initialize is called automatically by WASI runtimes on instantiation.
-LDFLAGS += --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT)
+LDFLAGS += --target=wasm32-wasip2 --sysroot=$(WASI_SYSROOT)
 LDFLAGS += -mexec-model=reactor
+LDFLAGS += -Wl,--skip-wit-component
 LDFLAGS += -mllvm -wasm-enable-sjlj -fwasm-exceptions
 LDFLAGS += -lsetjmp -lwasi-emulated-process-clocks
 LDFLAGS += -Wl,--initial-memory=4194304
