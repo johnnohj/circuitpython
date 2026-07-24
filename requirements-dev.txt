@@ -31,6 +31,10 @@ cryptography
 minify_html
 jsmin
 
+# for the wasm port's display-resource generation (tools/gen_display_resources.py)
+huffman
+adafruit-circuitpython-bitmap-font
+
 # for Silicon Labs Configurator (SLC)
 websockets
 colorama
