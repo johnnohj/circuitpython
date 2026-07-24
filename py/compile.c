@@ -103,7 +103,11 @@ static const emit_method_table_t *emit_native_table[] = {
     &emit_native_xtensa_method_table,
     &emit_native_xtensawin_method_table,
     &emit_native_rv32_method_table,
+    #if MICROPY_EMIT_WASM
     &emit_native_wasm_method_table,
+    #else
+    NULL, // wasm native emitter is a PORT feature (needs mp_wasm_compile_native); absent in host mpy-cross
+    #endif
     &emit_native_debug_method_table,
 };
 

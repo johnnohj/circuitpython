@@ -27,8 +27,13 @@ export class Display {
             ? this._ctx.createImageData(this._fbWidth, this._fbHeight)
             : null;
 
-        // Scale canvas to match displayio
+        // Match the canvas to the framebuffer. The backing-store resolution
+        // (width/height attributes) MUST equal the framebuffer, else
+        // putImageData() of a fbWidth×fbHeight ImageData is clipped to the
+        // canvas default (300×150). CSS width/height then scale it for display.
         if (canvas) {
+            canvas.width = this._fbWidth;
+            canvas.height = this._fbHeight;
             canvas.style.width = this._fbWidth + 'px';
             canvas.style.height = this._fbHeight + 'px';
         }

@@ -29,10 +29,26 @@ args = parser.parse_args()
 class BitmapStub:
     def __init__(self, width, height, color_depth):
         self.width = width
-        self.rows = [b""] * height
+        self.height = height
+        self._stride = (width + 7) // 8            # bytes per row, MSB-first byte-packed
+        self._buf = bytearray(self._stride * height)
 
-    def _load_row(self, y, row):
-        self.rows[y] = bytes(row)
+    def _load_row(self, y, row):                   # old bitmap_font API (row = packed bytes)
+        b = bytes(row)
+        self._buf[y * self._stride:y * self._stride + self._stride] = b[:self._stride]
+
+    def __setitem__(self, index, value):           # new bitmap_font API: flat y*width+x -> 0/1
+        y, x = divmod(index, self.width)
+        off = y * self._stride + (x >> 3)
+        if value:
+            self._buf[off] |= 1 << (7 - (x & 7))
+        else:
+            self._buf[off] &= ~(1 << (7 - (x & 7))) & 0xFF
+
+    @property
+    def rows(self):
+        s = self._stride
+        return [bytes(self._buf[y * s:y * s + s]) for y in range(self.height)]
 
 
 f = bitmap_font.load_font(args.font, BitmapStub)
@@ -69,7 +85,7 @@ for c in set(all_characters):
         filtered_characters = filtered_characters.replace(c, "")
         continue
     g = f.get_glyph(ord(c))
-    if g["shift"][1] != 0:
+    if g.shift_y != 0:
         raise RuntimeError("y shift")
 
 if missing > 0:
@@ -83,10 +99,10 @@ b = bytearray(bytes_per_row * tile_y)
 
 for x, c in enumerate(filtered_characters):
     g = f.get_glyph(ord(c))
-    start_bit = x * tile_x + g["bounds"][2]
-    start_y = (tile_y - 2) - (g["bounds"][1] + g["bounds"][3])
-    for y, row in enumerate(g["bitmap"].rows):
-        for i in range(g["bounds"][0]):
+    start_bit = x * tile_x + g.dx
+    start_y = (tile_y - 2) - (g.height + g.dy)
+    for y, row in enumerate(g.bitmap.rows):
+        for i in range(g.width):
             byte = i // 8
             bit = i % 8
             if row[byte] & (1 << (7 - bit)) != 0:
